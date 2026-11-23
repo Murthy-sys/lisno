@@ -1,8 +1,9 @@
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { Button, Field } from "../../ui/primitives";
 import type { EstimationCatalogue } from "./catalogueTypes";
-import { configuredLineAmountPaise, configuredModeBaseRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, hasNativeReadOnlyDimensionQuantity, hasNativeReadOnlyTierPricing, hasNativeReadOnlyInHousePricing, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineAmountPaise, configuredModeBaseRate, nativePmcPricing, parseSellingRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, hasNativeReadOnlyDimensionQuantity, hasNativeReadOnlyTierPricing, hasNativeReadOnlyInHousePricing, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimateClassification, EstimatePricingMode } from "./types";
 import { estimatePaise, type StaffEstimateForm } from "./staffEstimateModel";
 import { EstimateChoice, EstimateSection, EstimateSelect, EstimateText, estimateStyles as styles } from "./EstimateUI";
@@ -29,7 +30,7 @@ export function EstimateBasketSelection({ form, catalogue, disabled, onChange }:
     </View>)}
   </EstimateSection>;
 }
-export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled, onChange }: { readonly form: StaffEstimateForm; readonly activeRoomId: string; readonly onRoomChange: (roomId: string) => void; readonly disabled: boolean; readonly onChange: (form: StaffEstimateForm) => void }) {
+export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled, onChange, payables }: { readonly payables: ReadonlyMap<string, number>; readonly form: StaffEstimateForm; readonly activeRoomId: string; readonly onRoomChange: (roomId: string) => void; readonly disabled: boolean; readonly onChange: (form: StaffEstimateForm) => void }) {
   const [search, setSearch] = useState("");
   const [selectedOnly, setSelectedOnly] = useState(false);
   const room = form.rooms.find((item) => item.id === activeRoomId) ?? form.rooms[0];
@@ -50,6 +51,8 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
       const aggregatePricing = line.pricingMode === "in_house" && (line.aggregatePricing !== undefined || line.inHouseUsage !== undefined || line.inHousePricingState !== undefined);
       const tierPricing = hasNativeReadOnlyTierPricing(line);
       const dimensionQuantity = hasNativeReadOnlyDimensionQuantity(line);
+      const showPmc = line.pricingMode === "pmc" && (!line.savedPmc || line.savedPmc.vendorPayable);
+      const margin = line.savedPmc ? line.savedPmc.margin : showPmc ? nativePmcPricing(line) : undefined;
       const lineDisabled = disabled || componentPricing || tierPricing || dimensionQuantity;
       return <EstimateSection key={line.key} title={line.mainLineName}>
         <EstimateText>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.uomName}</EstimateText>
@@ -74,9 +77,13 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
           {classification === "special" ? <EstimateSelect label={`${line.mainLineName} pricing mode`} value={line.pricingMode ?? ""} allowEmpty={false} disabled={lineDisabled} options={Object.entries(estimatePricingModeLabels).filter(([value]) => value !== "in_house" || (line.inHouseComponents === undefined && line.inHouseUsage === undefined && line.inHousePricingState === undefined) || componentPricing).map(([value, label]) => ({ value, label }))} onChange={(value) => update(line, { pricingMode: value as EstimatePricingMode })} /> : <EstimateText>Standard · Sub-Vendor pricing</EstimateText>}
           <NumberField label={`${line.mainLineName} quantity (${line.uomName})`} value={line.quantity} disabled={lineDisabled} onChange={(quantity) => update(line, { quantity })} />
           {line.uomNeedsQuantityReview ? <><EstimateText error>The unit changed from {line.previousUomName ?? "the previous unit"} to {line.uomName}. Review and confirm the quantity.</EstimateText><Button label={`Confirm ${line.mainLineName} quantity`} disabled={lineDisabled} onPress={() => update(line, { uomNeedsQuantityReview: false })} /></> : null}
-          {aggregatePricing ? null : line.pricingBasis ? <EstimateText>Calculated from components. Manage this price in the web estimate workspace.</EstimateText> : <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!lineDisabled} onChangeText={(rateInput) => update(line, { rateInput })} />}
-          <EstimateText>Rate source: {line.rateSource === "configuration" ? "Configuration" : "Manual"}. Amount: {estimatePaise(configuredLineAmountPaise(line))}</EstimateText>
-          <Button label={`Use Configuration rate for ${line.mainLineName}`} variant="quiet" disabled={lineDisabled || !line.pricingMode} onPress={() => onChange({ ...form, lines: form.lines.map((item) => item.key === line.key ? { ...item, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(item, item.pricingMode!)) } : item) })} />
+          {showPmc ? <>
+            <EstimateText>Vendor rate per {line.uomName} including all taxes: {estimatePaise(estimatePriceIncludingGst(parseSellingRate(line.rateInput).paise))}</EstimateText>
+            <EstimateText>Vendor payable including all taxes: {estimatePaise(payables.get(line.key))}</EstimateText>
+            <EstimateText>Maximum Lisno margin before tax: {margin ? `${margin.pmcMarginBps / 100}% · ${estimatePaise(margin.pmcMarginAmountPaise)}` : "Unavailable"}</EstimateText>
+          </> : aggregatePricing ? null : line.pricingBasis ? <EstimateText>Calculated from components. Manage this price in the web estimate workspace.</EstimateText> : <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!lineDisabled} onChangeText={(rateInput) => update(line, { rateInput })} />}
+          {!showPmc && <EstimateText>Rate source: {line.rateSource === "configuration" ? "Configuration" : "Manual"}. Amount: {estimatePaise(configuredLineAmountPaise(line))}</EstimateText>}
+          {!showPmc && <Button label={`Use Configuration rate for ${line.mainLineName}`} variant="quiet" disabled={lineDisabled || !line.pricingMode} onPress={() => onChange({ ...form, lines: form.lines.map((item) => item.key === line.key ? { ...item, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(item, item.pricingMode!)) } : item) })} />}
           {line.estimateNotes?.map((note, index) => <EstimateText key={index}>{note}</EstimateText>)}
         </> : null}
         {line.persistedId || line.sourceMissing ? <Button label={`Remove saved ${line.mainLineName}`} variant="quiet" disabled={lineDisabled} onPress={() => onChange({ ...form, lines: form.lines.filter((item) => item.key !== line.key) })} /> : null}

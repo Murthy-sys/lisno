@@ -1,3 +1,5 @@
+import { calculateEstimatePmcPayable } from "../domain/estimate-pmc-payable.js";
+import { estimatePmcPaymentsAreValid, type EstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { quotationSnapshotDigest } from "./quotation-digest.js";
@@ -12,7 +14,7 @@ import { designRulesDigest } from "../domain/main-line-design-rules.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
 import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
-import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
+import { currentEstimateLineRateMatches } from "../domain/estimate-mode-pricing.js";
 import { isKnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
@@ -73,7 +75,7 @@ export interface EstimatePublicationService {
   ): Promise<PublishEstimateToClientResult>;
 }
 
-interface PublicationEstimate {
+export interface PublicationEstimate {
   estimation?: EstimationLifecycle;
   _id: string;
   leadId: string;
@@ -90,6 +92,7 @@ interface PublicationEstimate {
   gstPaise?: number;
   totalPaise?: number;
   roundOffPaise?: number;
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   selectedMainBasketIds?: string[];
   selectedMainBasketClassifications?: SelectedMainBasketClassification[];
   approvalRequired: boolean;
@@ -146,7 +149,7 @@ export function createEstimatePublicationService(input: {
       if (!preflightEstimate) publicationConflict();
       await assertRevisedQuotationPublication(preflightEstimate);
       assertPublishableConfiguredLines(preflightEstimate);
-      if (publication.expectedStatus === "draft" || preflightEstimate.estimation?.workflowVersion === 3) await assertCurrentConfiguredPublication(preflightEstimate);
+      if (publication.expectedStatus === "draft" || preflightEstimate.estimation?.workflowVersion === 3 || preflightEstimate.lineItems.some(line => line.included && line.pricingMode === "pmc")) await assertCurrentConfiguredPublication(preflightEstimate);
       if (
         publication.expectedStatus === "draft" && preflightEstimate.estimation?.workflowVersion !== 3 &&
         preflightEstimate.total > APPROVAL_THRESHOLD
@@ -224,7 +227,7 @@ export function createEstimatePublicationService(input: {
           if (!currentEstimate) publicationConflict();
           await assertRevisedQuotationPublication(currentEstimate, session);
           assertPublishableConfiguredLines(currentEstimate);
-          if (publication.expectedStatus === "draft" || currentEstimate.estimation?.workflowVersion === 3) {
+          if (publication.expectedStatus === "draft" || currentEstimate.estimation?.workflowVersion === 3 || currentEstimate.lineItems.some(line => line.included && line.pricingMode === "pmc")) {
             await fencePublicationConfigurationDependencies(currentEstimate, session);
             await assertCurrentConfiguredPublication(currentEstimate, session);
           }
@@ -542,6 +545,7 @@ function toPostTransitionPdfInput(
     gstPaise: estimate.gstPaise,
     totalPaise: estimate.totalPaise,
     ...(estimate.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.roundOffPaise }),
+    ...(estimate.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: structuredClone(estimate.pmcPaymentSummary) }),
     lineItems: estimate.lineItems.map((line) => ({ ...line })),
     lead: {
       clientName: lead.clientName,
@@ -574,6 +578,8 @@ export function toEstimateSnapshot(
         ? line.classification === "special" ? "special" : "standard"
         : line.classification,
       pricingMode: line.pricingMode,
+      ...(line.included && line.pricingMode === "pmc" && line.pmcVendorPayable === true ? { pmcVendorPayable: true as const } : {}),
+      ...(line.pmcPaymentSplit === undefined ? {} : { pmcPaymentSplit: structuredClone(line.pmcPaymentSplit) }),
       ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
       ...estimateDimensionSnapshotFields(line),
       rateSource: line.rateSource,
@@ -619,6 +625,7 @@ export function toEstimateSnapshot(
     ...(estimate.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.subtotalPaise }),
     ...(estimate.gstPaise === undefined ? {} : { gstPaise: estimate.gstPaise }),
     ...(estimate.totalPaise === undefined ? {} : { totalPaise: estimate.totalPaise }),
+    ...(estimate.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: structuredClone(estimate.pmcPaymentSummary) }),
     ...(estimate.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.roundOffPaise }),
     ...(estimate.selectedMainBasketIds === undefined ? {} : {
       selectedMainBasketIds: [...estimate.selectedMainBasketIds],
@@ -632,6 +639,9 @@ export function toEstimateSnapshot(
 }
 
 export function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
+  if (!estimatePmcPaymentsAreValid(estimate, { requirePmcSplit: true })) {
+    throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Refresh and save the PMC payment breakdown before viewing or sending the estimate.");
+  }
   const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
   if (configured.length === 0 && estimate.roundOffPaise === undefined) {
     if ([estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].some(value => value !== undefined) &&
@@ -730,6 +740,8 @@ export async function assertCurrentConfiguredPublication(
       "This Main Line has no current Configuration. Correct it before sending the estimate.");
     const stored = line as unknown as Record<string, unknown>;
     const tierPricing = estimatorCatalogueTierPricing(source.line, line.modeTier ?? "signature");
+    const currentPmc = line.included !== false && line.pricingMode === "pmc"
+      ? calculateEstimatePmcPayable(tierPricing?.pmcPricing, line.quantity, source.line.uom.decimalScale) : null;
     const expected: Record<string, unknown> = {
       itemType: source.line.itemType,
       clientVisible: source.line.clientVisible,
@@ -756,9 +768,11 @@ export async function assertCurrentConfiguredPublication(
       source.line.dimensionsMandatory && (!estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) || !estimateDimensionSnapshotValid(line)) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
+      (line.included !== false && line.pricingMode === "pmc" && (line.pmcVendorPayable !== true || !currentPmc ||
+        line.pmcPaymentSplit?.marginBps !== currentPmc.pmcMarginBps || line.pmcPaymentSplit?.lisnoAmountPaise !== currentPmc.pmcMarginAmountPaise)) ||
       !tierPricing || (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS
         ? !await currentEstimateComponentPricingMatches(line, source, session)
-        : line.included !== false && !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
+        : line.included !== false && !currentEstimateLineRateMatches(line, tierPricing, source.line.uom.decimalScale))) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

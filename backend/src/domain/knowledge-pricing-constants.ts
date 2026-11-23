@@ -1,0 +1,6 @@
+export const AI_ESTIMATOR_KNOWLEDGE_FORMULA_VERSION =
+  "knowledge-preview-v1" as const;
+export const AI_ESTIMATOR_KNOWLEDGE_CURRENCY = "INR" as const;
+export const AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS = 10_000;
+export const AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE =
+  Number.MAX_SAFE_INTEGER;

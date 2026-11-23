@@ -1,3 +1,6 @@
+import { readSavedQuotationPdf } from "../src/services/quotation-draft-pdf.service.js";
+import { createEstimatePdfService } from "../src/services/estimate-pdf.service.js";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
@@ -84,6 +87,110 @@ const source = { revisionId: "revision-visible", itemVersion: 1, revisionVersion
 const quantityChange = (expectedVersion = 1, quantity = 4) => ({ expectedVersion,
   operations: [{ kind: "update" as const, lineItemId: "line-one", source, quantity }] });
 
+describe("saved quotation draft PDF", () => {
+  const path = "/api/v1/projects/tier-project/quotation/draft/pdf";
+  const identity = { estimateId: "tier-estimate", expectedVersion: 1 };
+  const appFor = (actor: PublicUser, generate: Parameters<typeof createQuotationRouter>[2]) => {
+    const app = express();
+    app.use("/api/v1", createQuotationRouter({ authenticate: async () => actor } as unknown as Parameters<typeof createQuotationRouter>[0],
+      createAuditService(createMongoRepository()), generate));
+    app.use(errorHandler);
+    return app;
+  };
+  beforeEach(async () => {
+    await LeadModel.updateOne({ _id: "tier-lead" }, { $set: { clientName: "Fixture client", clientEmail: "client@example.test",
+      projectName: "Draft fixture", location: "Fixture location" } });
+  });
+
+  it.each([sales, client])("returns the customer-visible saved draft to the authorized $role without publishing", async actor => {
+    const generate = vi.fn().mockResolvedValue({ bytes: Buffer.from("%PDF-1.7 synthetic"), filename: "preview.pdf" });
+    const result = await request(appFor(actor, { generate })).get(path).query(identity).set("Authorization", "Bearer fixture").expect(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.headers["content-disposition"]).toContain("quotation-draft-v1.pdf");
+    expect(result.headers["content-type"]).toContain("application/pdf");
+    expect(generate.mock.calls[0]![0]).toMatchObject({ id: identity.estimateId, version: 1, status: "draft", totalPaise: 12980,
+      lineItems: [{ id: "line-one" }, { id: "line-two" }], includedPayablesPaise: [4720, 7080] });
+    expect(JSON.stringify(generate.mock.calls[0])).not.toMatch(/hidden painting|privateMargin|pmcMarginSnapshot/);
+    expect(await EstimateModel.findById(identity.estimateId).lean()).toMatchObject({ version: 1, status: "draft" });
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it.each(["project", "staff"] as const)("uses the client-email proposal template for the saved %s preview", async scope => {
+    if (scope === "project") await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $set: { projectNumber: "Lisno000063" } });
+    const before = await EstimateModel.findById(identity.estimateId).lean();
+    const pdf = createEstimatePdfService();
+    const generate = vi.spyOn(pdf, "generate");
+    const bytes = scope === "project"
+      ? Buffer.from((await request(appFor(sales, pdf)).get(path).query(identity).set("Authorization", "Bearer fixture").expect(200)).body)
+      : (await readSavedQuotationPdf(sales, null, identity.estimateId, identity.expectedVersion, pdf)).bytes;
+    const input = generate.mock.calls[0]![0];
+    expect(input).toMatchObject({ id: identity.estimateId, version: 1, status: "draft", totalPaise: 12980,
+      includedPayablesPaise: [4720, 7080], proposal: { templateVersion: "lisno-proposal-v1",
+        reference: scope === "project" ? "Lisno000063" : identity.estimateId, preparedBy: "Team Lisno" } });
+    const document = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false }).promise;
+    try {
+      const pages: string[] = [];
+      for (let index = 1; index <= document.numPages; index++) {
+        const content = await (await document.getPage(index)).getTextContent();
+        pages.push(content.items.flatMap(item => "str" in item ? [item.str] : []).join(" "));
+      }
+      const text = pages.join(" ");
+      for (const section of ["A home,", "Scope of work", "Detailed estimate", "Payment schedule", "Terms & specifications", "Let's begin"]) {
+        expect(text).toContain(section);
+      }
+      expect(pages[0]).toContain(input.proposal!.reference);
+      expect(text).toContain("Prepared by Team Lisno");
+      expect(text).toContain("visible painting");
+      expect(text).toContain("47.20");
+      expect(text).toContain("70.80");
+      expect(text).toContain("129.80");
+      expect(text).not.toMatch(/hidden painting|privateMargin|never-expose-this|pmcMarginSnapshot/);
+    } finally { await document.destroy(); }
+    expect(await EstimateModel.findById(identity.estimateId).lean()).toEqual(before);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("rejects another client, mismatched IDs, stale versions, incomplete prices and submitted status", async () => {
+    const generate = vi.fn();
+    const read = (actor: PublicUser, query: Record<string, unknown>) =>
+      request(appFor(actor, { generate })).get(path).query(query).set("Authorization", "Bearer fixture");
+    await read(other, identity).expect(404);
+    await read(client, { ...identity, estimateId: "another-estimate" }).expect(404);
+    await read(sales, { ...identity, expectedVersion: 2 }).expect(409);
+    await read(client, { expectedVersion: 1 }).expect(400);
+    await EstimateModel.updateOne({ _id: identity.estimateId }, { $set: { "lineItems.0.ratePaise": null } });
+    await read(client, identity).expect(409);
+    await EstimateModel.updateOne({ _id: identity.estimateId }, { $set: { "estimation.status": "sent_to_client" } });
+    expect((await read(client, identity).expect(409)).body.error.code).toBe("ESTIMATE_VERSION_CONFLICT");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved total and withholds items moved out of the working quotation's baskets", async () => {
+    await Basket.create({ _id: "moved-basket", name: "Moved", status: "active", displayOrder: 2, version: 1, createdById: sales.id, updatedById: sales.id });
+    await SubBasket.create({ _id: "moved-sub", name: "Moved sub", basketId: "moved-basket", displayOrder: 1, version: 1, createdById: sales.id, updatedById: sales.id });
+    await MainLine.collection.updateOne({ _id: "visible" as never }, { $set: { basketId: "moved-basket", subBasketId: "moved-sub" } });
+    expect((await service.detail(client, "tier-project")).lines).toHaveLength(0);
+    const generate = vi.fn().mockResolvedValue({ bytes: Buffer.from("%PDF-1.7"), filename: "preview.pdf" });
+    await request(appFor(client, { generate })).get(path).query(identity).set("Authorization", "Bearer fixture").expect(200);
+    await readSavedQuotationPdf(sales, null, identity.estimateId, identity.expectedVersion, { generate });
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const [input] of generate.mock.calls) {
+      expect(input).toMatchObject({ lineItems: [], includedPayablesPaise: [], totalPaise: 12980 });
+    }
+  });
+
+  it("withholds bytes if visibility changes while rendering", async () => {
+    const generate = vi.fn(async () => {
+      await Section.updateOne({ _id: "overview-visible" }, { $set: { "payload.clientVisible": false } });
+      return { bytes: Buffer.from("%PDF-1.7 stale"), filename: "stale.pdf" };
+    });
+    const response = await request(appFor(client, { generate })).get(path).query(identity).set("Authorization", "Bearer fixture").expect(409);
+    expect(response.body.error.code).toBe("QUOTATION_VISIBILITY_CHANGED");
+  });
+});
+
 describe("quotation pricing-mode changes", () => {
   const designer: PublicUser = { id: "mode-designer", name: "Designer", email: "designer@mode.invalid", role: "designer" };
   const modeChange = (pricingMode: "pmc" | "sub_vendor" | "in_house", expectedVersion = 1) => ({ expectedVersion,
@@ -91,7 +198,8 @@ describe("quotation pricing-mode changes", () => {
   async function eligibleModes() {
     await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.classification": "special" } });
     await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
-      "payload.modeCalculations.pmc": { baseRatePaise: 4100 },
+      "payload.pmcMarginBps": 1500,
+      "payload.modeCalculations.pmc": { baseRatePaise: 4100, lowQuantityLimit: "0", impactBps: 0 },
       "payload.modeCalculations.in_house_labor": { baseRatePaise: 1000, startingMarkupBps: 0 },
       "payload.modeCalculations.in_house_material": { baseRatePaise: 2300, startingMarkupBps: 0 }
     } });
@@ -116,13 +224,63 @@ describe("quotation pricing-mode changes", () => {
     const pmc = await service.save(client, "tier-project", modeChange("pmc"));
     expect(pmc.lines[0]).toMatchObject({ pricingMode: "pmc", quantity: 2, ratePaise: 4100, amountPaise: 8200 });
     expect(pmc.totalPaise).toBe(17900);
+    expect(pmc.lines[0]!.pmcPaymentSplit).toMatchObject({ marginBps: 1500, vendorAmountPaise: 8200,
+      lisnoAmountPaise: 1447, estimatedValuePaise: 9647, vendorPayablePaise: 9676, lisnoPayablePaise: 1707, totalPayablePaise: 11383 });
+    expect(pmc.pmcPaymentSummary).toMatchObject({ vendorPayablePaise: 9676, lisnoPayablePaise: 1707,
+      pmcTotalPayablePaise: 11383, otherWorkPayablePaise: 8260, roundOffPaise: -36, customerTotalPayablePaise: 19607 });
+    expect(pmc.lines[0]!.taxInclusiveAmountPaise).toBe(9676);
+    expect(JSON.stringify(pmc)).not.toMatch(/pmcMarginBps|pmcMarginAmountPaise|pmcMarginSnapshot|pmcPricing/);
     const inHouse = await service.save(client, "tier-project", modeChange("in_house", 2));
     expect(inHouse.lines[0]).toMatchObject({ pricingMode: "in_house", quantity: 2, ratePaise: 3300, amountPaise: 6600 });
     const subVendor = await service.save(client, "tier-project", modeChange("sub_vendor", 3));
     expect(subVendor.lines[0]).toMatchObject({ pricingMode: "sub_vendor", quantity: 2, ratePaise: 2000, amountPaise: 4000 });
     const stored = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(stored.pmcPaymentSummary).toBeUndefined();
+    expect(stored.lineItems[0]?.pmcPaymentSplit).toBeUndefined();
     expect(stored.lineItems.slice(1)).toEqual(before.lineItems.slice(1));
     expect((await service.detail(client, "tier-project")).lines[0]!.pricingMode).toBe("sub_vendor");
+  });
+
+  it("previews the saved PMC split without writes and requires refresh after a margin-only change", async () => {
+    await LeadModel.updateOne({ _id: "tier-lead" }, { $set: { clientName: "Fixture client", clientEmail: "client@example.test",
+      projectName: "PMC preview fixture", location: "Fixture location" } });
+    await eligibleModes();
+    await service.save(client, "tier-project", modeChange("pmc"));
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const generate = vi.fn(async () => ({ bytes: Buffer.from("%PDF synthetic"), filename: "synthetic.pdf" }));
+    await readSavedQuotationPdf(sales, "tier-project", "tier-estimate", 2, { generate });
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({ pmcPaymentSummary: before!.pmcPaymentSummary,
+      lineItems: expect.arrayContaining([expect.objectContaining({ pmcPaymentSplit: before!.lineItems[0]!.pmcPaymentSplit })]) });
+    expect(JSON.stringify(generate.mock.calls)).not.toContain("pmcMarginSnapshot");
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.pmcMarginBps": 2000 } });
+    await expect(readSavedQuotationPdf(sales, "tier-project", "tier-estimate", 2, { generate }))
+      .rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(generate).toHaveBeenCalledTimes(1);
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $unset: { pmcPaymentSummary: "", "lineItems.0.pmcPaymentSplit": "" } });
+    expect((await service.detail(client, "tier-project")).isIncomplete).toBe(true);
+    await expect(readSavedQuotationPdf(sales, "tier-project", "tier-estimate", 2, { generate }))
+      .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
+  });
+
+  it("recalculates PMC vendor charges when quantity crosses the low-quantity limit", async () => {
+    await eligibleModes();
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.modeCalculations.pmc": { baseRatePaise: 10000, lowQuantityLimit: "5", impactBps: 1000 }
+    } });
+    const first = await service.save(client, "tier-project", modeChange("pmc"));
+    expect(first.lines[0]).toMatchObject({ quantity: 2, ratePaise: 11000, amountPaise: 22000, taxInclusiveAmountPaise: 25960 });
+    const next = await service.save(client, "tier-project", quantityChange(2, 10));
+    expect(next.lines[0]).toMatchObject({ quantity: 10, ratePaise: 10000, amountPaise: 100000, taxInclusiveAmountPaise: 118000 });
+    expect(next.lines[0]!.choices.find(row => row.modeTier === "signature")!.vendorRateSchedule)
+      .toEqual({ lowQuantityLimit: "5", standardRatePaise: 10000, lowQuantityRatePaise: 11000 });
+    expect(next.totalPaise).toBe(126300);
+    await service.save(client, "tier-project", { expectedVersion: 3, operations: [
+      { kind: "update", lineItemId: "line-two", source, quantity: 3.5 }
+    ] });
+    const stored = await EstimateModel.findById("tier-estimate").select("+lineItems.pmcMarginSnapshot").lean();
+    expect(stored!.lineItems[0]).toMatchObject({ pmcMarginSnapshot: { pmcMarginBps: 1500, pmcMarginAmountPaise: 17647 } });
+    expect((await service.detail(client, "tier-project")).lines[0]).toMatchObject({ ratePaise: 10000, taxInclusiveAmountPaise: 118000 });
   });
 
   it("rejects Standard and unavailable-tier mode changes without partial saves", async () => {
@@ -803,7 +961,7 @@ describe("version 3 Client quotation commands", () => {
     if (change === "missing") await Revision.deleteOne({ _id: "revision-visible" });
     if (change === "revision") await MainLine.updateOne({ _id: "visible" }, { $inc: { version: 1 } });
     if (change === "parent") {
-      await SubBasket.collection.insertOne({ _id: "moved-sub" as never, basketId: "tier-basket", name: "Moved", status: "active", displayOrder: 2, version: 1 });
+      await SubBasket.collection.insertOne({ _id: "moved-sub" as never, basketId: "tier-basket", name: "Moved", status: "active", displayOrder: 2, version: 1, createdById: sales.id, updatedById: sales.id });
       await MainLine.updateOne({ _id: "visible" }, { $set: { subBasketId: "moved-sub" }, $inc: { version: 1 } });
     }
     const before = await EstimateModel.findById("tier-estimate").lean();

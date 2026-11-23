@@ -1,3 +1,4 @@
+import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "../../../../shared/estimation/estimatePmcPaymentSplit";
 import type { EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
@@ -78,6 +79,9 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  pmcPaymentSplit?: EstimatePmcPaymentSplit;
+  pmcVendorPayable?: true;
+  pmcMarginSnapshot?: { pmcMarginBps: number; pmcMarginAmountPaise: number };
   roomMismatch?: boolean;
   componentPricing?: EstimateComponentPricing;
   aggregatePricing?: EstimateAggregatePricing;
@@ -150,6 +154,7 @@ export interface EstimationLifecycle {
   preparationSnapshotId: string | null;
 }
 export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   readonly projectNumber?: string | null;
   capabilities?: { canUnlockQuotation: boolean; canPublishQuotation?: boolean; canPrepareQuotationSubmission?: boolean; canChangePricingMode?: boolean };
   id: string;

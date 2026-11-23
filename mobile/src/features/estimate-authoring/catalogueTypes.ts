@@ -1,3 +1,4 @@
+import type { EstimatePmcPricing } from "../../../../shared/estimation/estimatePmcPayable";
 import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateModeTier, EstimatePricingMode } from "./types";
@@ -26,6 +27,7 @@ export interface EstimationInHousePolicy {
 }
 
 export interface EstimationCatalogueMainLine {
+  pmcPricing?: EstimatePmcPricing | undefined;
   id: string;
   mainLineId: string;
   basketId: string;

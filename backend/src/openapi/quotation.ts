@@ -86,6 +86,7 @@ export const QUOTATION_SCHEMAS = {
       reviewState: { type: "string", enum: ["draft", "awaiting_staff_review", "ready_for_approval", "approved"] },
       rooms: { type: "array", items: object({ id, name: text, typeId: { ...text, nullable: true } }) }, editingAllowed: { type: "boolean" },
       canChangePricingMode: { type: "boolean", description: "Actor-scoped mode authority: Client plus assigned Sales initially; Client plus assigned primary Designer after initial Client approval. Edit locks and Standard/Special eligibility still apply." },
+      pmcPaymentSummary: ref("EstimatePmcPaymentSummary"),
       totalPaise: { type: "integer", minimum: 0, nullable: true }, roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Signed final-total adjustment in paise, applied after GST. More than 50 paise rounds up; exactly 50 rounds down. Absent on historical unrounded estimates." }, lines: { type: "array", items: ref("QuotationLine") },
       excludedLines: { type: "array", items: ref("QuotationLine"), description: "Visible excluded saved rows retain stable IDs and user choices for re-addition. They do not contribute to totals." },
       baskets: { type: "array", items: ref("QuotationBasket"), description: "Complete safe hierarchy within project-selected baskets, independent of candidate pagination." },

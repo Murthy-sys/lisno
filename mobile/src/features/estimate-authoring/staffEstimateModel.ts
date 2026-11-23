@@ -1,3 +1,5 @@
+import { allocateEstimatePayables } from "../../../../shared/estimation/estimateGstPresentation";
+import { calculateEstimateTotal } from "../../../../shared/estimation/estimateTotalRounding";
 import { estimateAggregatePricingMatchesLine } from "../../../../shared/estimation/estimateAggregatePricing";
 import { ApiProtocolError } from "../../core/http/apiClient";
 import { estimateComponentPricingMatchesLine } from "../../../../shared/estimation/estimateComponentPricing";
@@ -48,6 +50,7 @@ export function validateStaffForm(form: StaffEstimateForm, submitting = false): 
     if ((line.modeTier ?? "signature") === "signature" && hasNativeReadOnlyInHousePricing(line) && (line.inHouseComponentsNeedReview || !line.aggregatePricing && !line.selectedInHouseComponentIds?.length)) return `${line.mainLineName}: review In-house components in the web estimate workspace before saving.`;
     if (line.sourceMissing) return `${line.mainLineName}: the current Configuration source is unavailable. Refresh or remove this saved item.`;
     if (line.uomNeedsQuantityReview) return `${line.mainLineName}: confirm the quantity for its updated unit.`;
+    if (line.included && line.pricingMode === "pmc" && !line.savedPmc && (configuredLineAmountPaise(line) === null || !(line.pmcPricing && line.pmcPricing.baseRatePaise > 0) && !line.persistedId)) return `${line.mainLineName}: review PMC vendor pricing in Configuration before saving.`;
     if (parseSellingRate(line.rateInput).kind === "invalid" || configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null) return `${line.mainLineName}: enter a valid quantity and selling rate (up to 2 decimals).`;
     if (submitting && line.included && configuredLineAmountPaise(line) === null) return `${line.mainLineName}: enter a selling rate before submission.`;
   }
@@ -91,7 +94,23 @@ export function previewEstimateTotals(form: StaffEstimateForm): { subtotalPaise:
   const hasConfigured = form.lines.some((line) => line.included || line.persistedId);
   const gst = hasConfigured ? (subtotal * 18n + 50n) / 100n : BigInt(Math.round(Number(subtotal) / 100 * .18)) * 100n;
   if (subtotal + gst > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return { subtotalPaise: Number(subtotal), gstPaise: Number(gst), totalPaise: Number(subtotal + gst) };
+  const subtotalPaise = Number(subtotal), gstPaise = Number(gst);
+  const hasPmc = form.lines.some(line => line.included && line.pricingMode === "pmc");
+  const totalPaise = hasPmc ? calculateEstimateTotal(subtotalPaise, gstPaise)?.totalPaise : Number(subtotal + gst);
+  return totalPaise === undefined ? null : { subtotalPaise, gstPaise, totalPaise };
+}
+
+export function staffLinePayables(form: StaffEstimateForm, recorded?: EstimateDraft) {
+  const included = form.lines.filter(line => line.included);
+  if (!included.some(line => line.pricingMode === "pmc")) return new Map<string, number>();
+  const net = included.map(configuredLineAmountPaise);
+  if (net.some(value => value === null)) return new Map<string, number>();
+  const legacy = form.legacyLines.filter(line => line.included).map(line => Math.round(line.rate * line.quantity) * 100);
+  const totals = previewEstimateTotals(form);
+  if (!totals) return new Map<string, number>();
+  const tax = recorded?.subtotalPaise != null && recorded.gstPaise != null ? { subtotalPaise: recorded.subtotalPaise, gstPaise: recorded.gstPaise } : totals;
+  const payables = allocateEstimatePayables([...legacy, ...net as number[]], tax);
+  return new Map(included.map((line, index) => [line.key, payables[legacy.length + index]!]));
 }
 export const estimatePaise = (value: number | null | undefined) => value == null ? "Incomplete" : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value / 100);
 export function staffFormFingerprint(form: StaffEstimateForm): string { return JSON.stringify(staffFormInput(form)); }

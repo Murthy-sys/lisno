@@ -7,7 +7,7 @@ import { Button } from "../../ui/primitives";
 import { colors, fonts, spacing } from "../../ui/tokens";
 import { ProtectedDocumentViewer } from "../documents/ProtectedDocumentViewer";
 import { clientEstimatePdfPath } from "./clientReviewApi";
-import { clientEstimateMoney, publishedMoney, type ClientEstimate, type ClientEstimateSnapshot } from "./clientReviewModel";
+import { clientEstimateMoney, publishedMoney, publishedEstimateTotal, type ClientEstimate, type ClientEstimateSnapshot } from "./clientReviewModel";
 
 export function PublishedEstimateItems({ snapshot }: { readonly snapshot: ClientEstimateSnapshot }) {
   const groups = new Map<string, { title: string; lines: ClientEstimateSnapshot["lineItems"] }>();
@@ -23,7 +23,7 @@ export function PublishedEstimateItems({ snapshot }: { readonly snapshot: Client
       <Text accessibilityRole="header" style={styles.groupTitle}>{group.title}</Text>
       {group.lines.map((line, index) => {
         const rate = publishedMoney(line.rate, line.ratePaise);
-        const amount = publishedMoney(line.amount, line.amountPaise);
+        const amount = line.pmcPaymentSplit ? line.pmcPaymentSplit.estimatedValuePaise / 100 : publishedMoney(line.amount, line.amountPaise);
         return <View key={line.id ?? `${line.catalogueId ?? "line"}-${index}`} testID={`estimate-line-${id}-${index}`} style={styles.line}>
           <View style={styles.lineCopy}>
             <Text style={styles.name}>{line.mainLineName || line.roomName || `Included item ${index + 1}`}</Text>
@@ -34,12 +34,29 @@ export function PublishedEstimateItems({ snapshot }: { readonly snapshot: Client
             {line.estimateNotes?.map((note, noteIndex) => <Text key={noteIndex} style={styles.copy}>{note}</Text>)}
             {line.dimensions ? <Text style={styles.copy}>Recorded dimensions: L {line.dimensions.length} × W {line.dimensions.width} × H {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}{line.dimensionsMandatory ? "; quantity = L × W" : ""}</Text> : null}
             <Text style={styles.copy}>{line.quantity} {line.uomName ?? line.unit ?? ""}{line.pricingBasis ? " · Calculated from components" : ` × ${rate === null ? "Rate unavailable" : clientEstimateMoney(rate)}`}</Text>
+            {line.pmcPaymentSplit ? <View>
+              <Text style={styles.copy}>PMC estimated value including GST: {clientEstimateMoney(line.pmcPaymentSplit.totalPayablePaise / 100)}</Text>
+              <Text style={styles.copy}>Payable to Lisno · {line.pmcPaymentSplit.marginBps / 100}% of estimated value before tax: {clientEstimateMoney(line.pmcPaymentSplit.lisnoPayablePaise / 100)}</Text>
+              <Text style={styles.copy}>Payable to vendor · remaining share: {clientEstimateMoney(line.pmcPaymentSplit.vendorPayablePaise / 100)}</Text>
+            </View> : null}
             {line.componentPricing?.components.map(component => <Text key={component.id} style={styles.copy}>{component.basketName} / {component.subBasketName ?? "Existing In-house settings"}: {clientEstimateMoney(component.totalPaise / 100)}</Text>)}
           </View>
-          <Text style={styles.amount}>{amount === null ? "Amount unavailable" : clientEstimateMoney(amount)}</Text>
+          <Text style={styles.amount}>{amount === null ? "Amount unavailable" : clientEstimateMoney(amount)}{line.pmcPaymentSplit ? " before GST" : ""}</Text>
         </View>;
       })}
     </View>)}
+  </View>;
+}
+
+export function PublishedPmcPayments({ snapshot }: { readonly snapshot: ClientEstimateSnapshot }) {
+  const summary = snapshot.pmcPaymentSummary;
+  if (!summary) return null;
+  return <View style={styles.group} accessibilityLabel="PMC payment breakdown">
+    <Text style={styles.copy}>PMC payable to Lisno: {clientEstimateMoney(summary.lisnoPayablePaise / 100)}</Text>
+    <Text style={styles.copy}>PMC payable to vendors: {clientEstimateMoney(summary.vendorPayablePaise / 100)}</Text>
+    <Text style={styles.copy}>Total PMC estimated value including GST: {clientEstimateMoney(summary.pmcTotalPayablePaise / 100)}</Text>
+    {summary.otherWorkPayablePaise > 0 ? <Text style={styles.copy}>Other work including GST: {clientEstimateMoney(summary.otherWorkPayablePaise / 100)}</Text> : null}
+    {summary.roundOffPaise !== 0 ? <Text style={styles.copy}>Round off: {summary.roundOffPaise < 0 ? "−" : "+"}{clientEstimateMoney(Math.abs(summary.roundOffPaise) / 100)}</Text> : null}
   </View>;
 }
 
@@ -59,7 +76,7 @@ export function ClientPreEstimateComparison({ estimate, session }: { readonly es
   const pdfOpen = pdfRoundId === before.reviewRoundId;
   return <View style={styles.comparison}>
     <Text accessibilityRole="header" style={styles.groupTitle}>{changes.noChanges ? "No changes from pre-estimate" : "Changes from your approved pre-estimate"}</Text>
-    <Text style={styles.copy}>Pre-estimate: {clientEstimateMoney(publishedMoney(before.snapshot.total, before.snapshot.totalPaise))}</Text>
+    <Text style={styles.copy}>Pre-estimate: {clientEstimateMoney(publishedEstimateTotal(before.snapshot))}</Text>
     <Text style={styles.copy}>Final submitted estimate: {clientEstimateMoney(estimate.total)}</Text>
     {changes.scopeChanged ? <Text style={styles.copy}>Room or scope details have changed. Review the submitted scope before approving.</Text> : null}
     {changes.addedLineIds.map((id) => <Text key={`added-${id}`} style={styles.copy}>Added: {describe(after.snapshot, id)}</Text>)}
@@ -68,8 +85,8 @@ export function ClientPreEstimateComparison({ estimate, session }: { readonly es
     <Button label={`${expanded ? "Hide" : "View"} approved pre-estimate · Version ${before.estimateVersion}`} variant="quiet" onPress={() => setExpanded((value) => !value)} />
     {expanded ? <View style={styles.group}>
       <PublishedEstimateItems snapshot={before.snapshot} />
-      <Text style={styles.copy}>Subtotal: {clientEstimateMoney(publishedMoney(before.snapshot.subtotal, before.snapshot.subtotalPaise))}</Text>
-      <Text style={styles.copy}>GST: {clientEstimateMoney(publishedMoney(before.snapshot.gst, before.snapshot.gstPaise))}</Text>
+      {before.snapshot.pmcPaymentSummary ? <PublishedPmcPayments snapshot={before.snapshot} /> : <><Text style={styles.copy}>Subtotal: {clientEstimateMoney(publishedMoney(before.snapshot.subtotal, before.snapshot.subtotalPaise))}</Text>
+      <Text style={styles.copy}>GST: {clientEstimateMoney(publishedMoney(before.snapshot.gst, before.snapshot.gstPaise))}</Text></>}
       {canDownload ? <Button label="Open approved pre-estimate PDF" variant="secondary" onPress={() => setPdfRoundId(before.reviewRoundId)} /> : null}
     </View> : null}
     {canDownload ? <ProtectedDocumentViewer visible={pdfOpen} source={pdfOpen ? {

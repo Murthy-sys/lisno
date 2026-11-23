@@ -1,5 +1,8 @@
+import { buildEstimatePmcPayments, estimatePmcPaymentsAreValid, readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { toEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { projectEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
+import { calculateEstimatePmcPayable } from "../domain/estimate-pmc-payable.js";
+import { allocateEstimatePayables } from "../domain/estimate-gst-presentation.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { readProjectNumbers } from "./project-number-read.service.js";
@@ -71,7 +74,12 @@ export async function estimateTierScope(actor: PublicUser, projectId: string, se
   const userQuery = UserModel.findOne({ _id: actor.id, active: true, deletedAt: null, role: actor.role });
   const projectQuery = ProjectModel.findById(projectId);
   const estimateQuery = EstimateModel.findOne({ projectId });
-  if (session) { userQuery.session(session); projectQuery.session(session); estimateQuery.session(session); }
+  if (session) {
+    userQuery.session(session);
+    projectQuery.session(session);
+    // Full-array writes must retain staff-only evidence for other, untouched lines.
+    estimateQuery.select("+lineItems.pmcMarginSnapshot").session(session);
+  }
   const user = await userQuery.lean();
   const project = await projectQuery.lean() as Row | null;
   const estimate = await estimateQuery.lean() as Row | null;
@@ -137,7 +145,9 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
       ratePaise: !component.unavailableReason && validMoney(component.baseRatePaise) ? component.baseRatePaise : null,
       available: !component.unavailableReason && componentAmount([component.id]) !== null,
       amountPaise: componentAmount([component.id])?.totalPaise ?? null }));
-    const ratePaise = components !== undefined
+    const pmc = mode === "pmc" && pricing?.pmcPricing && source && matchingUom
+      ? calculateEstimatePmcPayable(pricing.pmcPricing, line.quantity, source.line.uom.decimalScale) : null;
+    const ratePaise = mode === "pmc" ? pmc?.revisedUnitRatePaise ?? null : components !== undefined
       ? tierOf(line) === modeTier ? selectedInHouseBaseRate(components, line.selectedInHouseComponentIds) : null
       : mode && pricing ? pricing.modeBaseRatesPaise[mode] : null;
     const componentPricing = components !== undefined && (governed || tierOf(line) === modeTier)
@@ -147,17 +157,38 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
     const unavailableReason = !source ? "Configuration is unavailable." : !matchingUom ? "Ask Sales to review the changed unit and quantity." :
       !pricing ? "This tier is not configured for this main line." : !mode ? "Ask Sales to choose a pricing mode." :
       !hasCost ? "Price is not configured for this tier." : null;
+    // Zero is inside the inclusive low-quantity band and yields its unit rate even for an empty band.
+    const lowBand = pmc && pricing?.pmcPricing && source
+      ? calculateEstimatePmcPayable(pricing.pmcPricing, 0, source.line.uom.decimalScale) : null;
     choices.push({ modeTier, available, unavailableReason,
+      ...(available && lowBand && pricing?.pmcPricing ? { vendorRateSchedule: {
+        lowQuantityLimit: pricing.pmcPricing.lowQuantityLimit,
+        standardRatePaise: pricing.pmcPricing.baseRatePaise, lowQuantityRatePaise: lowBand.revisedUnitRatePaise
+      } } : {}),
       description: source?.line.applicableTiers.includes(modeTier) ? source.line.tierDescriptions?.[modeTier] ?? null : null,
       ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, ...(governed ? { aggregatePricing: toEstimateAggregatePricing(componentPricing) } : { componentPricing }) } : {}),
       ...(governed ? { inHouseUsage: pricing.inHouseUsage, inHousePricingState: pricing.inHousePricingState } : {}),
       ratePaise: components === undefined && available && validMoney(ratePaise) ? ratePaise : null,
-      amountPaise: components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? estimateAmountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
+      amountPaise: mode === "pmc" ? pmc?.finalVendorChargesPaise ?? null : components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? estimateAmountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
       source: source ? { revisionId: source.line.revisionId, itemVersion: source.line.itemVersion,
         revisionVersion: source.line.revisionVersion, uomId: source.line.uom.id } : null,
       ...(componentChoices === undefined ? {} : { inHouseComponents: componentChoices }) });
   }
   return choices;
+}
+
+/** Allocate across the complete saved scope before filtering rows by client visibility. */
+function savedPayables(estimate: Row | null | undefined): Map<string, number> {
+  const rows = (estimate?.lineItems ?? []).filter((line: Row) => line.included !== false);
+  const amounts: number[] = rows.map((line: Row) => line.amountPaise ?? (
+    typeof line.amount === "number" ? Math.round(line.amount * 100) : null));
+  if (!estimate || !amounts.every(validMoney)) return new Map();
+  const subtotal = estimate.subtotalPaise ?? Math.round(estimate.subtotal * 100);
+  const gst = estimate.gstPaise ?? Math.round(estimate.gst * 100);
+  if (!validMoney(subtotal) || !validMoney(gst) || !Number.isSafeInteger(subtotal + gst) ||
+      amounts.reduce((sum, amount) => sum + BigInt(amount), 0n) !== BigInt(subtotal) || subtotal === 0 && gst !== 0) return new Map();
+  const allocated = allocateEstimatePayables(amounts, { subtotalPaise: subtotal, gstPaise: gst });
+  return new Map(rows.map((line: Row, index: number) => [String(line.id), allocated[index]!]));
 }
 
 export async function presentEstimateTiers(context: Awaited<ReturnType<typeof estimateTierScope>>, session?: ClientSession,
@@ -166,6 +197,7 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
   const projectId = String(context.project._id);
   const projectNumber = (await readProjectNumbers([projectId], session)).get(projectId) ?? null;
   const savedLines: Row[] = (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration" && line.included);
+  const payables = savedPayables(estimate);
   const presentedLines: Row[] = options.includeExcluded
     ? (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration") : savedLines;
   const current = await resolveEstimatorCatalogueLines(presentedLines.map(line => String(line.mainLineId)), session);
@@ -185,16 +217,26 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
         dimensionsNeedReview: source ? dimensionsNeedReview(line, source) : true,
         pricingMode: modeOf(line), modeTier: tierOf(line), ratePaise: validMoney(line.ratePaise) ? line.ratePaise : null,
         amountPaise: validMoney(line.amountPaise) ? line.amountPaise : null,
+        ...(readEstimatePmcPaymentSplit(line.pmcPaymentSplit) ? { pmcPaymentSplit: readEstimatePmcPaymentSplit(line.pmcPaymentSplit)! } : {}),
         ...(estimateComponentLineAmountIsValid(line) ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing: line.componentPricing } : {}),
         ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
+        ...(payables.has(String(line.id)) ? { taxInclusiveAmountPaise: payables.get(String(line.id))! } : {}),
         choices: await estimateTierChoices(line, source, session) });
     }
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
+  const editState = editing(context);
   return projectEstimateInHouseResponse({ projectId, projectNumber, estimateId: estimate ? String(estimate._id) : null,
-    estimateVersion: estimate?.version ?? null, ...editing(context), totalPaise: validMoney(totalPaise) ? totalPaise : null,
+    estimateVersion: estimate?.version ?? null, ...editState, totalPaise: validMoney(totalPaise) ? totalPaise : null,
     ...(estimate?.roundOffPaise === undefined ? {} : { roundOffPaise: Number(estimate.roundOffPaise) }),
-    isIncomplete: Boolean(estimate?.isIncomplete) || savedLines.some(line => {
+    ...(readEstimatePmcPaymentSummary(estimate?.pmcPaymentSummary) ? { pmcPaymentSummary: readEstimatePmcPaymentSummary(estimate?.pmcPaymentSummary)! } : {}),
+    isIncomplete: Boolean(estimate?.isIncomplete) || !!estimate && !estimatePmcPaymentsAreValid(estimate as any, { requirePmcSplit: true }) || savedLines.some(line => {
       const source = current.get(line.mainLineId);
+      if (editState.editingAllowed && line.pricingMode === "pmc") {
+        const pricing = source && estimatorCatalogueTierPricing(source.line, tierOf(line));
+        const currentPayable = source && calculateEstimatePmcPayable(pricing?.pmcPricing, line.quantity, source.line.uom.decimalScale);
+        if (!currentPayable || currentPayable.revisedUnitRatePaise !== line.ratePaise || currentPayable.finalVendorChargesPaise !== line.amountPaise ||
+          currentPayable.pmcMarginBps !== line.pmcPaymentSplit?.marginBps || currentPayable.pmcMarginAmountPaise !== line.pmcPaymentSplit?.lisnoAmountPaise) return true;
+      }
       return source ? dimensionsNeedReview(line, source) : false;
     }), lines }, current);
 }
@@ -256,6 +298,8 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         let dimensions = line.dimensions;
         let ratePaise: number | null;
         let rateSource = line.rateSource;
+        const pmcFor = (units: number) => mode === "pmc" && pricing?.pmcPricing
+          ? calculateEstimatePmcPayable(pricing.pmcPricing, units, source.line.uom.decimalScale) : null;
         if (change.kind === "tier") {
           if (dimensionsNeedReview(line, source)) {
             throw new ApiError(409, "ESTIMATE_DIMENSIONS_REQUIRED", "Enter or review Length, Width and Height before changing this line’s tier.");
@@ -269,7 +313,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           } else {
             if (change.input.selectedInHouseComponentIds?.length) return unavailable();
             selected = undefined;
-            ratePaise = pricing.modeBaseRatesPaise[mode];
+            ratePaise = mode === "pmc" ? pmcFor(quantity)?.revisedUnitRatePaise ?? null : pricing.modeBaseRatesPaise[mode];
           }
           if (!validMoney(ratePaise) || ratePaise <= 0) return unavailable();
           rateSource = "configuration";
@@ -295,7 +339,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
             if (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !await currentEstimateComponentPricingMatches(line, source, session)) {
               throw new ApiError(409, "ESTIMATE_DIMENSIONS_PRICE_CHANGED", "The configured component price changed. Ask Sales to review this line before saving dimensions.");
             }
-            const configuredRate = mode && pricing ? mode === "in_house" && pricing.inHouseComponents !== undefined
+            const configuredRate = mode === "pmc" ? pmcFor(line.quantity)?.revisedUnitRatePaise : mode && pricing ? mode === "in_house" && pricing.inHouseComponents !== undefined
               ? selectedInHouseBaseRate(pricing.inHouseComponents, selected) : pricing.modeBaseRatesPaise[mode] : null;
             if (validMoney(ratePaise) && (!pricing || configuredRate !== ratePaise)) {
               throw new ApiError(409, "ESTIMATE_DIMENSIONS_PRICE_CHANGED", "The configured price changed. Ask Sales to review this line before saving dimensions.");
@@ -305,7 +349,13 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const componentPricing = mode === "in_house" && rateSource === "configuration" && pricing?.inHouseComponents !== undefined
           ? await resolveEstimateComponentPricing(source, selectedTier, quantity, selected, session) : undefined;
         if (componentPricing) ratePaise = null;
-        const amountPaise = componentPricing ? componentPricing.totalPaise : ratePaise === null ? null : estimateAmountFor(ratePaise, quantity, source.line.uom.decimalScale);
+        const pmc = pmcFor(quantity);
+        if (mode === "pmc") {
+          if (!pmc) return unavailable();
+          ratePaise = pmc.revisedUnitRatePaise;
+          rateSource = "configuration";
+        }
+        const amountPaise = pmc ? pmc.finalVendorChargesPaise : componentPricing ? componentPricing.totalPaise : ratePaise === null ? null : estimateAmountFor(ratePaise, quantity, source.line.uom.decimalScale);
         if (ratePaise !== null && amountPaise === null) return unavailable();
         const nextLine: Row = { ...line, modeTier: selectedTier, rateSource, ratePaise, rate: ratePaise === null ? null : ratePaise / 100,
           quantity, amountPaise, amount: amountPaise === null ? null : amountPaise / 100, revisionId: source.line.revisionId,
@@ -318,6 +368,13 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           designRules: source.line.designRules, designRulesDigest: source.line.designRulesDigest, estimateNotes: source.line.estimateNotes };
         delete nextLine.pricingBasis;
         delete nextLine.componentPricing;
+        delete nextLine.pmcPaymentSplit;
+        delete nextLine.pmcMarginSnapshot;
+        delete nextLine.pmcVendorPayable;
+        if (pmc) {
+          nextLine.pmcVendorPayable = true;
+          nextLine.pmcMarginSnapshot = { pmcMarginBps: pmc.pmcMarginBps, pmcMarginAmountPaise: pmc.pmcMarginAmountPaise };
+        }
         if (componentPricing) { nextLine.pricingBasis = ESTIMATE_COMPONENT_PRICING_BASIS; nextLine.componentPricing = componentPricing; }
         if (source.line.dimensionsMandatory) nextLine.dimensionRule = source.line.dimensionRule;
         if (dimensions !== undefined) nextLine.dimensions = dimensions;
@@ -344,7 +401,11 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
         if (!rounded) return unavailable();
         const { totalPaise, roundOffPaise } = rounded;
-        const values: Row = { lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise,
+        let pmcPayments: ReturnType<typeof buildEstimatePmcPayments>;
+        try { pmcPayments = buildEstimatePmcPayments(lineItems, { subtotalPaise, gstPaise, totalPaise, roundOffPaise }); }
+        catch { return unavailable(); }
+        lineItems = pmcPayments.lineItems;
+        const values: Row = { ...(pmcPayments.pmcPaymentSummary ? { pmcPaymentSummary: pmcPayments.pmcPaymentSummary } : {}), lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise,
           subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
           isIncomplete: lineItems.some((entry: Row) => entry.included && entry.source === "configuration" &&
             ((!validMoney(entry.ratePaise) || !validMoney(entry.amountPaise)) && !estimateComponentLineAmountIsValid(entry) || !estimateLineDimensionsValid(entry))), status: "draft" };
@@ -354,7 +415,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           if (estimatePhysicalScopeChanged(estimate, { ...estimate, lineItems })) values["estimation.designScopeRevision"] = estimate.estimation.designScopeRevision + 1;
         }
         const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: input.expectedVersion },
-          { $set: values, $inc: { version: 1 } }, { session, returnDocument: "after", runValidators: true }).lean() as Row | null;
+          { $set: values, ...(pmcPayments.pmcPaymentSummary ? {} : { $unset: { pmcPaymentSummary: "" } }), $inc: { version: 1 } }, { session, returnDocument: "after", runValidators: true }).lean() as Row | null;
         if (!saved) return changed();
         for (const event of auditEvents) await audit.appendInMongoTransaction(event, session);
         result = await presentEstimateTiers({ ...context, estimate: saved }, session);

@@ -1,11 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const AI_ESTIMATOR_KNOWLEDGE_FORMULA_VERSION =
-  "knowledge-preview-v1" as const;
-export const AI_ESTIMATOR_KNOWLEDGE_CURRENCY = "INR" as const;
-export const AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS = 10_000;
-export const AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE =
-  Number.MAX_SAFE_INTEGER;
+export * from "./knowledge-pricing-constants.js";
 export const AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT = 4_000;
 export const AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT = 240;
 export const AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS = 200;

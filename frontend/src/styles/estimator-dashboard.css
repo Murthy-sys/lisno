@@ -2608,6 +2608,24 @@
 
 .configured-estimate-line__pmc-switch { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; margin: 0 3px 0 0; padding: 0; border: 0; border-radius: 4px; color: #172344; background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 
+.configured-estimate-line__pmc-controls { display: inline-flex; align-items: center; }
+.configured-estimate-line__pmc-reason {
+  position: fixed;
+  z-index: 80;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(32ch, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid #c6cec5;
+  background: #faf9f6;
+  color: #344239;
+  font-family: var(--font-interface);
+  font-size: .875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .configured-estimate-line__pmc-switch:disabled { cursor: default; }
 
 .configured-estimate-line__pmc-track { display: inline-flex; align-items: center; width: 32px; height: 18px; padding: 3px; border-radius: 20px; background: #aeb5ba; }

@@ -1,3 +1,4 @@
+import type { EstimatePmcPricing } from "../../../../shared/estimation/estimatePmcPayable";
 import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -26,6 +27,7 @@ export interface EstimationInHouseComponent {
 }
 
 export interface EstimationTierPricing {
+  pmcPricing?: EstimatePmcPricing;
   modeBaseRatesPaise: EstimationModeBaseRatesPaise;
   inHouseComponents?: EstimationInHouseComponent[];
   inHouseUsage?: "estimator" | "execution" | null;
@@ -74,6 +76,7 @@ export interface EstimationCatalogueMainLine {
   inHouseComponents?: EstimationInHouseComponent[];
   inHouseUsage?: "estimator" | "execution" | null;
   inHousePricingState?: "ready" | "incomplete" | "invalid";
+  pmcPricing?: EstimatePmcPricing;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   uom: EstimationCatalogueUom;
 }

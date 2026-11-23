@@ -16,6 +16,21 @@ const props = { currentLine: line, item: draftQuotationItem(line), selected: tru
   canChangePricingMode: false, onTogglePmc: vi.fn(), onChange: vi.fn(), money: (value: number | null) => String(value) };
 
 describe("client estimator description", () => {
+  it("applies the inclusive PMC quantity threshold while preserving the recorded tax-inclusive amount", () => {
+    const pmc: QuotationLine = { ...line, pricingMode: "pmc", taxInclusiveAmountPaise: 118001,
+      choices: [{ ...line.choices[0]!, vendorRateSchedule: { lowQuantityLimit: "2.50", standardRatePaise: 10_000, lowQuantityRatePaise: 11_500 } }] };
+    const item = draftQuotationItem(pmc);
+    const view = render(<ClientQuotationLine {...props} currentLine={pmc} item={{ ...item, quantity: "2.5" }} />);
+    expect(screen.getByLabelText(/Configured price including GST/)).toHaveTextContent("13570");
+    expect(screen.getByLabelText(/Saved amount including GST/)).toHaveTextContent("118001");
+    view.rerender(<ClientQuotationLine {...props} currentLine={pmc} item={{ ...item, quantity: "2.51" }} />);
+    expect(screen.getByLabelText(/Configured price including GST/)).toHaveTextContent("11800");
+    expect(screen.getByLabelText(/Saved amount including GST/)).toHaveTextContent("118001");
+    expect(screen.queryByText(/Lisno margin/)).not.toBeInTheDocument();
+    view.rerender(<ClientQuotationLine {...props} disabled useRecordedPmcRate currentLine={{ ...pmc, ratePaise: 7000 }} item={item} />);
+    expect(screen.getByLabelText(/Configured price including GST/)).toHaveTextContent("8260");
+  });
+
   it("keeps an incompatible saved row visible and removable while blocking new inclusion", () => {
     const saved = { ...line, roomMismatch: true };
     const view = render(<ClientQuotationLine {...props} currentLine={saved} />);
@@ -55,4 +70,16 @@ describe("client estimator description", () => {
     view.rerender(<ClientQuotationLine {...props} selected={false} />);
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
   });
+});
+
+it("keeps PMC recipient amounts tied to the saved row while quantity edits await save", () => {
+  const pmc: QuotationLine = { ...line, pricingMode: "pmc", pmcPaymentSplit: {
+    version: 1, marginBps: 2000, vendorAmountPaise: 100000, lisnoAmountPaise: 25000, estimatedValuePaise: 125000,
+    vendorPayablePaise: 118000, lisnoPayablePaise: 29500, totalPayablePaise: 147500, taxBasis: { subtotalPaise: 100000, gstPaise: 18000 }
+  } };
+  render(<ClientQuotationLine {...props} currentLine={pmc} item={{ ...draftQuotationItem(pmc), quantity: "25" }} />);
+  expect(screen.getByLabelText(/Saved amount including GST/)).toHaveTextContent("147500");
+  expect(screen.getByText("Payable to Lisno · 20% of estimated value before tax").nextElementSibling).toHaveTextContent("₹295");
+  expect(screen.getByText("Payable to vendor · remaining share").nextElementSibling).toHaveTextContent("₹1,180");
+  expect(screen.getByLabelText(/Configured price including GST/)).toHaveTextContent("11800");
 });

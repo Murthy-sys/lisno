@@ -416,6 +416,7 @@ export interface EstimatorOption {
 }
 
 export interface EstimateSummaryRecord {
+  pmcPaymentSummary?: import("../domain/estimate-pmc-payment-split.js").EstimatePmcPaymentSummary;
   estimation?: EstimationLifecycle | null;
   quotationApproval?: import("../services/quotation-approval-state.service.js").QuotationApprovalResolution;
   lineItems?: WorkflowEstimateLine[];

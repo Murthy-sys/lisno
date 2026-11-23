@@ -1,3 +1,4 @@
+import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "../../../shared/estimation/estimatePmcPaymentSplit";
 import type { ProjectInitiationMetadata } from "../../../shared/projects/projectInitiation";
 import type { EstimateProposalMetadata } from "../../../shared/estimation/estimateProposal";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
@@ -281,6 +282,7 @@ export interface EstimateClientReviewSummary {
 }
 
 export interface EstimateClientReviewSnapshot {
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   proposal?: EstimateProposalMetadata;
   rooms?: readonly Record<string, unknown>[];
   bedroomCount?: number | null;
@@ -309,6 +311,8 @@ export interface EstimateClientReviewSnapshot {
     itemType?: "main_line" | "temporary";
     classification?: "standard" | "special";
     pricingMode?: "pmc" | "sub_vendor" | "in_house";
+    pmcPaymentSplit?: EstimatePmcPaymentSplit;
+    pmcVendorPayable?: true;
     modeTier?: KnowledgeModeTier;
     dimensionsMandatory?: boolean;
     dimensionRule?: EstimateDimensionRule | null;

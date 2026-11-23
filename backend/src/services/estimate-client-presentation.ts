@@ -1,3 +1,4 @@
+import { estimatePmcPaymentsAreValid, readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing, type EstimateComponentPricing } from "../domain/estimate-component-pricing.js";
@@ -38,6 +39,12 @@ const configuredLine = z.object({
   dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
   dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  pmcVendorPayable: z.literal(true).optional(),
+  pmcPaymentSplit: z.unknown().transform((value, ctx) => {
+    const parsed = readEstimatePmcPaymentSplit(value);
+    if (!parsed) { ctx.addIssue({ code: "custom", message: "Invalid PMC payment split." }); return z.NEVER; }
+    return parsed;
+  }).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
   componentPricing: z.custom<EstimateComponentPricing>(value => readEstimateComponentPricing(value) !== null).optional(),
@@ -52,14 +59,20 @@ const configuredLine = z.object({
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
 }).refine((line) => estimateDimensionSnapshotValid(line) && configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
+  (line.pmcVendorPayable === undefined || line.pricingMode === "pmc" && line.rateSource === "configuration") &&
   (line.pricingBasis === undefined || estimateComponentLineAmountIsValid(line)) &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null || estimateComponentLineAmountIsValid(line))).transform(line => {
-    if (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS) return line;
+    if (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS || line.pmcPaymentSplit !== undefined) return line;
     const { sourceItemVersion: _itemVersion, sourceRevisionVersion: _revisionVersion, ...legacy } = line;
     return legacy;
   });
 const snapshotSchema = z.object({
   proposal: estimateProposalSchema.optional(),
+  pmcPaymentSummary: z.unknown().transform((value, ctx) => {
+    const parsed = readEstimatePmcPaymentSummary(value);
+    if (!parsed) { ctx.addIssue({ code: "custom", message: "Invalid PMC payment summary." }); return z.NEVER; }
+    return parsed;
+  }).optional(),
   rooms: z.array(z.record(z.unknown())).optional(), bedroomCount: z.number().int().nullable().optional(), scopes: z.array(z.string()).optional(),
   clientName: z.string().min(1), projectName: z.string().min(1),
   location: z.string(), propertyType: z.string().min(1),
@@ -72,6 +85,7 @@ const snapshotSchema = z.object({
     mainBasketId: z.string().min(1), classification: z.enum(["standard", "special"])
   })).optional()
 }).superRefine((snapshot, ctx) => {
+  if (!estimatePmcPaymentsAreValid(snapshot)) ctx.addIssue({ code: "custom", message: "Published PMC payments must reconcile." });
   if (snapshot.selectedMainBasketClassifications !== undefined) {
     const selectedIds = snapshot.selectedMainBasketIds ?? [];
     const classifiedIds = snapshot.selectedMainBasketClassifications.map((entry) => entry.mainBasketId);
@@ -240,6 +254,7 @@ export function presentClientEstimate(
     subtotalPaise: snapshot?.subtotalPaise ?? null,
     gstPaise: snapshot?.gstPaise ?? null,
     totalPaise: snapshot?.totalPaise ?? null,
+    ...(snapshot?.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: snapshot.pmcPaymentSummary }),
     ...(snapshot?.roundOffPaise === undefined ? {} : { roundOffPaise: snapshot.roundOffPaise }),
     selectedMainBasketIds: stableDrawingMetadata ? snapshot?.selectedMainBasketIds ?? [] : [],
     selectedMainBasketClassifications: stableDrawingMetadata ? snapshot?.selectedMainBasketClassifications ?? [] : [],
@@ -278,15 +293,18 @@ export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
   const current = new Map<string, Row>((after.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
   const addedLineIds = [...current.keys()].filter((id) => !previous.has(id));
   const removedLineIds = [...previous.keys()].filter((id) => !current.has(id));
-  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes", "selectedInHouseComponentIds", "pricingBasis", "componentPricing", "dimensions", "dimensionRule"];
+  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes", "selectedInHouseComponentIds", "pricingBasis", "componentPricing", "dimensions", "dimensionRule", "pmcPaymentSplit"];
   const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && (
     fields.some((field) => !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)) ||
     (previous.get(id)!.modeTier ?? "signature") !== (current.get(id)!.modeTier ?? "signature") ||
     (previous.get(id)!.dimensionsMandatory ?? false) !== (current.get(id)!.dimensionsMandatory ?? false)));
   const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>
     !isDeepStrictEqual(before[field] ?? null, after[field] ?? null));
+  const beforeTotal = before.pmcPaymentSummary?.customerTotalPayablePaise !== undefined ? before.pmcPaymentSummary.customerTotalPayablePaise / 100 : before.total;
+  const afterTotal = after.pmcPaymentSummary?.customerTotalPayablePaise !== undefined ? after.pmcPaymentSummary.customerTotalPayablePaise / 100 : after.total;
   return { addedLineIds, removedLineIds, changedLineIds, scopeChanged,
-    noChanges: !addedLineIds.length && !removedLineIds.length && !changedLineIds.length && !scopeChanged && before.total === after.total &&
+    noChanges: !addedLineIds.length && !removedLineIds.length && !changedLineIds.length && !scopeChanged && beforeTotal === afterTotal &&
+      isDeepStrictEqual(before.pmcPaymentSummary ?? null, after.pmcPaymentSummary ?? null) &&
       (before.roundOffPaise ?? 0) === (after.roundOffPaise ?? 0),
-    beforeTotal: before.total, afterTotal: after.total };
+    beforeTotal, afterTotal };
 }

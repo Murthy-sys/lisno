@@ -98,6 +98,18 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
+  it("shows the configured description on a selected line in the authenticated Sales workspace", async () => {
+    const user = userEvent.setup();
+    const fixture = setup("draft", true);
+    const paint = fixture.catalogue.items[1]!.subBaskets[0]!.mainLines[0]!;
+    paint.tierDescriptions = { signature: "Washable wall finish." };
+    paint.tierDetails = { signature: { specifications: [{ id: "spec", name: "Private coating", brands: [{ id: "brand", name: "Private brand" }] }] } };
+    fixture.mount();
+    await user.click(await screen.findByRole("checkbox", { name: /Include Wall paint/ }));
+    expect(await screen.findByRole("region", { name: /Signature description for .*Wall paint/ })).toHaveTextContent("Washable wall finish.");
+    expect(screen.queryByText(/Private coating|Private brand/)).not.toBeInTheDocument();
+  });
+
   it("adds a Balcony item from an unselected basket and restores its edited quantity after reopening", async () => {
     const fixture = setup("draft", true, { selectedMainBasketIds: ["pop"], rooms: [
       { id: "living", typeId: "living", label: "Living & Dining", sqft: 200, length: 20, width: 10 },

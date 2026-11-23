@@ -113,7 +113,8 @@ describe("client working estimate tier selection", () => {
   });
 
   it("preserves PMC and Sub-Vendor choices and amounts when the same tier has an explicit In-house policy", async () => {
-    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.tierConfigurations.premium.payload.modeCalculations.pmc.baseRatePaise": 7000 } });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.tierConfigurations.premium.payload.modeCalculations.pmc": { baseRatePaise: 7000, lowQuantityLimit: "0", impactBps: 0 },
+      "payload.tierConfigurations.premium.payload.pmcMarginBps": 1500 } });
     await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.1.classification": "special", "lineItems.1.pricingMode": "pmc" } });
     const before = await service.detail(sales, "tier-project");
     const cost = { baseRatePaise: 3000, lowQuantityLimit: "0", impactBps: 0, minimumMarkupBps: 1000, startingMarkupBps: 2000 };

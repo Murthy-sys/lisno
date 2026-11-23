@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -102,6 +103,30 @@ describe("estimate client review domain helpers", () => {
 });
 
 describe("EstimateClientReviewRound persistence model", () => {
+  it("persists immutable public PMC evidence, rejects a mismatched summary, and leaves legacy snapshots absent", async () => {
+    const original = snapshot();
+    const payments = buildEstimatePmcPayments(original.lineItems.map(line => ({ ...line,
+      id: "pmc-line", source: "configuration", catalogueId: "pmc-main", mainLineId: "pmc-main", roomId: "room-a",
+      mainBasketId: "basket-a", subBasketId: "sub-a", revisionId: "revision-a", uomId: "uom-a",
+      mainBasketName: "Painting", subBasketName: "Walls", mainLineName: "Wall work", uomName: "Square feet",
+      specification: null, classification: "special", pricingMode: "pmc", rateSource: "configuration", pmcVendorPayable: true,
+      ratePaise: 12000, amountPaise: 120000, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 30000 }
+    })), { subtotalPaise: 120000, gstPaise: 21600, totalPaise: 141600 });
+    const saved = { ...original, ...payments, lineItems: payments.lineItems.map(({ pmcMarginSnapshot: _private, ...line }) => line),
+      subtotalPaise: 120000, gstPaise: 21600, totalPaise: 141600 };
+    const document = round({ estimateSnapshot: saved });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject().estimateSnapshot.pmcPaymentSummary).toEqual(payments.pmcPaymentSummary);
+    expect(document.toObject().estimateSnapshot.lineItems[0]?.pmcPaymentSplit).toEqual(payments.lineItems[0]?.pmcPaymentSplit);
+    expect(document.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("pmcMarginSnapshot");
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.pmcPaymentSummary").options.immutable).toBe(true);
+    await expect(round({ estimateSnapshot: { ...saved, pmcPaymentSummary: { ...payments.pmcPaymentSummary, customerTotalPayablePaise: 177001 } } }).validate()).rejects.toThrow();
+    await expect(round({ estimateSnapshot: { ...saved, pmcPaymentSummary: undefined } }).validate()).rejects.toThrow();
+    const legacy = round();
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.toObject().estimateSnapshot).not.toHaveProperty("pmcPaymentSummary");
+  });
+
   it("validates explicit final rounding without silently modifying legacy snapshot totals", async () => {
     const saved = { ...snapshot(), subtotal: 86.86, subtotalPaise: 8_686, gst: 15.64, gstPaise: 1_564,
       total: 102, totalPaise: 10_200, roundOffPaise: -50 };

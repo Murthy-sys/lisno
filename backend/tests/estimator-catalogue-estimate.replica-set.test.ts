@@ -114,7 +114,8 @@ async function configureFixturePrices(lines: Record<string, any>[] = [configured
     const key = tier === "signature" ? "payload" : `payload.tierConfigurations.${tier}.payload`;
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: `fixture-price-${line.revisionId}` as never }, {
       $setOnInsert: { mainLineId: line.mainLineId, revisionId: line.revisionId, sectionKey: "advanced", applicability: "configured" },
-      $set: { [`${key}.subVendorMarginBps`]: 0, [`${key}.pmcMarginBps`]: 0,
+      $set: { [`${key}.subVendorMarginBps`]: 0, [`${key}.pmcMarginBps`]: 1500,
+        ...(line.pricingMode === "pmc" ? { [`${key}.modeCalculations.pmc.lowQuantityLimit`]: "0" } : {}),
         [`${key}.modeCalculations.${line.pricingMode ?? "sub_vendor"}.baseRatePaise`]: line.ratePaise,
         ...(tier === "signature" ? {} : { [`payload.tierConfigurations.${tier}.applicability`]: "configured" }) }
     }, { upsert: true });
@@ -158,14 +159,39 @@ async function seedHistoricalDraft(leadId: string, input: Record<string, any>[],
 describe("Configuration-owned estimation save prices", { timeout: 30_000 }, () => {
   async function pricedSource() {
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "owned-price" as never, mainLineId: "line-a", revisionId: "revision-a",
-      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0,
-        modeCalculations: { pmc: { baseRatePaise: 5003 }, sub_vendor: { baseRatePaise: 2001 } },
+      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 1500, subVendorMarginBps: 0,
+        modeCalculations: { pmc: { baseRatePaise: 5003, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 2001 } },
         tierConfigurations: { premium: { applicability: "configured", payload: { subVendorMarginBps: 0,
           modeCalculations: { sub_vendor: { baseRatePaise: 7011 } } } } } } });
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
   }
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "standard", pricingMode: "sub_vendor",
     modeTier: "signature", rateSource: "configuration", itemVersion: 1, revisionVersion: 1, ratePaise: 2001, quantity: 1, ...overrides });
+
+  it("provides the selected Signature PMC inputs and persists the switch on a reopened Sales estimate", async () => {
+    await pricedSource();
+    const pmc = { baseRatePaise: 7500, lowQuantityLimit: "150", impactBps: 1000 };
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "owned-price" }, { $set: {
+      "payload.modeCalculations.pmc": pmc, "payload.pmcMarginBps": 2000
+    } });
+    await ProjectModel.collection.insertOne({ _id: "switch-project" as never, assignedEstimatorId: actors.estimator.id,
+      estimationWorkflowVersion: 3, estimateRequirementsVersion: 0, estimationFenceEpoch: 0 });
+    const { server } = app({ "switch-lead": "switch-project" });
+    const catalogue = await request(server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const source = catalogue.body.data.items[0].subBaskets[0].mainLines.find((entry: { mainLineId: string }) => entry.mainLineId === "line-a");
+    expect(source.tierPricing.signature.pmcPricing).toEqual({ ...pmc, pmcMarginBps: 2000 });
+    expect(source.tierPricing.premium.pmcPricing).toBeUndefined();
+    const path = "/api/v1/leads/switch-lead/estimate";
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([line()])).expect(200);
+    const reopened = (await request(server).get(path).set(bearer("estimator")).expect(200)).body.data;
+    expect(reopened.capabilities.canChangePricingMode).toBe(true);
+    const id = reopened.lineItems[0].id;
+    const selected = line({ id, classification: "special", pricingMode: "pmc", ratePaise: 8250 });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([selected], ["basket-a"], reopened.version)).expect(200);
+    const saved = (await request(server).get(path).set(bearer("estimator")).expect(200)).body.data;
+    expect(saved.lineItems[0]).toMatchObject({ id, modeTier: "signature", quantity: 1, pricingMode: "pmc", ratePaise: 8250,
+      amountPaise: 8250, pmcVendorPayable: true, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 2063 } });
+  });
 
   it("rejects new manual, omitted-origin, forged and manufactured legacy prices without writes", async () => {
     await pricedSource(); const { server } = app(); const path = "/api/v1/leads/owned-price-new/estimate";
@@ -1081,15 +1107,15 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       itemType: "temporary", subBasketId: "sub-a" });
     await AiEstimatorKnowledgeSectionModel.collection.insertMany([
       { _id: "advanced-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 11_111 }, sub_vendor: { baseRatePaise: 22_222 }, in_house_labor: { baseRatePaise: 42_000, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 63_000, startingMarkupBps: 0 } } } },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 11_111, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 22_222 }, in_house_labor: { baseRatePaise: 42_000, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 63_000, startingMarkupBps: 0 } } } },
       { _id: "advanced-b", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { in_house: { baseRatePaise: 12_500, startingMarkupBps: 0 } } } },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { in_house: { baseRatePaise: 12_500, startingMarkupBps: 0 } } } },
       { _id: "advanced-temp", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { in_house: { baseRatePaise: 99_999, startingMarkupBps: 0 }, in_house_labor: { baseRatePaise: 10_000, startingMarkupBps: 0 }, in_house_material: null } } },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { in_house: { baseRatePaise: 99_999, startingMarkupBps: 0 }, in_house_labor: { baseRatePaise: 10_000, startingMarkupBps: 0 }, in_house_material: null } } },
       { _id: "advanced-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { in_house_labor: { baseRatePaise: 0, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 0, startingMarkupBps: 0 } } } },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { in_house_labor: { baseRatePaise: 0, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 0, startingMarkupBps: 0 } } } },
       { _id: "advanced-overflow", mainLineId: "line-overflow", revisionId: overflowRevision, sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { in_house_labor: { baseRatePaise: Number.MAX_SAFE_INTEGER, startingMarkupBps: 0 },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { in_house_labor: { baseRatePaise: Number.MAX_SAFE_INTEGER, startingMarkupBps: 0 },
           in_house_material: { baseRatePaise: 1, startingMarkupBps: 0 } } } }
     ] as never[]);
     await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" },
@@ -1101,7 +1127,7 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
     } as never);
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "advanced-a-pending", mainLineId: "line-a", revisionId: "revision-a-pending", sectionKey: "advanced", applicability: "configured",
-      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 33_333 }, sub_vendor: { baseRatePaise: 44_444 }, in_house_labor: { baseRatePaise: 90_000, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 90_000, startingMarkupBps: 0 } } }
+      payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 33_333, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 44_444 }, in_house_labor: { baseRatePaise: 90_000, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 90_000, startingMarkupBps: 0 } } }
     } as never);
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "overview-a-pending", mainLineId: "line-a", revisionId: "revision-a-pending", sectionKey: "overview",
@@ -1161,7 +1187,7 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       .set(bearer("estimator")).expect(200);
     const source = catalogue.body.data.items[0].subBaskets[0].mainLines[0];
     expect(source).toMatchObject({ mainLineId: "line-a", revisionId: "margin-draft", modeBaseRatesPaise: { sub_vendor: 25_000 } });
-    expect(JSON.stringify(catalogue.body.data)).not.toMatch(/subVendorMarginBps|subVendorMinimumMarginBps|pmcMarginBps|modeCalculations/u);
+    expect(JSON.stringify(catalogue.body.data)).not.toMatch(/subVendorMarginBps|subVendorMinimumMarginBps|modeCalculations/u);
     const line = configuredLine({ pricingMode: "sub_vendor", rateSource: "configuration", revisionId: "margin-draft",
       itemVersion: 1, revisionVersion: 2, ratePaise: 25_000, quantity: 2 });
     const path = "/api/v1/leads/lead-profit/estimate";
@@ -1188,10 +1214,53 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
     expect((await request(server).get("/api/v1/leads/lead-other-profit/estimate").set(bearer("otherEstimator")).expect(200)).body.data.totalPaise).toBe(13_000);
   });
 
+  it("saves the configured PMC split while keeping raw margin evidence private across unequal estimates", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "pmc-vendor", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { pmcMarginBps: 2000, pmcMinimumMarginBps: 1000, modeCalculations: {
+        pmc: { baseRatePaise: 10_000, lowQuantityLimit: "2", impactBps: 1000 }
+      } }
+    } as never);
+    await configureFixturePrices([directTemporaryLine({ ratePaise: 1000 })]);
+    const { server } = app({ "vendor-one": "project-one", "vendor-two": "project-two" });
+    const path = "/api/v1/leads/vendor-one/estimate";
+    const line = configuredLine({ classification: "special", pricingMode: "pmc", quantity: 10, ratePaise: 10_000 });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200);
+    const margin = { pmcMarginBps: 2000, pmcMarginAmountPaise: 25_000 };
+    expect(saved.body.data).toMatchObject({ subtotalPaise: 100_000, gstPaise: 18000, totalPaise: 118_000,
+      pmcPaymentSummary: { vendorPayablePaise: 118000, lisnoPayablePaise: 29500, customerTotalPayablePaise: 147500 },
+      lineItems: [{ ratePaise: 10_000, amountPaise: 100_000, pmcMarginSnapshot: margin }] });
+    expect((await request(server).get(path).set(bearer("estimator")).expect(200)).body.data.lineItems[0].pmcMarginSnapshot).toEqual(margin);
+    const mixed = [configuredLine({ classification: "special", pricingMode: "pmc", quantity: 1.25, ratePaise: 11_000 }),
+      directTemporaryLine({ ratePaise: 1_000, quantity: 3 })];
+    const other = await request(server).put("/api/v1/leads/vendor-two/estimate").set(bearer("otherEstimator")).send(estimateInput(mixed)).expect(200);
+    expect(other.body.data).toMatchObject({ subtotalPaise: 16750, gstPaise: 3015, totalPaise: 19800, roundOffPaise: 35,
+      pmcPaymentSummary: { vendorPayablePaise: 16225, lisnoPayablePaise: 4057, otherWorkPayablePaise: 3540, customerTotalPayablePaise: 23857 },
+      lineItems: [{ ratePaise: 11000, amountPaise: 13750, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 3438 } }, { amountPaise: 3000 }] });
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(stored!.lineItems[0]!.pmcMarginSnapshot).toBeUndefined();
+    await assertCurrentConfiguredPublication(stored as never);
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems[0]?.pmcVendorPayable).toBe(true);
+    expect(frozen.lineItems[0]?.pmcPaymentSplit).toMatchObject({ marginBps: 2000, vendorAmountPaise: 100000, lisnoAmountPaise: 25000 });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "pmc-vendor" }, { $set: { "payload.pmcMarginBps": 1500 } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(frozen.pmcPaymentSummary?.customerTotalPayablePaise).toBe(147500);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "pmc-vendor" }, { $set: { "payload.pmcMarginBps": 2000 } });
+    const legacy = structuredClone(stored!);
+    delete legacy.lineItems[0]!.pmcVendorPayable;
+    await expect(assertCurrentConfiguredPublication(legacy as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(JSON.stringify(frozen)).not.toMatch(/pmcMargin|pmcPricing/);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "pmc-vendor" }, { $unset: { "payload.modeCalculations.pmc.lowQuantityLimit": "" } });
+    expect((await request(server).get(path).set(bearer("estimator")).expect(200)).body.data.isIncomplete).toBe(true);
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(frozen.totalPaise).toBe(118_000);
+  });
+
   it("saves independent mode choices across rooms and unequal estimates and preserves older callers", async () => {
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "mode-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
-      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 1001 }, sub_vendor: { baseRatePaise: 2303 },
+      payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 1001, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 2303 },
         in_house_labor: { baseRatePaise: 700, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 1107, startingMarkupBps: 0 } } }
     } as never);
     const { server } = app({ "lead-modes": "project-mode-a", "lead-other-modes": "project-mode-b" });
@@ -1232,7 +1301,7 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
   it.each([false, true])("serializes mode-derived saves with Configuration writes, older caller: %s", async (olderCaller) => {
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "mode-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
-      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 2001 } } }
+      payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 2001 } } }
     } as never);
     const { server } = app();
     const path = "/api/v1/leads/lead-mode-race/estimate";
@@ -1276,9 +1345,9 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
   it("saves pricing metadata for direct and grouped temporary rows and detects source changes before submission", async () => {
     await AiEstimatorKnowledgeSectionModel.collection.insertMany([
       { _id: "mode-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 307 } } } },
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 307 } } } },
       { _id: "mode-grouped", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "advanced", applicability: "configured",
-        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 109 } } } }
+        payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 109, lowQuantityLimit: "0", impactBps: 0 } } } }
     ] as never[]);
     const { server, publication } = app();
     const path = "/api/v1/leads/lead-temporary-modes/estimate";
@@ -1304,8 +1373,8 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
 
   it("rejects new zero, missing and manual prices while preserving saved zero history and current version checks", async () => {
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "mode-a" as never, mainLineId: "line-a", revisionId: "revision-a",
-      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0,
-        modeCalculations: { pmc: { baseRatePaise: 0 }, sub_vendor: { baseRatePaise: 2001 } } } });
+      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 1500, subVendorMarginBps: 0,
+        modeCalculations: { pmc: { baseRatePaise: 0, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 2001 } } } });
     const { server } = app(); const path = "/api/v1/leads/lead-mode-validation/estimate";
     const line = configuredLine({ classification: "special", pricingMode: "pmc", ratePaise: 0 });
     for (const invalid of [{ pricingMode: "other" }, { rateSource: "other" }, { pricingMode: undefined }, { classification: "standard" }])
@@ -2114,6 +2183,72 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       recommendationSourceMainLineIds: [] });
   });
 
+  it("saves a probable addition and its required descendant with the current configured prices and origins", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-probable-required/estimate";
+    const source = configuredLine();
+    const probable = configuredLine({ catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b",
+      subBasketId: "sub-b", revisionId: "revision-b", uomId: "uom-ea", quantity: 2,
+      modeTier: "premium", ratePaise: 3001, recommendationSourceMainLineIds: ["line-a"] });
+    const required = groupedTemporaryLine({ recommendationSourceMainLineIds: ["line-b"] });
+    await configureFixturePrices([source, probable, required]);
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "probable-rule" as never, mainLineId: "line-a", revisionId: "revision-a",
+        sectionKey: "recommendations", applicability: "configured", payload: { budgetAlterations: [
+          { id: "optional-b", trigger: "added", action: "add", requirement: "can", active: true,
+            targetKind: "main_line", targetType: "catalog", targetBasketId: "basket-b", targetSubBasketId: "sub-b", targetMainLineId: "line-b", reason: "Optional finish" }
+        ] } },
+      { _id: "descendant-rule" as never, mainLineId: "line-b", revisionId: "revision-b",
+        sectionKey: "recommendations", applicability: "configured", payload: { budgetAlterations: [
+          { id: "required-temp", trigger: "added", action: "add", requirement: "must", active: true,
+            targetKind: "main_line", targetType: "temporary", targetBasketId: "basket-a", targetSubBasketId: "sub-a", targetMainLineId: "line-temp", reason: "Required preparation" }
+        ] } }
+    ]);
+    const recommendations = await request(server).get("/api/v1/estimation/catalogue/recommendations")
+      .query({ mainLineIds: "line-a,line-b" }).set(bearer("estimator")).expect(200);
+    expect(recommendations.body.data.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "line-a", rules: [expect.objectContaining({ requirement: "can", targetMainLineId: "line-b" })] }),
+      expect.objectContaining({ mainLineId: "line-b", rules: [expect.objectContaining({ requirement: "must", targetMainLineId: "line-temp", available: true })] })
+    ]));
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([source, probable, required], ["basket-a", "basket-b"])).expect(200);
+    expect(saved.body.data).toMatchObject({ subtotalPaise: 24954, gstPaise: 4492, totalPaise: 29400,
+      lineItems: [{ included: true },
+        { included: true, quantity: 2, modeTier: "premium", ratePaise: 3001, recommendationSourceMainLineIds: ["line-a"] },
+        { included: true, quantity: 3, itemType: "temporary", recommendationSourceMainLineIds: ["line-b"] }] });
+    const reloaded = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(reloaded.body.data.lineItems).toEqual(saved.body.data.lineItems);
+    expect(reloaded.body.data.totalPaise).toBe(saved.body.data.totalPaise);
+  });
+
+  it("persists frontend-pruned cyclic dependencies without changing an independent selection in another room", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-pruned-cycle/estimate";
+    const source = configuredLine();
+    const target = configuredLine({ catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b",
+      subBasketId: "sub-b", revisionId: "revision-b", uomId: "uom-ea", quantity: 1,
+      ratePaise: 2000, recommendationSourceMainLineIds: ["line-a", "line-temp"] });
+    const descendant = groupedTemporaryLine({ recommendationSourceMainLineIds: ["line-b"] });
+    const independent = { ...target, roomId: "room-two", roomName: "Bedroom", quantity: 2, recommendationSourceMainLineIds: [] };
+    const rooms = [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }];
+    await configureFixturePrices([source, target, descendant]);
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...estimateInput([source, target, descendant, independent], ["basket-a", "basket-b"]), rooms }).expect(200);
+    const pruned = [source, target, descendant].map(line => ({ ...line, included: false, recommendationSourceMainLineIds: [] }));
+    const removed = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...estimateInput([...pruned, independent], ["basket-a", "basket-b"], saved.body.data.version), rooms }).expect(200);
+    expect(removed.body.data).toMatchObject({ subtotalPaise: 4000, gstPaise: 720, totalPaise: 4700,
+      lineItems: [
+        { included: false, amountPaise: 0, recommendationSourceMainLineIds: [] },
+        { included: false, amountPaise: 0, recommendationSourceMainLineIds: [] },
+        { included: false, amountPaise: 0, recommendationSourceMainLineIds: [] },
+        { roomId: "room-two", included: true, quantity: 2, amountPaise: 4000, recommendationSourceMainLineIds: [] }
+      ] });
+    expect(removed.body.data.lineItems.map((line: { id: string }) => line.id)).toEqual(saved.body.data.lineItems.map((line: { id: string }) => line.id));
+    const reloaded = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(reloaded.body.data.lineItems).toEqual(removed.body.data.lineItems);
+  });
+
   it("retains saved origins for an older client, while explicit manual reselection stays included", async () => {
     const { server } = app();
     const path = "/api/v1/leads/lead-recommended-legacy/estimate";
@@ -2503,7 +2638,7 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
     { id: "component-joinery", basketId: "basket-b", subBasketId: "sub-b", inclusions: [], exclusions: [], labor: settings(3003), material: settings(4004) }];
   async function configure(inHouseComponents: unknown = components()) {
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "component-mode", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
-      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, inHouseComponents, modeCalculations: { pmc: settings(700), sub_vendor: settings(800), in_house: settings(99999) } } } as never);
+      payload: { pmcMarginBps: 1500, subVendorMarginBps: 0, inHouseComponents, modeCalculations: { pmc: settings(700), sub_vendor: settings(800), in_house: settings(99999) } } } as never);
   }
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
     selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
@@ -2875,7 +3010,7 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
 
 describe("estimate per-line Mode tiers", { timeout: 30_000 }, () => {
   const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1000, startingMarkupBps: 2500 });
-  const mode = (rate: number) => ({ pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { pmc: settings(rate + 10), sub_vendor: settings(rate), in_house_labor: settings(rate + 20), in_house_material: settings(rate + 30) } });
+  const mode = (rate: number) => ({ pmcMarginBps: 1500, subVendorMarginBps: 0, modeCalculations: { pmc: settings(rate + 10), sub_vendor: settings(rate), in_house_labor: settings(rate + 20), in_house_material: settings(rate + 30) } });
   async function configure() {
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "tier-mode", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured", payload: {

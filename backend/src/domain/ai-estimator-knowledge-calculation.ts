@@ -10,10 +10,9 @@ import type {
 import {
   AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS,
   AI_ESTIMATOR_KNOWLEDGE_FORMULA_VERSION,
-  AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE,
-  type KnowledgeDurationUnit,
-  type KnowledgeTaxTreatment
-} from "./ai-estimator-knowledge.js";
+  AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE
+} from "./knowledge-pricing-constants.js";
+import type { KnowledgeDurationUnit, KnowledgeTaxTreatment } from "./ai-estimator-knowledge.js";
 
 const DECIMAL_PATTERN = /^(0|[1-9]\d*)(?:\.(\d+))?$/u;
 const TEN = 10n;
@@ -110,7 +109,7 @@ export function parseScaledDecimal(value: string, scale: number): bigint {
       `Value supports at most ${scale} fractional digits.`
     );
   }
-  return BigInt(match[1]) * powerOfTen(scale) +
+  return BigInt(match[1]!) * powerOfTen(scale) +
     BigInt(fraction.padEnd(scale, "0") || "0");
 }
 
@@ -501,8 +500,8 @@ export function calculateKnowledgePreview(
           productivity: input.duration.productivity,
           productivityScale: input.duration.productivityScale,
           unit: input.duration.unit,
-          minimum: input.duration.minimum,
-          maximum: input.duration.maximum
+          ...(input.duration.minimum === undefined ? {} : { minimum: input.duration.minimum }),
+          ...(input.duration.maximum === undefined ? {} : { maximum: input.duration.maximum })
         });
 
   return {

@@ -1,3 +1,6 @@
+import { PmcPaymentSummary, clientEstimateTotalPaise } from "../estimates/estimatePmcPaymentPresentation";
+import { readEstimatePmcPaymentSplit } from "../../../../shared/estimation/estimatePmcPaymentSplit";
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
 import { quotationGroupComparison, quotationGroupModeOptions, quotationModeOperations, quotationModeScopeKey, stageQuotationGroupMode, type QuotationModeSelection } from "./clientSubBasketModes";
@@ -18,7 +21,9 @@ import { ClientQuotationSetup } from "./ClientQuotationSetup";
 import { ClientQuotationLine } from "./ClientQuotationLine";
 import { quotationCandidateHasAvailableChoice, quotationCandidateRows } from "./clientQuotationCandidates";
 import { ESTIMATE_PROPERTY_TYPES, requiresBedroomCount, isValidBedroomCount } from "../../../../shared/estimation/estimateRoomOptions";
+import { downloadQuotationDraftPdf, QuotationPdfAction } from "../estimates/QuotationPdfViewer";
 import { ClientQuotationSubmittedView } from "./ClientQuotationSubmittedView";
+import { ClientSubmittedQuotationPdf } from "./ClientSubmittedQuotationPdf";
 import { ClientQuotationOptions } from "./ClientQuotationOptions";
 import { canReviewCurrentQuotation, type ClientQuotationReviewState } from "./clientQuotationReview";
 import { currentQuotationApprovalState, currentQuotationIsApproved } from "../estimates/quotationApproval";
@@ -165,6 +170,15 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     : setupDraft.operation.rooms.some(room => [room.length, room.width].some(value => value !== null && (!Number.isFinite(value) || value <= 0 || value > 1000000))) ? "Enter positive room dimensions." : null);
   const publishedEstimate = review?.estimate?.id === detail.estimateId && review.estimate.projectId === projectId && !review.estimate.reviewSourceIssue
     ? review.estimate : null;
+  const savedEstimateId = detail.estimateId;
+  const savedVersion = detail.estimateVersion;
+  const isWorkingDraft = detail.editingBlockReason !== "closed" && ["draft", "client_changes_requested", "designer_changes_requested"].includes(detail.status);
+  const submittedRound = publishedEstimate?.publishedReview;
+  const isCurrentSubmission = submittedRound?.phase === detail.phase && (
+    detail.status === "sent_to_client" && submittedRound.status === "pending" && submittedRound.estimateVersion === savedVersion ||
+    detail.status === "client_approved" && submittedRound.status === "approved"
+  );
+  const canPreviewSaved = !readOnly && !busy && !unknownSave && !stale && !query.isError && !revision.isError;
   const canDecide = !readOnly && !dirty && !busy && !unknownSave && !stale && !query.isError && !query.isFetching &&
     !revision.isError && !review?.error && !review?.loading && !review?.refreshing && canReviewCurrentQuotation(detail, publishedEstimate, revision.data);
   const canOpenReview = Boolean(publishedEstimate?.publishedReview) && !dirty && !busy && !unknownSave && !stale &&
@@ -204,8 +218,9 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const baskets = [...basketMap.values()];
   const subtotal = (lines: readonly QuotationLine[]) => {
     const saved = lines.filter(line => line.included && !addedItems.some(item => item.line.id === line.id));
-    if (saved.some(line => line.amountPaise === null)) return "Visible subtotal unavailable";
-    const total = saved.reduce((sum, line) => sum + line.amountPaise!, 0);
+    const amounts = saved.map(line => line.pmcPaymentSplit !== undefined ? readEstimatePmcPaymentSplit(line.pmcPaymentSplit)?.totalPayablePaise ?? null : line.taxInclusiveAmountPaise === undefined ? estimatePriceIncludingGst(line.amountPaise) : line.taxInclusiveAmountPaise);
+    if (amounts.some(amount => amount === null)) return "Visible subtotal unavailable";
+    const total = amounts.reduce<number>((sum, amount) => sum + amount!, 0);
     return Number.isSafeInteger(total) ? `Saved visible subtotal ${money(total)}` : "Visible subtotal unavailable";
   };
   const change = (line: QuotationLine, update: Partial<ItemDraft>, restoreFocus = true) => {
@@ -373,7 +388,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     const grouped = !unavailable && pendingGroups.some(({ group }) => quotationGroupContains(group, line));
     const selected = included(line);
     return <ClientQuotationLine item={item} currentLine={line} selected={selected} grouped={grouped}
-      disabled={!canEdit} canChangePricingMode={canChangePricingMode} onTogglePmc={() => togglePmc(line, item)}
+      disabled={!canEdit} useRecordedPmcRate={readOnly || !detail.editingAllowed} canChangePricingMode={canChangePricingMode} onTogglePmc={() => togglePmc(line, item)}
       onChange={update => change(line, update)} money={money} />;
   };
   const ungrouped = roomRows.filter(line => !line.mainBasketId || !baskets.some(basket => basket.id === line.mainBasketId)
@@ -392,7 +407,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
       baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name, detail: subtotal(rows.filter(line => line.roomId === currentRoomId && line.mainBasketId === basket.id)) }))}
       groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState} scrollMode={workspace ? "pane" : "document"}
       onRefresh={() => { void refreshQuotation(); if (candidateEnabled) { void candidates.refetch(); void setup.refetch(); } void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); void client.invalidateQueries({ queryKey: ["quotation", projectId, "recommendations"] }); }} refreshing={query.isFetching || Boolean(review?.refreshing)}
-      beforeGroups={<><p className="client-quotation__hint">Section subtotals are before GST. Total includes all scope.</p>
+      beforeGroups={<><p className="client-quotation__hint">Section subtotals include all taxes. Total includes all scope.</p>
         {!readOnly && detail.editingAllowed ? <>
           <EstimateItemPicker roomName={activeRoom?.name ?? "this room"} open={adding} onOpenChange={setAdding} triggerRef={triggerRef}
             items={(!pickerHierarchyReady || candidates.isError ? [] : candidates.data?.items ?? []).map(candidate => {
@@ -437,12 +452,20 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     : review?.error ? <Button disabled={busy || review.refreshing} onClick={() => void refreshReview()}>Refresh submitted estimate</Button> : null;
   return <section className={`client-quotation estimate-workspace estimator-dashboard ${view === "configure" ? "estimate-workspace--configure-view" : "estimate-workspace--item-view"}${view === "builder" ? " estimate-workspace--compact-builder" : ""}${workspace ? " client-quotation--workspace" : ""}`} aria-labelledby={`quotation-${projectId}`} ref={sectionRef} tabIndex={-1}>
     <header className="client-quotation__header"><div className="client-quotation__identity"><h2 id={`quotation-${projectId}`} className={workspace ? "sr-only" : undefined}>{revisedQuotation ? "Designer-revised quotation" : "Your quotation"}</h2><p>{detail.phase === "pre" ? "Pre-design approval" : currentApprovalState === "initial_current" ? "Initial approval current" : currentApprovalState === "source_issue" ? "Approval status unavailable" : "Revised quotation approval"}</p>{workspace ? <ProjectId projectNumber={detail.projectNumber} /> : null}</div>
-      <dl>{!detail.isIncomplete && detail.roundOffPaise !== undefined && detail.roundOffPaise !== 0 ? <><dt>Round off</dt><dd>{detail.roundOffPaise < 0 ? "−" : "+"}{money(Math.abs(detail.roundOffPaise))}</dd></> : null}<dt>Saved total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(detail.totalPaise)}</dd></dl></header>
+      <dl>{!detail.isIncomplete && detail.roundOffPaise !== undefined && detail.roundOffPaise !== 0 ? <><dt>Round off</dt><dd>{detail.roundOffPaise < 0 ? "−" : "+"}{money(Math.abs(detail.roundOffPaise))}</dd></> : null}<dt>Saved total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(clientEstimateTotalPaise(detail))}</dd></dl></header>
     <p className="client-quotation__review-status" role="status">{approvalMessage ?? (notice || quotationReviewCopy(detail))}</p>
     {readOnly ? <p>Read-only estimation preview.</p> : null}
+    <PmcPaymentSummary value={detail.pmcPaymentSummary} />
     {!detail.editingAllowed && detail.reviewState !== "approved" ? <p>{detail.editingBlockReason === "not_started" ? "Your team has not started the quotation yet." : "Editing is unavailable for the current review stage."}</p> : null}
     <div className="client-quotation__navigation">
       <nav aria-label="Estimate views"><Button variant="quiet" aria-pressed={view === "builder"} disabled={busy || Boolean(unknownSave)} onClick={() => changeView("builder")}>{setupDraft ? "Save and view items" : "Items"}</Button><Button variant="quiet" aria-pressed={view === "summary"} disabled={busy || Boolean(unknownSave)} onClick={() => changeView("summary")}>{setupDraft ? "Save and view summary" : "Summary"}</Button></nav>
+      {canPreviewSaved && isWorkingDraft && savedEstimateId && savedVersion !== null ? <QuotationPdfAction
+        documentKey={JSON.stringify([sessionKey, projectId, savedEstimateId, savedVersion])}
+        title={`Draft quotation · Version ${savedVersion}`}
+        note={dirty ? "The PDF shows the last saved draft. Save your changes to include them." : undefined}
+        getFile={signal => downloadQuotationDraftPdf(projectId, savedEstimateId, savedVersion, signal)} />
+        : canPreviewSaved && publishedEstimate && isCurrentSubmission && !review?.error ? <ClientSubmittedQuotationPdf estimate={publishedEstimate}
+            note={dirty ? "The PDF shows the submitted quotation. Your unsaved edits are excluded." : undefined} /> : null}
       {view !== "configure" && view !== "baskets" || publishedEstimate?.publishedReview && !canDecide ? <ClientQuotationOptions context={view}>
         {view !== "baskets" && view !== "configure" ? <Button variant="quiet" title={canConfigure ? "Property type, rooms and Main Baskets" : undefined} disabled={busy || Boolean(unknownSave) || dirty && !canEdit} onClick={() => { const next = canConfigure ? "configure" : "baskets"; if (dirty) void submit(next); else changeView(next); }}>{canConfigure ? dirty ? "Save and configure estimate" : "Configure estimate" : dirty ? "Save and edit baskets" : readOnly || !detail.editingAllowed ? "View baskets" : "Edit baskets"}</Button> : null}
         {publishedEstimate?.publishedReview && !canDecide ? <Button variant="quiet" disabled={!canOpenReview} busy={openingReview} onClick={() => void openReview()}>View submitted version</Button> : null}
@@ -478,7 +501,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
         </div></article>;
       })}{!baskets.length ? <p>No basket information is currently available. Your saved items remain available in item selection.</p> : null}</section> : null}
     {view === "builder" ? workspace ? <EstimateBuilderArea className="client-quotation__builder">{builder}</EstimateBuilderArea> : <div className="client-quotation__builder client-quotation__builder--embedded">{builder}</div> : null}
-    {view === "summary" ? <section className="client-quotation__summary" aria-label="Estimate summary"><h3>Estimate summary</h3><p>Visible subtotals use saved amounts before GST. The overall total may include internal scope.</p>{detail.rooms.map(room => <div key={room.id}><strong>{room.name}</strong><span>{subtotal(rows.filter(line => line.roomId === room.id))}</span></div>)}</section> : null}
+    {view === "summary" ? <section className="client-quotation__summary" aria-label="Estimate summary"><h3>Estimate summary</h3><p>Visible subtotals use saved amounts including all taxes. The overall total may include internal scope.</p>{detail.rooms.map(room => <div key={room.id}><strong>{room.name}</strong><span>{subtotal(rows.filter(line => line.roomId === room.id))}</span></div>)}</section> : null}
     {view !== "configure" && (dirty || recoveryActions || canDecide || openingReview) ? <footer className="estimate-workspace__footer client-quotation__footer" aria-label="Estimate actions">
       {dirty ? <p className="client-quotation__hint">Changes are not saved yet. Saved amounts and totals update after your changes are priced.</p> : null}
       <div className="client-quotation__actions">

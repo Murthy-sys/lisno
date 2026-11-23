@@ -348,8 +348,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(within(loftCard).queryByText("Mysuru")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
     expect(within(loftCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
-    expect(within(villaCard).queryByText("1 items · GST included")).not.toBeInTheDocument();
-    expect(within(loftCard).queryByText("0 items · GST included")).not.toBeInTheDocument();
+    expect(within(villaCard).queryByText("1 item shown · GST included")).not.toBeInTheDocument();
+    expect(within(loftCard).queryByText("GST included")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
     expect(within(loftCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
     expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
@@ -372,7 +372,9 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "false");
     expect(within(villaPanel).getByText("Aurora Homes · Bengaluru")).toBeVisible();
-    expect(within(villaPanel).getByText("1 items · GST included")).toBeVisible();
+    expect(within(villaPanel).getByText("1 item shown · GST included")).toBeVisible();
+    expect(within(villaPanel).getByRole("button", { name: "View quotation PDF" })).toBeVisible();
+    expect(within(loftCard).queryByRole("button", { name: "View quotation PDF" })).not.toBeInTheDocument();
     expect(within(villaPanel).getByText("False Ceiling")).toBeVisible();
     expect(within(villaPanel).queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(within(villaPanel).getByRole("button", { name: "Approve estimate" })).toBeVisible();
@@ -418,7 +420,7 @@ describe("EstimateReviewPanel client disclosures", () => {
         return Response.json({ data: emptyDrawingWorkspace });
       }
       if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready")) {
-        return new Response(new Blob(["pdf"], { type: "application/pdf" }));
+        return new Response("%PDF-1.5", { headers: { "content-type": "application/pdf" } });
       }
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -452,6 +454,12 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect((pdfRequest?.[1]?.headers as Headers).get("Authorization")).toBe(
       "Bearer client-token"
     );
+    await user.click(within(villaCard).getByRole("button", { name: "View quotation PDF" }));
+    const preview = await screen.findByRole("dialog", { name: /Submitted quotation · Version/ });
+    expect(await within(preview).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    expect(within(preview).getByTitle(/Submitted quotation · Version/)).toHaveAttribute("src", "blob:client-estimate");
+    await user.keyboard("{Escape}");
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/pdf?roundId=round-estimate-ready"))).toHaveLength(2);
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(document.getElementById("client-estimate-estimate-ready-details")).toBeInTheDocument();
   });

@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -351,6 +352,22 @@ async function seedConfiguredPublication() {
   return fixture;
 }
 
+async function seedPmcPublication() {
+  const fixture = await seedConfiguredPublication();
+  await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+    _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
+    sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 2000,
+      modeCalculations: { pmc: { baseRatePaise: 10000, lowQuantityLimit: "0", impactBps: 0 } } }
+  } as never);
+  const saved = (await EstimateModel.findById(fixture.estimateId).lean())!;
+  const payments = buildEstimatePmcPayments(saved.lineItems.map(row => ({ ...row,
+    classification: "special", pricingMode: "pmc", rateSource: "configuration", pmcVendorPayable: true,
+    pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 2500 } })),
+    { subtotalPaise: 10000, gstPaise: 1800, totalPaise: 11800 });
+  await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: payments });
+  return fixture;
+}
+
 function createHarness(input: {
   storage: EstimateClientReviewStorage;
   mailer: EstimateMailer;
@@ -467,28 +484,76 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     const fixture = await seedConfiguredPublication();
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
-      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: {
-        pmc: { baseRatePaise: 10_000 }, sub_vendor: { baseRatePaise: 10_000 },
+      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 2000, subVendorMarginBps: 0, modeCalculations: {
+        pmc: { baseRatePaise: 10_000, lowQuantityLimit: "0", impactBps: 0 }, sub_vendor: { baseRatePaise: 10_000 },
         in_house_labor: { baseRatePaise: 3001, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 6999, startingMarkupBps: 0 }
       } }
     } as never);
     await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
       "lineItems.0.classification": "special", "lineItems.0.pricingMode": pricingMode,
+      ...(pricingMode === "pmc" ? { "lineItems.0.pmcVendorPayable": true } : {}),
       "lineItems.0.rateSource": "configuration", "lineItems.0.recommendationSourceMainLineIds": ["source-line"]
     } });
+    if (pricingMode === "pmc") {
+      const saved = (await EstimateModel.findById(fixture.estimateId).lean())!;
+      const payments = buildEstimatePmcPayments(saved.lineItems.map(row => ({ ...row,
+        pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 2500 } })),
+        { subtotalPaise: 10000, gstPaise: 1800, totalPaise: 11800 });
+      await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: payments });
+    }
     const storage = createReviewStorage();
     const mail = createSequencedMailer();
     const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
     const published = await harness.publication.publishEstimateToClient(publicationInput(fixture));
     const frozen = await selectedRound(published.clientReview.id);
     expect(frozen!.estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration", ratePaise: 10_000 });
+    expect(frozen!.estimateSnapshot.lineItems[0].pmcVendorPayable).toBe(pricingMode === "pmc" ? true : undefined);
     expect(frozen!.estimateSnapshot.lineItems[0]).not.toHaveProperty("recommendationSourceMainLineIds");
     const detail = await harness.reviews.detail(ADMIN, published.clientReview.id);
     expect(detail.estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration" });
+    if (pricingMode === "pmc") {
+      expect(frozen!.estimateSnapshot.pmcPaymentSummary?.customerTotalPayablePaise).toBe(14750);
+      expect(detail.estimateSnapshot.pmcPaymentSummary).toEqual(frozen!.estimateSnapshot.pmcPaymentSummary);
+      expect(detail.estimateSnapshot.lineItems[0]?.pmcPaymentSplit).toEqual(frozen!.estimateSnapshot.lineItems[0]?.pmcPaymentSplit);
+      expect(mail.calls[0]?.total).toBe(147.5);
+      expect(harness.pdfInputs[0]?.pmcPaymentSummary).toEqual(frozen!.estimateSnapshot.pmcPaymentSummary);
+      expect(JSON.stringify(frozen!.estimateSnapshot)).not.toContain("pmcMarginSnapshot");
+    }
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "publication-advanced" },
       { $set: { "payload.modeCalculations.pmc.baseRatePaise": 999_999 } });
     expect((await selectedRound(published.clientReview.id))!.estimateSnapshot.lineItems[0])
       .toMatchObject({ pricingMode, rateSource: "configuration", ratePaise: 10_000 });
+  });
+
+  it("requires a saved complete PMC split for new publications without creating artifacts", async () => {
+    const fixture = await seedPmcPublication();
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $unset: { pmcPaymentSummary: "", "lineItems.0.pmcPaymentSplit": "" } });
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    await expect(harness.publication.publishEstimateToClient(publicationInput(fixture))).rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
+    expect(harness.pdfInputs).toHaveLength(0);
+    expect(storage.saved).toHaveLength(0);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(mail.calls).toHaveLength(0);
+  });
+
+  it.each(["draft", "ready_for_client"] as const)("rejects a margin-only PMC Configuration change while rendering a %s estimate and cleans the unissued artifact", async expectedStatus => {
+    const fixture = await seedPmcPublication();
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { status: expectedStatus } });
+    const storage = createReviewStorage(1);
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    const pending = harness.publication.publishEstimateToClient({ ...publicationInput(fixture), expectedStatus }).catch((error: unknown) => error);
+    await storage.savesReached;
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "publication-advanced" }, { $set: { "payload.pmcMarginBps": 1500 } });
+    storage.releaseSaves();
+    expectApiError(await pending, "ESTIMATE_CONFIGURATION_CHANGED", 409);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(storage.deleted).toEqual(storage.saved);
+    expect(mail.calls).toHaveLength(0);
+    const saved = await EstimateModel.findById(fixture.estimateId).lean();
+    expect(saved).toMatchObject({ totalPaise: 11800, pmcPaymentSummary: { customerTotalPayablePaise: 14750 } });
   });
 
   it("rejects stale configuration-derived publication prices without replacing customer totals", async () => {

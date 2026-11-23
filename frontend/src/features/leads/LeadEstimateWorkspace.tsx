@@ -3,7 +3,7 @@ import { ProjectId } from "../../components/projects/ProjectId";
 import { invalidateProjectIdentityQueries } from "../../api/projectNameSync";
 import { useEstimateInHousePricing } from "./useEstimateInHousePricing";
 import { calculateEstimateTotal } from "../../../../shared/estimation/estimateTotalRounding";
-import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
+import { allocateEstimatePayables, estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import { canonicalEstimateDimensions, estimateDimensionRulesEqual } from "../../../../shared/estimation/estimateDimensions";
 import { ProjectChatNavigation } from "../messages";
@@ -40,11 +40,13 @@ import { createConfiguredEstimateViewState } from "./useConfiguredEstimateViewSt
 import { emptyAutomaticBasketIds, inferEmptySavedBasketIds, inferRecommendationOnlyBasketIds, salesCatalogueBrowseBasketIds } from "./salesRecommendationScope";
 import { EstimateRevisionNavigation } from "./EstimateRevisionNavigation";
 import { EstimateRevisionView } from "./EstimateRevisionView";
+import { SalesQuotationPdfAction } from "./SalesQuotationPdfAction";
 import { downloadEstimateRevisionPdf, estimateRevisionKeys, estimateRevisionLabel, getEstimateRevision, getEstimateRevisions } from "./estimateRevisionsApi";
 import { configuredLineCanInclude, configuredTierSelectionUnavailableReason, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredAggregatePricing, configuredInHouseGoverned, configuredPricingSourceKey, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
-import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
+import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationLines, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
+import { estimatorRequiredBy, estimatorRequiredRemovalSources, reconcileEstimatorRequiredSelection } from "./estimatorRecommendationSelection";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
 import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
@@ -136,8 +138,9 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const revisionFocusPending = useRef(false);
   const workspaceRef = useRef<HTMLElement>(null);
   const footerRef = useRef<HTMLElement>(null);
-  // The keyed workspace owns dismissal across Builder/Summary mounts; source changes do not reset it.
+  // Keep dismissal across view mounts; accepted manual scope changes start a new room choice context.
   const [recommendationPopupByRoom, setRecommendationPopupByRoom] = useState<Record<string, boolean>>({});
+  const [recommendationSelectionByRoom, setRecommendationSelectionByRoom] = useState<Record<string, number>>({});
   const [recommendationOnlyBasketIds, setRecommendationOnlyBasketIds] = useState<Set<string>>(() => new Set());
   const pendingRecommendedLineKeys = useRef(new Set<string>());
   const pendingAddedLineKeys = useRef(new Set<string>());
@@ -379,27 +382,34 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const roundedTotal = calculateEstimateTotal(subtotalPaise, gstPaise);
   const selectedLines = lines.filter((line) => line.included);
   const selectedConfiguredLines = configuredLines.filter((line) => line.included);
-  const recommendationSourcePartition = useMemo(() => catalogue.data
-    ? partitionRoomRecommendationSources({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId })
-    : { current: [], historical: [], outdatedDraft: false }, [catalogue.data, configuredLines, activeRoomId]);
+  // Resolve every selected room, so changing the visible room cannot bypass required scope.
+  const recommendationPartitions = useMemo(() => new Map(rooms.map(room => [room.id, catalogue.data
+    ? partitionRoomRecommendationSources({ catalogue: catalogue.data, lines: configuredLines, roomId: room.id })
+    : { current: [], historical: [], outdatedDraft: false }])), [catalogue.data, configuredLines, rooms]);
+  const recommendationSourcePartition = recommendationPartitions.get(activeRoomId) ?? { current: [], historical: [], outdatedDraft: false };
   const recommendationSources = recommendationSourcePartition.current;
-  const recommendationSourceIds = [...new Set(recommendationSources.map((line) => line.mainLineId))];
-  const recommendationIdentity = recommendationSources.map(recommendationSourceIdentity).sort();
+  const allRecommendationSources = [...recommendationPartitions.values()].flatMap(partition => partition.current);
+  const recommendationSourceIds = [...new Set(allRecommendationSources.map(line => line.mainLineId))].sort();
+  const recommendationIdentity = allRecommendationSources.map(line => JSON.stringify([line.roomId, recommendationSourceIdentity(line)])).sort();
   const recommendations = useQuery({
-    queryKey: [...estimationCatalogueKeys.recommendationSources(recommendationIdentity), leadId, actorId, activeRoomId, saved.data?.version ?? null],
+    queryKey: [...estimationCatalogueKeys.recommendationSources(recommendationIdentity), leadId, actorId, saved.data?.version ?? null],
     queryFn: () => getEstimationCatalogueRecommendations(recommendationSourceIds),
-    enabled: tab === "builder" && configuredMode && Boolean(catalogue.data) && !catalogue.isError && recommendationSourceIds.length > 0,
+    enabled: configuredMode && !historical && (draftEditable || tab === "builder") && Boolean(catalogue.data) && !catalogue.isError && recommendationSourceIds.length > 0,
     staleTime: 60_000,
     retry: false
   });
-  const activeRoomTypeId = rooms.find(room => room.id === activeRoomId)?.typeId;
-  const recommendationView = useMemo(() => catalogue.data && (recommendations.data || !recommendationSourceIds.length)
-    ? buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId, roomTypeId: activeRoomTypeId,
-      recommendations: recommendations.data ?? { sources: [] } })
-    : null, [catalogue.data, configuredLines, activeRoomId, activeRoomTypeId, recommendations.data, recommendationSourceIds.length]);
-  const recommendationState = catalogue.isError && catalogue.error instanceof ApiError && catalogue.error.status === 403
+  const recommendationViews = useMemo(() => new Map(rooms.flatMap(room => catalogue.data && (recommendations.data || !recommendationSourceIds.length)
+    ? [[room.id, buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: room.id, roomTypeId: room.typeId,
+      recommendations: recommendations.data ?? { sources: [] }, includeProbable: draftEditable && !historical })] as const]
+    : [])), [catalogue.data, configuredLines, rooms, recommendations.data, recommendationSourceIds.length, draftEditable, historical]);
+  const requiredRecommendationViews = useMemo(() => new Map(rooms.flatMap(room => catalogue.data && (recommendations.data || !recommendationSourceIds.length)
+    ? [[room.id, buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: room.id, roomTypeId: room.typeId,
+      recommendations: recommendations.data ?? { sources: [] } })] as const] : [])),
+    [catalogue.data, configuredLines, rooms, recommendations.data, recommendationSourceIds.length]);
+  const recommendationView = recommendationViews.get(activeRoomId) ?? null;
+  const requiredRecommendationState = catalogue.isError && catalogue.error instanceof ApiError && catalogue.error.status === 403
     ? "forbidden" as const
-    : !catalogue.data || catalogue.isError || recommendationView?.stale
+    : !catalogue.data || catalogue.isError || [...requiredRecommendationViews.values()].some(view => view.stale)
       ? "stale" as const
       : !recommendationSourceIds.length
         ? "ready" as const
@@ -407,6 +417,51 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         ? recommendations.error instanceof ApiError && recommendations.error.status === 403 ? "forbidden" as const : "error" as const
         : recommendations.isPending || recommendations.isFetching || catalogue.isFetching
           ? "loading" as const : "ready" as const;
+  const recommendationState = recommendationView?.stale && requiredRecommendationState === "ready" ? "stale" : requiredRecommendationState;
+  const requiredSelection = useMemo(() => catalogue.data && requiredRecommendationState === "ready"
+    ? reconcileEstimatorRequiredSelection({ catalogue: catalogue.data, rooms, lines: configuredLines,
+      views: requiredRecommendationViews, classifications: mainBasketClassifications }) : null,
+  [catalogue.data, requiredRecommendationState, rooms, configuredLines, requiredRecommendationViews, mainBasketClassifications]);
+  const requiredRecommendationIssue = !configuredMode || !draftEditable || historical || !selectedConfiguredLines.length ? undefined
+    : requiredRecommendationState === "loading" ? "Checking required items in all rooms…"
+    : requiredRecommendationState !== "ready" ? "Required items need review. Refresh available items before saving or submitting."
+    : requiredSelection?.issues[0] ?? (requiredSelection && requiredSelection.lines !== configuredLines ? "Adding required items in all rooms…" : undefined);
+  const lastVerifiedRequiredViews = useRef<{ catalogue: typeof catalogue.data; views: typeof requiredRecommendationViews } | null>(null);
+  useLayoutEffect(() => {
+    if (requiredRecommendationState === "ready") lastVerifiedRequiredViews.current = { catalogue: catalogue.data, views: requiredRecommendationViews };
+  }, [requiredRecommendationState, catalogue.data, requiredRecommendationViews]);
+  // Pending or failed descendant reads cannot unlock an already verified required row.
+  const removalRecommendationViews = (requiredRecommendationState === "loading" || requiredRecommendationState === "error") && lastVerifiedRequiredViews.current && lastVerifiedRequiredViews.current.catalogue === catalogue.data
+    ? lastVerifiedRequiredViews.current.views : requiredRecommendationViews;
+  const requiredBy = useMemo(() => draftEditable && !historical ? estimatorRequiredBy(configuredLines, removalRecommendationViews) : new Map<string, readonly string[]>(),
+    [configuredLines, removalRecommendationViews, draftEditable, historical]);
+  const optionalContextByTarget = useMemo(() => {
+    const identity = (reasons: readonly { sourceId: string; ruleId: string }[], target: unknown) => JSON.stringify([actorId, leadId, activeRoomId,
+      recommendationSelectionByRoom[activeRoomId] ?? 0,
+      target, reasons.map(reason => {
+        const source = recommendations.data?.sources.find(item => item.mainLineId === reason.sourceId);
+        return [reason.sourceId, source?.revisionId, source?.revisionVersion, source?.itemVersion,
+          source?.rules.find(rule => rule.id === reason.ruleId)];
+      }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
+    const contexts = new Map(recommendationLines(recommendationView?.decisions ?? [])
+      .filter(target => target.requirement === "can").map(target => [target.key, identity(target.reasons, target.target)]));
+    for (const decision of recommendationView?.decisions ?? []) if (decision.requirement === "can") {
+      contexts.set(`unavailable:${decision.key}`, identity(decision.reasons, decision.key));
+    }
+    return contexts;
+  }, [recommendationView, recommendations.data, actorId, leadId, activeRoomId, recommendationSelectionByRoom]);
+  useEffect(() => {
+    if (!editable || saved.isFetching || submissionInFlight.current || !requiredSelection || requiredSelection.lines === configuredLines) return;
+    // Functional state guards reject an effect whose draft was superseded by a user edit.
+    setConfiguredLines(current => current === configuredDraftLines ? [...requiredSelection.lines] : current);
+    const newlySelectedBaskets = [...requiredSelection.addedBasketIds].filter(id => !selectedMainBasketIds.has(id));
+    if (newlySelectedBaskets.length) {
+      for (const id of newlySelectedBaskets) recommendationAddedBasketIds.current.add(id);
+      setSelectedMainBasketIds(current => new Set([...current, ...newlySelectedBaskets]));
+      setRecommendationOnlyBasketIds(current => new Set([...current, ...newlySelectedBaskets]));
+      setMainBasketClassifications(current => new Map([...current, ...newlySelectedBaskets.filter(id => !current.has(id)).map(id => [id, "standard"] as const)]));
+    }
+  }, [editable, saved.isFetching, requiredSelection, configuredLines, configuredDraftLines, selectedMainBasketIds]);
   const incompleteSelectedConfiguredLines = selectedConfiguredLines.filter((line) => configuredLineAmountPaise(line) === null);
   const hasIncompleteConfiguredTotal = incompleteSelectedConfiguredLines.length > 0 || roundedTotal === null;
   const invalidSelectedAmountCount = incompleteSelectedConfiguredLines.filter((line) => !configuredUsesComponentPricing(line) && parseSellingRate(line.rateInput).kind !== "blank").length;
@@ -497,6 +552,34 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     total: saved.data.totalPaise === undefined ? saved.data.total : saved.data.totalPaise / 100
   } : { subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: roundedTotal ? roundedTotal.totalPaise / 100 : null };
   const roundOffPaise = useSavedTotals ? saved.data?.roundOffPaise : roundedTotal?.roundOffPaise;
+  const pmcPayables = useMemo(() => {
+    if (!configuredLines.some(line => line.included && line.pricingMode === "pmc")) return undefined;
+    const rows = [
+      ...lines.filter(line => line.included).map(line => ({ key: line.id, savedId: line.persistedId, net: Math.round(line.quantity * line.rate) * 100 })),
+      ...configuredLines.filter(line => line.included).map(line => ({ key: line.key, savedId: line.persistedId, net: configuredLineAmountPaise(line) }))
+    ];
+    if (useSavedTotals && saved.data) {
+      const order = new Map(saved.data.lineItems.map((line, index) => [line.id, index]));
+      rows.sort((a, b) => (order.get(a.savedId) ?? Infinity) - (order.get(b.savedId) ?? Infinity));
+    }
+    const allocated = new Map<string, number>();
+    const netAmounts = rows.map(row => row.net);
+    if (netAmounts.some(amount => amount === null || !Number.isSafeInteger(amount) || amount < 0) || hasIncompleteConfiguredTotal) return allocated;
+    const recorded = useSavedTotals && saved.data ? {
+      subtotalPaise: saved.data.subtotalPaise ?? Math.round(saved.data.subtotal * 100),
+      gstPaise: saved.data.gstPaise ?? Math.round(saved.data.gst * 100)
+    } : undefined;
+    const amounts = allocateEstimatePayables(netAmounts as number[], recorded);
+    rows.forEach((row, index) => allocated.set(row.key, amounts[index]!));
+    return allocated;
+  }, [configuredLines, lines, useSavedTotals, saved.data, hasIncompleteConfiguredTotal]);
+  const payableLabel = pmcPayables && !selectedLines.length && selectedConfiguredLines.every(line => line.pricingMode === "pmc" && (!useSavedTotals && line.savedPmcAmountPaise === undefined || line.pmcVendorPayable === true))
+    ? "Total payable to vendor (incl. GST)" : "Total payable (incl. GST)";
+  const linePayableLabel = (key: string, net: number | null) => {
+    if (!pmcPayables) return priceIncludingGstLabel(net);
+    const payable = pmcPayables.get(key);
+    return payable === undefined ? "Incomplete" : moneyPaise(payable);
+  };
   const canStartSubmission = canPublish || canPrepareFirstSubmission || canPrepareSubmission && hasUnsavedChanges;
   useEffect(() => {
     const draft = saved.data;
@@ -635,6 +718,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const save = useMutation({
     mutationFn: async () => {
       const submittedLeadId = leadId;
+      if (requiredRecommendationIssue) throw new Error(requiredRecommendationIssue);
       if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       if (unpricedConfiguredTierLines.length) throw new Error("Configure a price for every selected tier and pricing method before saving.");
       if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredSellingPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
@@ -673,6 +757,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         if (!workspaceMounted.current || currentSubmissionScope.current !== submittedScope)
           throw new Error("Your estimate or access changed. Review the saved draft before submitting again.");
       };
+      if (requiredRecommendationIssue) throw new Error(requiredRecommendationIssue);
       if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredSellingPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
       const input = draftInput();
@@ -751,6 +836,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     mutationFn: async () => {
       const submittedLeadId = leadId;
       if (!canPublish) throw new Error("Publication is unavailable for your current assignment and quotation phase.");
+      if (requiredRecommendationIssue) throw new Error(requiredRecommendationIssue);
       return { estimate: await sendEstimateToClient(saved.data!.id, saved.data!.estimation ? saved.data!.version : undefined, lifecycle?.workflowVersion === 3 && lifecycle.phase === "pre"), submittedLeadId };
     },
     onSuccess: ({ estimate, submittedLeadId }) => {
@@ -831,7 +917,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const estimateVersionConflict = (workingVersion.current !== undefined && saved.data?.version !== undefined && workingVersion.current !== saved.data.version) || [save.error, submit.error].some((error) =>
     error instanceof ApiError && ["ESTIMATE_VERSION_CONFLICT", "ESTIMATE_SOURCE_CONFLICT"].includes(error.code)
   );
-  const saveDisabled = !editable || bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput ||
+  const saveDisabled = !editable || Boolean(requiredRecommendationIssue) || bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput ||
     componentPricingPending || unpricedConfiguredTierLines.length > 0 || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict;
   const publicationBlocked = collaborative && (requirements.isPending || requirements.isError || requirements.isFetching || !requirements.data || requirements.data.requirements.some((request) => request.status === "open") ||
     (lifecycle?.workflowVersion === 2 && lifecycle.phase === "post" && (saved.data?.designPlanStatus !== "approved" || lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision)));
@@ -846,14 +932,14 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     !save.isPending && !submit.isPending && !sendToClient.isPending &&
     (!configuredMode || catalogue.isSuccess && !catalogue.isFetching);
   const submitAllowed = !historical && tab !== "configure" && draftEditable && canStartSubmission && editable &&
-    !publicationBlocked && !bedroomSetupRequired && includedItemCount > 0 && !hasInvalidInput &&
+    !publicationBlocked && !requiredRecommendationIssue && !bedroomSetupRequired && includedItemCount > 0 && !hasInvalidInput &&
     !componentPricingPending && !hasMissingRate && unavailableConfiguredLines.length === 0 &&
     legacyIncompatibleConfiguredLines.length === 0 && !save.isPending && !submit.isPending && !estimateVersionConflict &&
     (!(checklistRequired || designer) || checklistContextReady &&
       hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.save") &&
       hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.submit"));
   const sendAllowed = !historical && tab !== "configure" && saved.data?.status === "ready_for_client" &&
-    canPublish && !sendToClient.isPending && !publicationBlocked && !saved.isError &&
+    canPublish && !requiredRecommendationIssue && !sendToClient.isPending && !publicationBlocked && !saved.isError &&
     (!checklistRequired || checklistContextReady &&
       hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.send_client"));
   const publicationBusy = save.isPending || submit.isPending || sendToClient.isPending || navigationSaving;
@@ -876,7 +962,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     : saveOutcomeUnknown ? "Verify the saved estimate before submitting."
     : estimateVersionConflict || revisionMismatch ? "Reload the latest saved estimate before submitting. Your local edits are preserved."
     : saved.isError || revisionError ? "Refresh the estimate updates before submitting. Your local edits are preserved."
-    : null;
+    : requiredRecommendationIssue ?? null;
   const submitBlockingReason = submitAllowed ? null : commonPublicationBlocker
     ?? (bedroomSetupRequired ? "Enter the number of bedrooms in Setup before submitting."
     : includedItemCount === 0 ? "Select and complete at least one item before submitting."
@@ -1055,8 +1141,27 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       return next;
     }));
   };
+  const canRemoveConfiguredLines = (keys: ReadonlySet<string>) => {
+    const sources = estimatorRequiredRemovalSources(configuredLines, removalRecommendationViews, keys);
+    if (!sources.length) return true;
+    setNotice(`Required by ${sources.join(", ")}. Remove the source item first.`);
+    return false;
+  };
+  const reconsiderProbableItems = (roomIds: readonly string[]) => {
+    const changedRooms = new Set(roomIds);
+    if (!changedRooms.size) return;
+    // A user scope change starts a new choice context. Refetches, saves and automatic additions do not.
+    setRecommendationSelectionByRoom(current => {
+      const next = { ...current };
+      for (const roomId of changedRooms) next[roomId] = (next[roomId] ?? 0) + 1;
+      return next;
+    });
+    setRecommendationPopupByRoom(current => Object.fromEntries(Object.entries(current)
+      .filter(([roomId, open]) => !changedRooms.has(roomId) || open)));
+  };
   const toggleMainBasket = (id: string, confirmed = false) => {
     if (basketSelectionDisabled || submissionInFlight.current) return;
+    if (selectedMainBasketIds.has(id) && !canRemoveConfiguredLines(new Set(configuredLines.filter(line => line.mainBasketId === id && line.included).map(line => line.key)))) return;
     if (!confirmed && selectedMainBasketIds.has(id) && configuredLines.some(line => line.mainBasketId === id && line.included)) {
       setPendingRemoval({ kind: "basket", mainBasketId: id, label: catalogue.data?.items.find(basket => basket.id === id)?.name ?? "Main Basket" });
       return;
@@ -1064,6 +1169,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     itemAddedBasketIds.current.delete(id);
     recommendationAddedBasketIds.current.delete(id);
     if (selectedMainBasketIds.has(id)) {
+      reconsiderProbableItems(configuredLines.filter(line => line.mainBasketId === id && line.included).map(line => line.roomId));
       setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
         new Set(prior.filter((line) => line.mainBasketId === id && line.included).map((line) => line.key))));
     }
@@ -1090,6 +1196,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     }
     itemAddedBasketIds.current.clear();
     recommendationAddedBasketIds.current.clear();
+    reconsiderProbableItems(configuredLines.filter(line => selectedMainBasketIds.has(line.mainBasketId) && line.included).map(line => line.roomId));
     setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
       new Set(prior.filter((line) => selectedMainBasketIds.has(line.mainBasketId) && line.included).map((line) => line.key))));
     setSelectedMainBasketIds(new Set());
@@ -1116,12 +1223,14 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>, availableLine?: ConfiguredLineDraft) => {
     if (!editable || submissionInFlight.current) return;
     if (change.rateInput !== undefined || change.rateSource === "manual") return;
+    if (change.included === false && !canRemoveConfiguredLines(new Set([key]))) return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
     if (line?.roomMismatch) {
       if (change.included !== false) return;
       const original = saved.data?.lineItems.find((entry): entry is ConfiguredEstimateLine =>
         entry.source === "configuration" && entry.id === line.persistedId && entry.mainLineId === line.mainLineId && entry.roomId === line.roomId);
       if (line.persistedId && !original) return;
+      if (line.included) reconsiderProbableItems([line.roomId]);
       setConfiguredLines(current => {
         const removed = deselectConfiguredRecommendationSources(current, new Set([key]));
         return original ? removed.map(entry => entry.key === key
@@ -1145,6 +1254,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (line && !configuredEditBaselines.current.has(key)) {
       configuredEditBaselines.current.set(key, configuredLineEditingFingerprint(line));
     }
+    if (line && change.included !== undefined && change.included !== line.included) reconsiderProbableItems([line.roomId]);
     setConfiguredLines((current) => {
       const existing = current.find(item => item.key === key);
       if (availableLine && existing && (existing.sourceMissing || existing.mainBasketId !== availableLine.mainBasketId ||
@@ -1207,6 +1317,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     const refreshedTarget = buildConfiguredLines(catalogue.data, [room], new Set([target.basketId]), [savedTarget ?? fresh])[0];
     if (!refreshedTarget || !configuredLineCanInclude(refreshedTarget)) return false;
     pendingAddedLineKeys.current.add(fresh.key);
+    reconsiderProbableItems([room.id]);
     if (!selectedMainBasketIds.has(target.basketId)) itemAddedBasketIds.current.add(target.basketId);
     setSelectedMainBasketIds(current => current.has(target.basketId) ? current : new Set(current).add(target.basketId));
     setMainBasketClassifications(current => current.has(target.basketId)
@@ -1227,14 +1338,14 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (!editable || submissionInFlight.current) return false;
     const line = configuredLines.find(line => line.roomId === activeRoomId && line.mainLineId === target.mainLineId &&
       line.mainBasketId === target.basketId && line.subBasketId === target.subBasketId && line.included);
-    if (!line) return false;
+    if (!line || !canRemoveConfiguredLines(new Set([line.key]))) return false;
     updateConfiguredLine(line.key, { included: false });
     return true;
   };
   const selectRecommendedLine = (target: RecommendedLineTarget) => {
     if (!editable || submissionInFlight.current || !catalogue.data || catalogue.isError || catalogue.isFetching ||
       recommendationState !== "ready" || !activeRoomId || !recommendationView) return false;
-    const matchingDecisions = recommendationView.decisions.filter((decision) => decision.requirement === "must" && decision.available && (
+    const matchingDecisions = recommendationView.decisions.filter((decision) => decision.requirement === "can" && decision.available && (
       decision.kind === "main_line"
         ? decision.target?.mainLineId === target.mainLineId && decision.target.basketId === target.basketId && decision.target.subBasketId === target.subBasketId
         : decision.children.some((child) => child.target.mainLineId === target.mainLineId && child.target.basketId === target.basketId && child.target.subBasketId === target.subBasketId)
@@ -1290,8 +1401,18 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     const configured = configuredLines.filter((line) => line.roomId === roomId).reduce((sum, line) => sum + (configuredLineAmountPaise(line) ?? 0), 0);
     return legacy + configured;
   };
-  const roomTotalLabel = (roomId: string) => configuredLines.some((line) => line.roomId === roomId && line.included && configuredLineAmountPaise(line) === null)
-    ? "Incomplete" : moneyPaise(roomTotalPaise(roomId));
+  const roomDisplayTotal = (roomId: string) => {
+    if (!pmcPayables) return roomTotalPaise(roomId);
+    const keys = [...selectedConfiguredLines.filter(line => line.roomId === roomId).map(line => line.key),
+      ...selectedLines.filter(line => line.roomName === rooms.find(room => room.id === roomId)?.label).map(line => line.id)];
+    if (keys.some(key => !pmcPayables.has(key))) return null;
+    return keys.reduce((sum, key) => sum + pmcPayables.get(key)!, 0);
+  };
+  const roomTotalLabel = (roomId: string) => {
+    const amount = roomDisplayTotal(roomId);
+    return amount === null || configuredLines.some(line => line.roomId === roomId && line.included && configuredLineAmountPaise(line) === null)
+      ? "Incomplete" : moneyPaise(amount);
+  };
   const roomTotal = (roomName: string) => roomTotalPaise(rooms.find((room) => room.label === roomName)?.id ?? "") / 100;
   const builderRooms: BuilderRoom[] = rooms.map((room) => ({ id: room.id, typeId: room.typeId, label: room.label, sqft: room.sqft }));
   const builderSections: BuilderSection[] = estimateBuilderSections
@@ -1364,6 +1485,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   };
   const requestSubBasketRemoval = (scope: { roomId: string; mainBasketId: string; subBasketId: string }) => {
     if (!editable || save.isPending || submit.isPending) return;
+    const keys = new Set(configuredLines.filter(line => line.included && line.roomId === scope.roomId && line.mainBasketId === scope.mainBasketId && line.subBasketId === scope.subBasketId).map(line => line.key));
+    if (!canRemoveConfiguredLines(keys)) return;
     const line = configuredLines.find(item => item.roomId === scope.roomId && item.mainBasketId === scope.mainBasketId && item.subBasketId === scope.subBasketId && item.included);
     if (line) setPendingRemoval({ kind: "sub", ...scope, label: `${line.subBasketName ?? "Sub Basket"} in ${line.roomName}` });
   };
@@ -1372,6 +1495,9 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (pendingRemoval.kind === "basket") toggleMainBasket(pendingRemoval.mainBasketId!, true);
     else if (pendingRemoval.kind === "all") clearMainBaskets(true);
     else {
+      const keys = new Set(configuredLines.filter(line => line.included && line.roomId === pendingRemoval.roomId && line.mainBasketId === pendingRemoval.mainBasketId && line.subBasketId === pendingRemoval.subBasketId).map(line => line.key));
+      if (!canRemoveConfiguredLines(keys)) { setPendingRemoval(null); return; }
+      if (keys.size && pendingRemoval.roomId) reconsiderProbableItems([pendingRemoval.roomId]);
       setConfiguredLines(current => deselectConfiguredRecommendationSources(current,
         new Set(current.filter(line => line.included && line.roomId === pendingRemoval.roomId &&
           line.mainBasketId === pendingRemoval.mainBasketId && line.subBasketId === pendingRemoval.subBasketId).map(line => line.key))));
@@ -1438,6 +1564,11 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       if (revisionDownloadController.current === controller) { revisionDownloadController.current = null; setDownloadingRevisionId(null); }
     }
   };
+  const salesPdfAction = auth.user?.role === "estimator_sales" && saved.data && !saved.isError && !saveOutcomeUnknown &&
+    (!historical || selectedSnapshot) && (!saved.data.projectId || leadItem.projectId === saved.data.projectId)
+    ? <SalesQuotationPdfAction estimate={saved.data} selectedRevision={selectedSnapshot ?? undefined}
+        draftEditable={draftEditable} unsaved={hasUnsavedChanges} />
+    : null;
   const displayedAmount = historical
     ? selectedSnapshot ? selectedSnapshot.snapshot.totalPaise !== undefined
       ? Number.isSafeInteger(selectedSnapshot.snapshot.totalPaise) && selectedSnapshot.snapshot.totalPaise >= 0 ? moneyPaise(selectedSnapshot.snapshot.totalPaise) : "Unavailable"
@@ -1493,6 +1624,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       {(saved.data?.lineItems.length ?? 0) > 0 ? <button type="button" className="button button--secondary estimate-continue" disabled={save.isPending || navigationSaving} onClick={() => setTab("builder")}>Return to saved items</button> : null}
       {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || bedroomSetupRequired || !rooms.length || !selectedMainBasketIds.size} onClear={() => clearMainBaskets()} onContinue={buildLines} /> : null}
     </> : null}
+    {!historical && tab !== "builder" && requiredRecommendationIssue ? <div className="configured-estimate-refresh" role="status"><p>{requiredRecommendationIssue}</p><button type="button" className="button button--secondary" disabled={catalogue.isFetching || recommendations.isFetching} onClick={() => void refreshAvailableItems()}>Refresh available items</button></div> : null}
     {!historical && tab !== "configure" && bedroomSetupRequired ? <div className="estimate-bedroom-count-required" role="status"><p>Enter the number of bedrooms in Configure before saving or submitting this estimate. Your saved rooms and items are kept.</p><button type="button" className="button button--secondary" disabled={roomControlsDisabled} onClick={() => { setTab("configure"); requestAnimationFrame(() => bedroomCountRef.current?.focus()); }}>Configure bedrooms</button></div> : null}
     {!historical && tab === "builder" && configuredMode && catalogue.isError ? <div className="configured-estimate-refresh">
       {catalogue.isError ? <p role="alert">{catalogue.error instanceof ApiError && catalogue.error.status === 403 ? "You do not have permission to read the estimator catalogue." : catalogue.data ? "Available items could not be refreshed. The last loaded catalogue is shown. Try again." : "Available items could not be loaded. Try again."}</p> : null}
@@ -1500,7 +1632,6 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     {boundedBuilder ? <EstimateBuilderArea>
       {!catalogue.data ? <p className="estimate-notice" role="status">Current Configuration is unavailable. Saved lines are shown from this estimate's snapshot.</p> : null}
       <ConfiguredEstimateBuilder
-      showInternalTierDetails={auth.status === "authenticated" && ["estimator_sales", "designer", "super_admin"].includes(auth.user?.role ?? "")}
       filterUnpricedItems={draftEditable && !historical}
       itemPresentation={browseSalesCatalogue ? "catalogue" : "selected"}
       browseMainBasketIds={browseSalesCatalogue ? browseMainBasketIds : undefined}
@@ -1528,15 +1659,19 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       onRefreshAvailableItems={() => void refreshAvailableItems()}
       refreshingAvailableItems={catalogue.isFetching || saved.isFetching}
       availableItemsState={catalogue.isError ? "error" : catalogue.isFetching ? "loading" : "ready"}
-      roomTotal={roomTotalPaise}
+      roomTotal={roomDisplayTotal} payables={pmcPayables}
       roomIcons={roomIcons}
       moneyPaise={moneyPaise}
       editable={editable}
       pricingModeEditable={pricingModeEditable}
+      recommendationMode={draftEditable ? "probable" : "required"}
+      requiredBy={requiredBy}
+      requiredRecommendationIssue={requiredRecommendationIssue}
+      optionalContextByTarget={optionalContextByTarget}
       recommendationSourceCount={recommendationSources.length + recommendationSourcePartition.historical.length + Number(recommendationSourcePartition.outdatedDraft)}
       recommendationState={recommendationState}
       recommendationView={recommendationView}
-      recommendationContextKey={JSON.stringify([actorId, leadId, activeRoomId, recommendationIdentity])}
+      recommendationContextKey={JSON.stringify([actorId, leadId, activeRoomId, recommendationSelectionByRoom[activeRoomId] ?? 0])}
       excludedReviewKeys={new Set([...invalidConfiguredLines, ...changedUomConfiguredLines, ...unavailableConfiguredLines, ...legacyIncompatibleConfiguredLines]
         .filter(line => line.persistedId && !line.included).map(line => line.key))}
       reviewContextKey={JSON.stringify([actorId, leadId, saved.data?.version ?? null])}
@@ -1556,8 +1691,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       money={money}
       editable={editable}
     /></section></div> : null}
-    {!historical && tab === "summary" ? <div className={secondaryViewClass}>{hasRevisionNavigation ? <aside className="estimate-workspace__revision-rail">{revisionNavigation}</aside> : null}<section className="estimate-panel estimate-summary"><h2>Estimate summary</h2><p>Room subtotals are before GST.</p>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span>{roundOffPaise !== undefined && roundOffPaise !== 0 && (useSavedTotals || !hasIncompleteConfiguredTotal) ? <span>Round off <strong>{roundOffPaise < 0 ? "−" : "+"}{moneyPaise(Math.abs(roundOffPaise))}</strong></span> : null}<span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div></section></div> : null}
-    {!historical && tab === "proposal" ? <div className={secondaryViewClass}>{hasRevisionNavigation ? <aside className="estimate-workspace__revision-rail">{revisionNavigation}</aside> : null}<section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p><p>Item prices and amounts include 18% GST.</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{priceIncludingGstLabel(Math.round(line.quantity * line.rate) * 100)}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {configuredUsesComponentPricing(line) ? "Calculated from components" : parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `${priceIncludingGstLabel(parseSellingRate(line.rateInput).paise)} per ${line.uomName}`}</small></span><strong>{priceIncludingGstLabel(configuredLineAmountPaise(line))}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span>{roundOffPaise !== undefined && roundOffPaise !== 0 && (useSavedTotals || !hasIncompleteConfiguredTotal) ? <span>Round off <strong>{roundOffPaise < 0 ? "−" : "+"}{moneyPaise(Math.abs(roundOffPaise))}</strong></span> : null}<span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section></div> : null}
+    {!historical && tab === "summary" ? <div className={secondaryViewClass}>{hasRevisionNavigation ? <aside className="estimate-workspace__revision-rail">{revisionNavigation}</aside> : null}<section className="estimate-panel estimate-summary"><h2>Estimate summary</h2><p>{pmcPayables ? "Room amounts include all taxes." : "Room subtotals are before GST."}</p>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card">{!pmcPayables && <><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span></>}{roundOffPaise !== undefined && roundOffPaise !== 0 && (useSavedTotals || !hasIncompleteConfiguredTotal) ? <span>Round off <strong>{roundOffPaise < 0 ? "−" : "+"}{moneyPaise(Math.abs(roundOffPaise))}</strong></span> : null}<span>{pmcPayables ? payableLabel : "Total (incl. GST)"} <strong>{totalLabel(totals.total)}</strong></span></div></section></div> : null}
+    {!historical && tab === "proposal" ? <div className={secondaryViewClass}>{hasRevisionNavigation ? <aside className="estimate-workspace__revision-rail">{revisionNavigation}</aside> : null}<section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p><p>Item prices and amounts include 18% GST.</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{linePayableLabel(line.id, Math.round(line.quantity * line.rate) * 100)}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {configuredUsesComponentPricing(line) ? "Calculated from components" : parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `${priceIncludingGstLabel(parseSellingRate(line.rateInput).paise)} per ${line.uomName}`}</small></span><strong>{linePayableLabel(line.key, configuredLineAmountPaise(line))}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card">{!pmcPayables && <><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span></>}{roundOffPaise !== undefined && roundOffPaise !== 0 && (useSavedTotals || !hasIncompleteConfiguredTotal) ? <span>Round off <strong>{roundOffPaise < 0 ? "−" : "+"}{moneyPaise(Math.abs(roundOffPaise))}</strong></span> : null}<span>{pmcPayables ? payableLabel : "Total (incl. GST)"} <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section></div> : null}
     {historical && tab !== "configure" ? <EstimateBuilderArea className="estimate-workspace__history-area">
       {selectedSnapshot ? <EstimateRevisionView revision={selectedSnapshot} view={tab} activeRoomId={historicalRoomId} onSelectRoom={setHistoricalRoomId} navigation={revisionNavigation} /> : <div className={secondaryViewClass}>{hasRevisionNavigation ? <aside className="estimate-workspace__revision-rail">{revisionNavigation}</aside> : null}<div className="estimate-workspace__history-state">
         {historyDenied ? <div role="alert"><p>This revision is no longer available for your current access.</p><button type="button" className="button button--secondary" disabled={revisions.isFetching || saved.isFetching || lead.isFetching} onClick={() => void retryRevisionHistory()}>Retry revisions</button></div> : historicalDetail.isError || historicalDetail.isSuccess && !selectedSnapshot ? <div role="alert"><p>The selected revision could not be loaded.</p><button type="button" className="button button--secondary" onClick={() => void historicalDetail.refetch()}>Retry revision</button></div> : <p role="status">Loading selected revision…</p>}
@@ -1580,12 +1715,13 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         </div> : null}
       </div>
       <div className="estimate-actions">
+        {salesPdfAction}
         {draftEditable && !designer ? <button type="button" className="button button--secondary" disabled={saveDisabled} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}
         {draftEditable && (canPublish || checklistRequired || designer) ? <button type="button" className="button button--primary estimate-continue" aria-busy={submit.isPending || undefined} aria-describedby={feedbackReason ? submitBlockerId : undefined} onClick={event => requestPublication("submit", event.currentTarget)}>{submit.isPending ? "Submitting…" : checklistRequired || designer ? "Submit" : quotationWorkflow ? lifecycle?.phase === "post" ? "Send revised quotation to Client" : "Approve and send to client" : lifecycle?.phase === "post" ? "Submit final estimate" : collaborative ? "Submit pre-estimate" : "Submit estimate"}</button> : null}
         {saved.data?.status === "ready_for_client" && canPublish ? <button type="button" className="button button--primary" aria-busy={sendToClient.isPending || undefined} aria-describedby={feedbackReason ? submitBlockerId : undefined} onClick={event => requestPublication("send", event.currentTarget)}>{sendToClient.isPending ? "Submitting…" : designer ? "Submit" : quotationWorkflow && lifecycle?.phase === "pre" ? "Approve and send to client" : quotationWorkflow ? "Send revised quotation to Client" : "Send to client"}</button> : null}
       </div>
     </footer> : null}
-    {historical && tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong aria-label={`Estimate amount including GST: ${displayedAmount}`}>{displayedAmount}<small className="estimate-workspace__amount-label" aria-hidden="true">incl. GST</small></strong><span>{selectedSnapshot ? `${estimateRevisionLabel(selectedSnapshot)} · Read-only` : "Saved revision · Read-only"}</span></div><div className="estimate-actions"><button type="button" className="button button--secondary" onClick={returnToCurrent}>Return to current estimate</button><button type="button" className="button button--primary" disabled={!selectedSnapshot || downloadingRevisionId !== null} onClick={() => void downloadSelectedRevision()}>{downloadingRevisionId === selectedRevisionId ? "Downloading…" : "Download revision"}</button></div></footer> : null}
+    {historical && tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong aria-label={`Estimate amount including GST: ${displayedAmount}`}>{displayedAmount}<small className="estimate-workspace__amount-label" aria-hidden="true">incl. GST</small></strong><span>{selectedSnapshot ? `${estimateRevisionLabel(selectedSnapshot)} · Read-only` : "Saved revision · Read-only"}</span></div><div className="estimate-actions">{salesPdfAction}<button type="button" className="button button--secondary" onClick={returnToCurrent}>Return to current estimate</button><button type="button" className="button button--primary" disabled={!selectedSnapshot || downloadingRevisionId !== null} onClick={() => void downloadSelectedRevision()}>{downloadingRevisionId === selectedRevisionId ? "Downloading…" : "Download revision"}</button></div></footer> : null}
     {historical && revisionDownloadError ? <p role="alert" className="estimate-notice estimate-notice--error">{revisionDownloadError}</p> : null}
     <EstimateNavigationGuard dirty={hasUnsavedChanges} busy={save.isPending || submit.isPending || navigationSaving} saveDisabled={saveDisabled} onSave={saveBeforeNavigation} />
     {!historical ? <>

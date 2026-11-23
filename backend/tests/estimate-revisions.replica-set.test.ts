@@ -74,6 +74,55 @@ beforeEach(async () => {
 });
 
 describe("staff immutable estimate revision reads", () => {
+  it("previews an assigned unlinked Sales draft and rejects its old version after a legacy save", async () => {
+    const draft = snapshot(100);
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" as never }, { $unset: { estimation: 1 },
+      $set: { projectId: null, lineItems: draft.lineItems, subtotal: 100, gst: 18, total: 118 } });
+    await LeadModel.updateOne({ _id: "lead-a" }, { $set: { projectId: null } });
+    const path = "/api/v1/estimates/estimate-a/pdf?audience=client&expectedVersion=19";
+    const file = await request(app).get(path).set("Authorization", token("salesA")).expect(200);
+    expect(file.headers["content-disposition"]).toContain("draft-v19.pdf");
+    expect(Buffer.from(file.body).subarray(0, 5).toString()).toBe("%PDF-");
+    await request(app).get(path).set("Authorization", token("salesB")).expect(404);
+    const result = await request(app).put("/api/v1/leads/lead-a/estimate").set("Authorization", token("salesA")).send({
+      propertyType: "Apartment", rooms: [{ id: "room-a", typeId: "kitchen", label: "Kitchen", sqft: 10 }], scopes: [], lineItems: [
+        { id: "line-a", source: "legacy", catalogueId: "legacy", roomName: "Saved kitchen", specification: "Frozen cabinet", unit: "each", quantity: 2, rate: 100, included: true }
+      ]
+    }).expect(200);
+    expect(result.body.data.version).toBe(20);
+    await request(app).get(path).set("Authorization", token("salesA")).expect(409);
+  });
+  it("previews an internal submission only while that legacy estimate version is awaiting review", async () => {
+    const draft = snapshot(100);
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" as never }, { $set: {
+      "estimation.status": "pending_manager_assignment", lineItems: draft.lineItems, subtotal: 100, gst: 18, total: 118
+    } });
+    const url = "/api/v1/estimates/estimate-a/pdf?audience=client&stage=internal-review&expectedVersion=19";
+    const file = await request(app).get(url).set("Authorization", token("salesA")).expect(200);
+    expect(file.headers["content-disposition"]).toContain("internal-review-v19.pdf");
+    await request(app).get(url).set("Authorization", token("client")).expect(403);
+    await request(app).get(url.replace("=19", "=18")).set("Authorization", token("salesA")).expect(409);
+    await EstimateModel.updateOne({ _id: "estimate-a" }, { $set: { "estimation.status": "draft" } });
+    await request(app).get(url).set("Authorization", token("salesA")).expect(409);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(3);
+  });
+  it("scopes the customer rendition to the requested submitted revision and never reads the raw archive", async () => {
+    const raw = bytes("client-safe");
+    const readForRound = vi.fn().mockResolvedValue({ bytes: raw, filename: "safe.pdf", mimeType: "application/pdf" });
+    const revisions = createEstimateRevisionsService({
+      leads: { get: vi.fn(async () => ({ id: "lead-a", ownerId: actors.salesA.id, projectId: "project-a" })) } as unknown as Parameters<typeof createEstimateRevisionsService>[0]["leads"],
+      storage, renditions: { readForRound }
+    });
+    const viewed = await revisions.readPdf(actors.salesA, "estimate-a", "round-a-1", "client");
+    expect(viewed.bytes).toEqual(raw);
+    expect(readForRound).toHaveBeenCalledWith(expect.objectContaining({ _id: "round-a-1", estimateVersion: 1, estimateSnapshot: expect.objectContaining({ subtotal: 100 }) }));
+    await expect(revisions.readPdf(actors.salesA, "estimate-a", "round-b-1", "client")).rejects.toMatchObject({ status: 404 });
+    expect(readForRound).toHaveBeenCalledTimes(1);
+    expect(storage.read).not.toHaveBeenCalled();
+    await get("/round-a-1/pdf?audience=unknown").expect(400);
+    await get("/round-a-1/pdf?audience=client", "salesB").expect(404);
+  });
+
   it("returns immutable rounded totals and rejects corrupt adjustment evidence", async () => {
     const saved = { ...snapshot(100.25), subtotal: 100.25, subtotalPaise: 10_025, gst: 18.05, gstPaise: 1_805,
       total: 118, totalPaise: 11_800, roundOffPaise: -30 };

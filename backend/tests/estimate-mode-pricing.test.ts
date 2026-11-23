@@ -50,18 +50,18 @@ describe("configured estimate selling rates", () => {
     })).toEqual({ pmc: null, sub_vendor: 25_000, in_house: null });
   });
 
-  it("uses each mode's own maximum rather than its minimum or another mode's maximum", () => {
+  it("uses vendor cost for PMC and the configured maximum for Sub-Vendor", () => {
     expect(estimateModeSellingRatesPaise({
       pmcMinimumMarginBps: 1000, pmcMarginBps: 1500,
       subVendorMinimumMarginBps: 500, subVendorMarginBps: 2500,
-      modeCalculations: { pmc: { baseRatePaise: 12_000 }, sub_vendor: { baseRatePaise: 20_000 } }
-    })).toEqual({ pmc: 13_800, sub_vendor: 25_000, in_house: null });
+      modeCalculations: { pmc: { baseRatePaise: 12_000, lowQuantityLimit: "0" }, sub_vendor: { baseRatePaise: 20_000 } }
+    })).toEqual({ pmc: 12_000, sub_vendor: 25_000, in_house: null });
   });
 
-  it("preserves explicit zero margins and zero prices", () => {
+  it("preserves valid zero prices and leaves invalid PMC margins unpriced", () => {
     expect(estimateModeSellingRatesPaise({ pmcMarginBps: 0, subVendorMarginBps: 0,
       modeCalculations: { pmc: { baseRatePaise: 1001 }, sub_vendor: { baseRatePaise: Number.MAX_SAFE_INTEGER } }
-    })).toEqual({ pmc: 1001, sub_vendor: Number.MAX_SAFE_INTEGER, in_house: null });
+    })).toEqual({ pmc: null, sub_vendor: Number.MAX_SAFE_INTEGER, in_house: null });
     expect(estimateModeSellingRatesPaise({ subVendorMarginBps: 9500,
       modeCalculations: { sub_vendor: { baseRatePaise: 0 } }
     }).sub_vendor).toBe(0);

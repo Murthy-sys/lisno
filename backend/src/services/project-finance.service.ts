@@ -1300,6 +1300,7 @@ async function approvedFinanceEstimates(
       subtotalPaise: 1,
       gstPaise: 1,
       totalPaise: 1,
+      pmcPaymentSummary: 1,
       roundOffPaise: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,

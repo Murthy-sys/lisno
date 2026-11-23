@@ -171,3 +171,40 @@ it("preserves frozen dimension provenance and rejects mismatched calculated quan
  expect(() => parseClientEstimates([{ ...payload, publishedReview: { ...payload.publishedReview, snapshot: { ...payload.publishedReview.snapshot, lineItems: [{ ...measured, quantity: 99 }] } } }])).toThrow();
  expect(parseClientEstimates([{ ...payload, publishedReview: { ...payload.publishedReview, snapshot: { ...payload.publishedReview.snapshot, lineItems: [{ ...measured, dimensionsMandatory: false, quantity: 99 }] } } }])[0]?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ quantity: 99, dimensions: measured.dimensions });
 });
+
+it("uses each immutable PMC summary for unequal projects and strips private evidence", () => {
+  const rows = [
+    { id: "estimate-one", vendor: 10000, fee: 2500, margin: 2000, grossVendor: 11800, grossFee: 2950 },
+    { id: "estimate-two", vendor: 17000, fee: 3000, margin: 1500, grossVendor: 20060, grossFee: 3540 }
+  ].map(values => {
+    const row = estimate(values.id, `project-${values.id}`, "sent_to_client");
+    const summary = { version: 1, vendorPayablePaise: values.grossVendor, lisnoPayablePaise: values.grossFee,
+      pmcTotalPayablePaise: values.grossVendor + values.grossFee, otherWorkPayablePaise: 0, roundOffPaise: 0,
+      customerTotalPayablePaise: values.grossVendor + values.grossFee, nonPmcMilestoneBasisPaise: 0 };
+    return { ...row, publishedReview: { ...row.publishedReview, snapshot: { ...row.publishedReview.snapshot,
+      subtotalPaise: values.vendor, gstPaise: values.grossVendor - values.vendor, totalPaise: values.grossVendor,
+      pmcPaymentSummary: { ...summary, privateInput: "must not be retained" },
+      lineItems: [{ ...row.publishedReview.snapshot.lineItems[0], pricingMode: "pmc", pmcVendorPayable: true,
+        amountPaise: values.vendor, pmcMarginSnapshot: { privateInput: "must not be retained" },
+        pmcPaymentSplit: { version: 1, marginBps: values.margin, vendorAmountPaise: values.vendor,
+          lisnoAmountPaise: values.fee, estimatedValuePaise: values.vendor + values.fee,
+          vendorPayablePaise: values.grossVendor, lisnoPayablePaise: values.grossFee, totalPayablePaise: values.grossVendor + values.grossFee,
+          taxBasis: { subtotalPaise: values.vendor, gstPaise: values.grossVendor - values.vendor }, privateInput: "must not be retained" } }]
+    } } };
+  });
+  const parsed = parseClientEstimates(rows);
+  expect(parsed.map(row => row.total)).toEqual([147.5, 236]);
+  expect(parsed.map(canDecideClientEstimate)).toEqual([true, true]);
+  expect(parsed[0]?.lineItems[0]?.pmcPaymentSplit?.marginBps).toBe(2000);
+  expect(parsed[1]?.lineItems[0]?.pmcPaymentSplit?.marginBps).toBe(1500);
+  expect(JSON.stringify(parsed)).not.toMatch(/privateInput|pmcMarginSnapshot/);
+  const broken = structuredClone(rows[0]!);
+  broken.publishedReview.snapshot.pmcPaymentSummary.customerTotalPayablePaise = 1;
+  expect(() => parseClientEstimates([broken])).toThrow(ApiProtocolError);
+  const missing = structuredClone(rows[0]!) as any;
+  delete missing.publishedReview.snapshot.pmcPaymentSummary;
+  expect(() => parseClientEstimates([missing])).toThrow(ApiProtocolError);
+  const hidden = structuredClone(rows[0]!);
+  hidden.publishedReview.snapshot.lineItems = [];
+  expect(parseClientEstimates([hidden])[0]?.total).toBe(147.5);
+});

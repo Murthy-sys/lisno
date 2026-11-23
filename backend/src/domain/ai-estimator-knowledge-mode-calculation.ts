@@ -85,7 +85,11 @@ export function calculateKnowledgeInHousePrice(input: KnowledgeInHouseCalculatio
   readonly markupBasis?: "starting" | "minimum";
   readonly discountBps?: number;
 }): KnowledgeInHouseCalculationPreview {
-  const context = { quantity: input.quantity, quantityScale: input.quantityScale, markupBasis: input.markupBasis, discountBps: input.discountBps };
+  const context = {
+    quantity: input.quantity, quantityScale: input.quantityScale,
+    ...(input.markupBasis === undefined ? {} : { markupBasis: input.markupBasis }),
+    ...(input.discountBps === undefined ? {} : { discountBps: input.discountBps })
+  };
   const labor = calculateKnowledgeModePrice({ ...input.labor, ...context });
   const material = calculateKnowledgeModePrice({ ...input.material, ...context });
   // Add the independently rounded final amounts, including each cost's own Impact and gross margin.

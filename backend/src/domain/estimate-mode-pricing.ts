@@ -1,3 +1,4 @@
+import { calculateEstimatePmcPayable, readEstimatePmcPricing, type EstimatePmcPricing } from "./estimate-pmc-payable.js";
 import { isKnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import { hasInHouseComponents, selectedInHouseComponents, selectedInHouseBaseRate, type InHouseComponentRate } from "./ai-estimator-knowledge-in-house-components.js";
 export const ESTIMATE_PRICING_MODES = ["pmc", "sub_vendor", "in_house"] as const;
@@ -28,8 +29,8 @@ export function estimateModeBaseRatesPaise(payload: unknown): EstimateModeBaseRa
   return { pmc: base(scopes?.pmc), sub_vendor: base(scopes?.sub_vendor), in_house: hasInHouseComponents(payload) ? null : inHouse };
 }
 
-/** Estimation adds each unit-rate mode's configured maximum to its cost; margins stay private. */
-export function estimateModeSellingRatesPaise(payload: unknown): EstimateModeBaseRatesPaise {
+/** PMC publishes the vendor base; its final rate depends on quantity. Other modes retain their selling rates. */
+export function estimateModeSellingRatesPaise(payload: unknown, pmcPricing: EstimatePmcPricing | null | undefined = readEstimatePmcPricing(payload, 3)): EstimateModeBaseRatesPaise {
   const bases = estimateModeBaseRatesPaise(payload);
   const settings = object(payload);
   const sellingRate = (baseRatePaise: unknown, maximumMarginBps: unknown, marginLimit = 9_500): number | null => {
@@ -58,7 +59,7 @@ export function estimateModeSellingRatesPaise(payload: unknown): EstimateModeBas
     }
   }
   return {
-    pmc: sellingRate(bases.pmc, settings?.pmcMarginBps),
+    pmc: pmcPricing?.baseRatePaise ?? null,
     sub_vendor: sellingRate(bases.sub_vendor, settings?.subVendorMarginBps),
     in_house: inHouse
   };
@@ -92,4 +93,15 @@ export function estimateConfigurationRateMatches(line: {
   }
   if (hasSelection) return false;
   return line.rateSource !== "configuration" || line.ratePaise === bases[line.pricingMode as EstimatePricingMode];
+}
+
+/** Validate PMC against the measured quantity, including legacy drafts with a manual rate. */
+export function currentEstimateLineRateMatches(line: Parameters<typeof estimateConfigurationRateMatches>[0] & {
+  quantity?: unknown; amountPaise?: unknown;
+}, pricing: { modeBaseRatesPaise: EstimateModeBaseRatesPaise; inHouseComponents?: readonly InHouseComponentRate[]; pmcPricing?: EstimatePmcPricing }, quantityScale: number): boolean {
+  if (line.pricingMode !== "pmc") return estimateConfigurationRateMatches(line, pricing.modeBaseRatesPaise, pricing.inHouseComponents);
+  if (line.rateSource !== "configuration" || typeof line.quantity !== "number") return false;
+  const payable = calculateEstimatePmcPayable(pricing.pmcPricing, line.quantity, quantityScale);
+  return !!payable && line.amountPaise === payable.finalVendorChargesPaise && line.ratePaise === payable.revisedUnitRatePaise &&
+    estimateConfigurationRateMatches(line, { ...pricing.modeBaseRatesPaise, pmc: payable.revisedUnitRatePaise });
 }

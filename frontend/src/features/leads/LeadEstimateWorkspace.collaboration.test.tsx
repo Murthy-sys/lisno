@@ -1,3 +1,4 @@
+import { pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { selectPickerLine } from "./salesItemPicker.test-fixture";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
@@ -42,7 +43,10 @@ function setup(value: EstimateDraft = structuredClone(estimate), requests = stru
     http.get("/api/v1/projects/project-one/estimate-requirements", () => HttpResponse.json({ data: state.requests })),
     http.get("/api/v1/projects/project-one/quotation/revision", () => HttpResponse.json({ data: { estimateId: state.estimate.id, estimateVersion: state.estimate.version, pricedRevision: state.estimate.estimation?.pricedRevision, status: state.estimate.status, phase: state.estimate.estimation?.phase } })),
     http.get("/api/v1/estimation/catalogue", () => HttpResponse.json({ data: { ...catalogue, pagination: { total: 1, hasMore: false, offset: 0, limit: 100 } } })),
-    http.get("/api/v1/estimation/catalogue/recommendations", () => HttpResponse.json({ data: { sources: [] } })),
+    http.get("/api/v1/estimation/catalogue/recommendations", () => HttpResponse.json({ data: { sources: catalogue?.items.flatMap(basket => [
+      ...(basket.directTemporaryItems ?? []), ...basket.subBaskets.flatMap(group => [...group.mainLines, ...(group.temporaryItems ?? [])])
+    ]).map(line => ({ mainLineId: line.mainLineId, available: true, revisionId: line.revisionId,
+      revisionVersion: line.revisionVersion, itemVersion: line.itemVersion, rules: [], guidance: [] })) ?? [] } })),
     http.put("/api/v1/leads/lead-one/estimate", async ({ request }) => {
       const body = await request.json() as EstimateDraftInput; saves.push(body);
       await saveGate;
@@ -92,7 +96,7 @@ function configuredFixture() {
         name: mainLineId === "visible" ? "Visible finish" : "Internal finish", displayOrder: index,
         revisionId: `revision-${mainLineId}`, itemVersion: 1, revisionVersion: 1,
         uom: { id: "unit", name: "units", code: "NOS", decimalScale: 0 },
-        modeBaseRatesPaise: { pmc: 2000, sub_vendor: 2000, in_house: null }
+        pmcPricing: pmcPricingFixture(2000), modeBaseRatesPaise: { pmc: 2000, sub_vendor: 2000, in_house: null }
       })) }] }], ineligibleLineCount: 0 };
   return { draft, catalogue };
 }
@@ -211,7 +215,7 @@ describe("Collaborative estimate workspace", () => {
     expect(data.saves).toEqual([]);
   });
 
-  it("saves an unrelated Sales quantity edit after handoff without changing its read-only PMC mode or manual price", async () => {
+  it("saves the current vendor price for a quantity edit after handoff while retaining its read-only PMC mode", async () => {
     const user = userEvent.setup();
     authState.user.role = "estimator_sales";
     const { draft, catalogue } = configuredFixture();
@@ -237,7 +241,7 @@ describe("Collaborative estimate workspace", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(data.saves).toHaveLength(1));
     expect((data.saves[0] as EstimateDraftInput).lineItems).toContainEqual(expect.objectContaining({
-      id: "visible-living", quantity: 4, classification: "special", pricingMode: "pmc", rateSource: "manual", ratePaise: 4200
+      id: "visible-living", quantity: 4, classification: "special", pricingMode: "pmc", rateSource: "configuration", ratePaise: 2000
     }));
     expect(within(row).getByText("PMC")).toBeVisible();
   });
@@ -675,20 +679,22 @@ describe("Collaborative estimate workspace", () => {
     expect(data.submits).toEqual([]);
   });
 
-  it("preserves an incomplete manual rate when both the old rate and serialized edit are null", async () => {
+  it("preserves a local quantity edit when the saved manual price remains incomplete", async () => {
     const { draft, catalogue } = configuredFixture();
     draft.lineItems = draft.lineItems.map(line => line.id === "visible-living"
       ? { ...line, rateSource: "manual" as const, ratePaise: null, rate: null, amountPaise: null, amount: null } as ConfiguredEstimateLine : line);
     const { state, getClient } = setup(draft, structuredClone(requirements), catalogue);
     const rate = () => screen.getByRole("textbox", { name: /selling rate.*visible finish.*living room/i });
-    await screen.findByRole("textbox", { name: /selling rate.*visible finish.*living room/i });
-    await waitFor(() => expect(rate()).toBeEnabled());
+    const quantity = () => screen.getByRole("spinbutton", { name: /quantity.*visible finish.*living room/i });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    expect(rate()).toBeDisabled();
     expect(rate()).toHaveValue("");
-    await userEvent.type(rate(), "12.");
+    await userEvent.clear(quantity()); await userEvent.type(quantity(), "12");
     state.estimate = { ...state.estimate, version: 8 };
     await act(async () => { await getClient().refetchQueries({ queryKey: leadKeys.estimate("lead-one") }); await getClient().refetchQueries({ queryKey: ["quotation", "project-one"] }); });
     expect((await screen.findAllByText(/Your local edits are preserved/))[0]).toBeVisible();
-    expect(rate()).toHaveValue("12.");
+    expect(rate()).toHaveValue("");
+    expect(quantity()).toHaveValue(12);
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
   });
 
@@ -713,7 +719,7 @@ describe("Collaborative estimate workspace", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   });
 
-  it("retains a partial rate typed while an earlier blank-rate save is in flight", async () => {
+  it("retains a later quantity edit while an earlier save with an incomplete price is in flight", async () => {
     authState.user.role = "estimator_sales";
     const { draft, catalogue } = configuredFixture();
     draft.lineItems = draft.lineItems.map(line => line.id === "visible-living"
@@ -722,18 +728,23 @@ describe("Collaborative estimate workspace", () => {
     let finish!: () => void;
     pauseSave(new Promise(resolve => { finish = resolve; }));
     const rate = () => screen.getByRole("textbox", { name: /selling rate.*visible finish.*living room/i });
+    const quantity = () => screen.getByRole("spinbutton", { name: /quantity.*visible finish.*living room/i });
     await screen.findByRole("textbox", { name: /selling rate.*visible finish.*living room/i });
+    expect(rate()).toBeDisabled();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
-    await userEvent.type(rate(), "12.");
+    await userEvent.clear(quantity()); await userEvent.type(quantity(), "12");
     await act(async () => finish());
     await screen.findByText("Estimate draft saved.");
-    expect(rate()).toHaveValue("12.");
+    expect(rate()).toHaveValue("");
+    expect(quantity()).toHaveValue(12);
+    expect((saves[0] as EstimateDraftInput).lineItems.find(line => line.id === "visible-living")?.quantity).toBe(2);
     state.estimate = { ...state.estimate, version: 9 };
     await act(async () => { await getClient().refetchQueries({ queryKey: leadKeys.estimate("lead-one") }); await getClient().refetchQueries({ queryKey: ["quotation", "project-one"] }); });
     expect((await screen.findAllByText(/Your local edits are preserved/))[0]).toBeVisible();
-    expect(rate()).toHaveValue("12.");
+    expect(rate()).toHaveValue("");
+    expect(quantity()).toHaveValue(12);
   });
 
   it("refreshes after the actual configured edits have been saved", async () => {

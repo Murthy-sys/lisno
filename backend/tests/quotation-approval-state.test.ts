@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
@@ -204,6 +205,37 @@ describe("effective current quotation approval", () => {
     const { estimate, preRound } = fixture();
     estimate.lineItems[0].roomName = "Corrupted room";
     expect(resolve(estimate, [preRound]).quotationApprovalState).toBe("source_issue");
+  });
+
+  it("requires the approved PMC vendor basis to match while keeping private margins outside the approval", () => {
+    const { estimate, preRound } = fixture();
+    const basis = { pricingMode: "pmc", classification: "special", rateSource: "configuration", pmcVendorPayable: true };
+    Object.assign(estimate.lineItems[0], basis, { pmcMarginSnapshot: { pmcMarginBps: 1500, pmcMarginAmountPaise: 1765 } });
+    Object.assign(preRound.estimateSnapshot.lineItems[0], basis);
+    preRound.sourceDigest = quotationSnapshotDigest(preRound.estimateSnapshot);
+    preRound.salesApproval.sourceDigest = preRound.sourceDigest;
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(true);
+    delete estimate.lineItems[0].pmcVendorPayable;
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(false);
+  });
+
+  it("binds the approved PMC split and combined customer amount even when vendor totals stay fixed", () => {
+    const { estimate, preRound } = fixture();
+    const payments = buildEstimatePmcPayments(estimate.lineItems.map((line: Row) => ({ ...line,
+      pricingMode: "pmc", classification: "special", rateSource: "configuration", pmcVendorPayable: true,
+      pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 2500 } })),
+      { subtotalPaise: 10000, gstPaise: 1800, totalPaise: 11800 });
+    Object.assign(estimate, payments);
+    Object.assign(preRound.estimateSnapshot, structuredClone(payments));
+    preRound.sourceDigest = quotationSnapshotDigest(preRound.estimateSnapshot);
+    preRound.salesApproval.sourceDigest = preRound.sourceDigest;
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(true);
+    const revised = buildEstimatePmcPayments(estimate.lineItems.map((line: Row) => ({ ...line,
+      pmcMarginSnapshot: { pmcMarginBps: 1500, pmcMarginAmountPaise: 1765 } })),
+      { subtotalPaise: 10000, gstPaise: 1800, totalPaise: 11800 });
+    Object.assign(estimate, revised);
+    expect(estimate.totalPaise).toBe(preRound.estimateSnapshot.totalPaise);
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(false);
   });
 
   it("classifies a real saved edit as a revision draft even after live Sales evidence is cleared", () => {

@@ -1,3 +1,4 @@
+import { estimatePmcPaymentsAreValid, readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
@@ -56,6 +57,8 @@ const estimateClientReviewLineItemSchema = new Schema(
     dimensions: { type: Schema.Types.Mixed, default: undefined, immutable: true },
     dimensionRule: { type: Schema.Types.Mixed, default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
+    pmcPaymentSplit: { type: Schema.Types.Mixed, default: undefined, immutable: true, validate: (value: unknown) => value === undefined || readEstimatePmcPaymentSplit(value) !== null },
+    pmcVendorPayable: { type: Boolean, cast: false, validate: (value: unknown) => value === true, default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
     pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined, immutable: true },
     componentPricing: { type: Schema.Types.Mixed, default: undefined, immutable: true, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
@@ -154,6 +157,7 @@ const selectedMainBasketClassificationSchema = new Schema({
 
 const estimateClientReviewSnapshotSchema = new Schema(
   {
+    pmcPaymentSummary: { type: Schema.Types.Mixed, default: undefined, immutable: true, validate: (value: unknown) => value === undefined || readEstimatePmcPaymentSummary(value) !== null },
     proposal: { type: Schema.Types.Mixed, default: undefined, immutable: true,
       validate: (value: unknown) => value === undefined || readEstimateProposal(value) !== null },
     rooms: { type: [Schema.Types.Mixed], default: undefined, immutable: true },
@@ -184,6 +188,9 @@ const estimateClientReviewSnapshotSchema = new Schema(
 );
 
 estimateClientReviewSnapshotSchema.pre("validate", function validateFrozenTotals() {
+  if (!estimatePmcPaymentsAreValid(this.toObject() as unknown as Parameters<typeof estimatePmcPaymentsAreValid>[0])) {
+    this.invalidate("pmcPaymentSummary", "Published PMC payment details must reconcile with the complete snapshot.");
+  }
   if (typeof this.get("location") !== "string") {
     this.invalidate("location", "Published snapshot location must be a string.");
   }

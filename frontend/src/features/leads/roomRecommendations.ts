@@ -211,12 +211,14 @@ function reasonFor(sourceId: string, sourceName: string, rule: EstimationRecomme
   return { ruleId: rule.id, sourceId, sourceName, reason: rule.reason, requirement: rule.requirement };
 }
 
-export function buildRoomRecommendations({ catalogue, lines, roomId, roomTypeId, recommendations }: {
+export function buildRoomRecommendations({ catalogue, lines, roomId, roomTypeId, recommendations, includeProbable = false }: {
   catalogue: EstimationCatalogue;
   lines: readonly ConfiguredLineDraft[];
   roomId: string;
   roomTypeId?: string;
   recommendations: EstimationCatalogueRecommendations;
+  /** Staff estimator opt-in; existing client-style consumers retain required-only choices. */
+  includeProbable?: boolean;
 }): RoomRecommendationView {
   const locations = catalogueLocations(catalogue);
   const partition = partitionRoomRecommendationSources({ catalogue, lines, roomId });
@@ -248,7 +250,7 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, roomTypeId,
       guidance.push({ id: item.id, sourceId: source.mainLineId, sourceName, name: item.name, reason: item.reason });
     }
     for (const rule of source.rules) {
-      if (rule.requirement !== "must") continue;
+      if (rule.requirement !== "must" && !includeProbable) continue;
       const key = rule.targetKind === "main_line"
         ? `line:${rule.targetMainLineId ?? ""}`
         : `sub-basket:${rule.targetBasketId}:${rule.targetSubBasketId ?? ""}`;

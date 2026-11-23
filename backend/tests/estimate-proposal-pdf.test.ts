@@ -5,7 +5,7 @@ import { createEstimatePdfService } from "../src/services/estimate-pdf.service.j
 import { proposalPayments } from "../src/domain/estimate-proposal.js";
 import { renderEstimateProposalPdf } from "../src/services/estimate-proposal-pdf/index.js";
 import { money, proposalGroups } from "../src/services/estimate-proposal-pdf/content.js";
-import { proposalFixture } from "./fixtures/estimate-proposal.js";
+import { pmcProposalFixture, proposalFixture } from "./fixtures/estimate-proposal.js";
 
 async function readPdf(bytes: Buffer) {
   const document = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false }).promise;
@@ -28,12 +28,11 @@ describe("reference proposal booklet", () => {
         total: totalPaise / 100, totalPaise, roundOffPaise });
       const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
       const investment = pdf.pages.find(text => text.includes("Total payable"))!;
-      expect(investment).toContain(money(gstPaise, false));
+      expect(investment).not.toMatch(/\bGST\b/);
       expect(investment).toContain(money(totalPaise));
       if (roundOffPaise) {
         expect(investment).toContain(`${roundOffPaise < 0 ? "-" : "+"}${money(Math.abs(roundOffPaise))}`);
-        expect(investment.indexOf("Round off")).toBeGreaterThan(investment.indexOf("GST"));
-        expect(investment.indexOf("Round off")).toBeLessThan(investment.indexOf("Total payable"));
+        expect(investment.indexOf("Round off")).toBeGreaterThan(investment.indexOf("Total payable"));
       } else expect(investment).not.toContain("Round off");
       for (const bound of pdf.bounds) expect(bound.x + bound.width, bound.text).toBeLessThan(550);
       await expect(renderEstimateProposalPdf({ ...fixture, roundOffPaise: roundOffPaise + 1 })).rejects.toThrow("totals do not reconcile");
@@ -47,10 +46,93 @@ describe("reference proposal booklet", () => {
     ["A home,", "Dear Ananya Rao,", "Scope of work", "Detailed estimate", "Detailed estimate, continued", "Detailed estimate, continued", "Your project price", "Payment schedule", "From first sketch to handover", "What's not included", "Terms & specifications", "Let's begin"].forEach((title, i) => expect(pdf.pages[i]).toContain(title));
     expect(pdf.text).toContain(fixture.proposal.reference);
     expect(pdf.pages[6]).toContain(money(fixture.totalPaise!));
-    expect(pdf.pages[6]).toContain(money(fixture.gstPaise!, false));
+    expect(pdf.pages[6]).not.toContain(money(fixture.gstPaise!, false));
     for (const stage of proposalPayments(fixture.totalPaise!, fixture.proposal.terms.paymentStages)) expect(pdf.pages[7]).toContain(money(stage.amountPaise));
     expect(pdf.text).not.toContain("BY YOU");
     for (const bound of pdf.bounds) { expect(bound.x, bound.text).toBeGreaterThanOrEqual(45); expect(bound.x + bound.width, bound.text).toBeLessThan(550); expect(bound.y, bound.text).toBeGreaterThan(20); expect(bound.y, bound.text).toBeLessThan(820); }
+  });
+  it("quotes the saved PMC vendor payable per sqft and reconciles a mixed quotation", async () => {
+    const fixture = proposalFixture();
+    const pmc = { ...fixture.lineItems[0], pricingMode: "pmc" as const, pmcVendorPayable: true as const, unit: "sqft", quantity: 10,
+      ratePaise: 10000, rate: 100, amountPaise: 100000, amount: 1000 };
+    Object.assign(fixture, { subtotalPaise: 100000, gstPaise: 18000, totalPaise: 118000, roundOffPaise: 0 });
+    fixture.lineItems = [pmc];
+    const groups = proposalGroups(fixture);
+    expect(groups[0]?.lines[0]).toMatchObject({ quantity: "10", unit: "sqft", rate: "118", amountPaise: 118000 });
+    const vendorQuote = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(vendorQuote.text).toContain("Payable to vendor");
+    expect(vendorQuote.text).toContain("₹ 1,180");
+    expect(vendorQuote.text).not.toMatch(/excluding GST|PMC margin|GST @/i);
+    const historical = await readPdf(await renderEstimateProposalPdf({ ...fixture, lineItems: [{ ...pmc, pmcVendorPayable: undefined }] }));
+    expect(historical.text).toContain("Total payable");
+    expect(historical.text).not.toContain("Payable to vendor");
+    expect(historical.text).toContain("₹ 1,180");
+    fixture.lineItems.push({ ...pmc, pmcVendorPayable: undefined, mainLineId: "paint", pricingMode: "sub_vendor", quantity: 1.25, rate: 0.1, ratePaise: 10, amount: 0.13, amountPaise: 13 });
+    Object.assign(fixture, { subtotalPaise: 100013, gstPaise: 18002, totalPaise: 118000, roundOffPaise: -15 });
+    expect(proposalGroups(fixture)[0]?.amountPaise).toBe(118015);
+    const mixed = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(mixed.text).toContain("Total payable");
+    expect(mixed.text).not.toContain("Payable to vendor");
+    expect(mixed.text).toContain("-₹ 0.15");
+  });
+  it("shows each saved PMC share and recipient total without a PMC booking milestone", async () => {
+    const fixture = pmcProposalFixture();
+    const groups = proposalGroups(fixture);
+    expect(groups.map(group => group.amountPaise)).toEqual([147500, 118000]);
+    expect(groups[0].lines[0]).toMatchObject({ rate: "Vendor\n118", amountPaise: 147500 });
+    const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(pdf.text).toContain("PMC estimated value: ₹ 1,475");
+    expect(pdf.text).toContain("Payable to Lisno · 20% of estimated value: ₹ 295");
+    expect(pdf.text).toContain("Payable to vendor · remaining 80%: ₹ 1,180");
+    expect(pdf.text).toContain("Payable to Lisno · 15% of estimated value: ₹ 177");
+    expect(pdf.text).toContain("Payable to vendor · remaining 85%: ₹ 1,003");
+    expect(pdf.text).toContain("Percentage applied before tax; amounts include all taxes.");
+    const investment = pdf.pages.find(text => text.includes("Your project price"))!;
+    expect(investment).toContain("PMC payable to Lisno ₹ 472");
+    expect(investment).toContain("PMC payable to vendors ₹ 2,183");
+    expect(investment).toContain("Total PMC estimated value ₹ 2,655");
+    expect(pdf.pages[1]).toContain("₹ 2,655");
+    expect(pdf.pages.at(-1)).toContain("Total customer payable, including all taxes ₹ 2,655");
+    expect(pdf.text).not.toMatch(/Booking advance|Five stages|stage 01|stage 02|PAYMENT STAGES/);
+    expect(pdf.text).toContain("No PMC payment dates are specified in this proposal.");
+    for (const bound of pdf.bounds) { expect(bound.y, `${bound.page}: ${bound.text}`).toBeGreaterThan(20); expect(bound.x + bound.width, bound.text).toBeLessThan(550); }
+  });
+  it("uses only non-PMC work for mixed milestones and retains a separate signed adjustment", async () => {
+    const fixture = pmcProposalFixture(true);
+    const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
+    const investment = pdf.pages.find(text => text.includes("Your project price"))!;
+    expect(investment).toContain("Non-PMC work ₹ 295.15");
+    expect(investment).toContain("Round off -₹ 0.15");
+    expect(investment).toContain("Total customer payable ₹ 2,950");
+    const schedule = pdf.pages.filter(text => text.includes("Non-PMC payment schedule")).join(" ");
+    expect(schedule).toContain("Five stages apply only to non-PMC work of ₹ 295.15");
+    for (const stage of proposalPayments(29515, fixture.proposal.terms.paymentStages)) expect(schedule).toContain(money(stage.amountPaise));
+    expect(pdf.pages.at(-1)).toContain("Booking advance (non-PMC stage 01) ₹ 29.51");
+    expect(pdf.pages.at(-1)).toContain("Total customer payable, including all taxes ₹ 2,950");
+    expect(pdf.pages[1]).toContain("₹ 2,950");
+    for (const bound of pdf.bounds) { expect(bound.y, `${bound.page}: ${bound.text}`).toBeGreaterThan(20); expect(bound.x + bound.width, bound.text).toBeLessThan(550); }
+  });
+  it("preserves the full PMC payment summary when all item details are hidden", async () => {
+    const fixture = pmcProposalFixture(true);
+    fixture.lineItems = [];
+    fixture.includedPayablesPaise = [];
+    const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(pdf.text).not.toMatch(/PMC ceiling|PMC installation|Non-PMC painting|20% of estimated value|15% of estimated value/);
+    expect(pdf.text).toContain("PMC payable to Lisno ₹ 472");
+    expect(pdf.text).toContain("PMC payable to vendors ₹ 2,183");
+    expect(pdf.text).toContain("Total customer payable ₹ 2,950");
+    expect(pdf.text).toContain("Area totals cover visible items; these payables cover the complete estimate.");
+  });
+  it("continues long PMC detail without losing the saved split and rejects invalid present evidence", async () => {
+    const fixture = pmcProposalFixture();
+    fixture.lineItems[0].specification = `${"A detailed saved PMC specification and installation requirement. ".repeat(180)}PMC SPECIFICATION END`;
+    const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(pdf.text).toContain("PMC SPECIFICATION END");
+    expect(pdf.text.match(/Payable to Lisno · 20% of estimated value: ₹ 295/gu)).toHaveLength(1);
+    expect(pdf.pages.filter(text => text.includes("Detailed estimate")).length).toBeGreaterThan(2);
+    for (const bound of pdf.bounds) { expect(bound.y, `${bound.page}: ${bound.text}`).toBeGreaterThan(20); expect(bound.x + bound.width, bound.text).toBeLessThan(550); }
+    fixture.pmcPaymentSummary!.customerTotalPayablePaise += 1;
+    await expect(renderEstimateProposalPdf(fixture)).rejects.toThrow("PMC payments do not reconcile");
   });
   it("uses stable room identifiers, preserves caller-authorized included rows, and does not invent a customer supplied scope", async () => {
     const fixture = proposalFixture(), a = fixture.lineItems[0], b = fixture.lineItems[1];
@@ -74,7 +156,7 @@ describe("reference proposal booklet", () => {
     fixture.lineItems = [{ ...fixture.lineItems[0], mainLineName: "Café cabinet", quantity: 1, ratePaise: 12345, amountPaise: 12345, rate: 1, amount: 1 }];
     fixture.subtotalPaise = 12345; fixture.gstPaise = 2222; fixture.totalPaise = 14567;
     const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
-    expect(pdf.text).toContain("Renée"); expect(pdf.text).toContain("नमन"); expect(pdf.text).toContain("Café cabinet"); expect(pdf.text).toContain("₹ 145.67"); expect(pdf.text).toContain("123.45");
+    expect(pdf.text).toContain("Renée"); expect(pdf.text).toContain("नमन"); expect(pdf.text).toContain("Café cabinet"); expect(pdf.text).toContain("₹ 145.67"); expect(pdf.text).not.toContain("123.45");
   });
   it("continues unusually long frozen workflow and commercial terms within page bounds", async () => {
     const fixture = proposalFixture(), terms = fixture.proposal.terms;
@@ -94,7 +176,7 @@ describe("reference proposal booklet", () => {
     const fixture = proposalFixture();
     const label = "Long residence name ".repeat(10).slice(0, 200);
     fixture.lead.clientName = label; fixture.lead.projectName = label;
-    fixture.lineItems = [{ ...fixture.lineItems[0], roomName: label, amountPaise: 9_007_199_254_740_991 }];
+    fixture.lineItems = [{ ...fixture.lineItems[0], roomName: label, amountPaise: 7_000_000_000_000_000 }];
     const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
     for (const bound of pdf.bounds) { expect(bound.y, `${bound.page}: ${bound.text}`).toBeGreaterThan(7); expect(bound.x + bound.width, `${bound.page}: ${bound.text}`).toBeLessThan(550); }
     fixture.lineItems = Array.from({ length: 6 }, (_, i) => ({ ...fixture.lineItems[0], roomId: `long-room-${i}`, roomName: "W".repeat(200), amountPaise: 100 }));
@@ -120,13 +202,13 @@ describe("reference proposal booklet", () => {
         totalPaise: 12345, inputFingerprint: "a".repeat(64) } };
     fixture.lineItems = [component];
     const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
-    expect(pdf.text).toContain("labour ₹ 23.45"); expect(pdf.text).toContain("material ₹ 100"); expect(pdf.text).toContain("total ₹ 123.45");
+    expect(pdf.text).toContain("labour ₹ 27.67"); expect(pdf.text).toContain("material ₹ 118"); expect(pdf.text).toContain("total ₹ 145.67");
     expect(pdf.text).toContain("L 1.2345 × W 1 × H 9 ft"); expect(pdf.text).toContain("1.235");
     const { componentPricing, selectedInHouseComponentIds: _selected, ...aggregateLine } = component;
     fixture.lineItems = [{ ...aggregateLine, aggregatePricing: toEstimateAggregatePricing(componentPricing) }];
     const aggregatePdf = await readPdf(await renderEstimateProposalPdf(fixture));
-    expect(aggregatePdf.text).toContain("Price including margin");
-    expect(aggregatePdf.text).not.toMatch(/Saved carpentry|labour ₹ 23.45|material ₹ 100|part-one/);
+    expect(aggregatePdf.text).not.toContain("Price including margin");
+    expect(aggregatePdf.text).not.toMatch(/Saved carpentry|labour ₹ 27.67|material ₹ 118|part-one/);
     expect(fixture.lineItems[0].amountPaise).toBe(12345);
     fixture.lineItems = [{ ...component, amountPaise: 12346 }];
     await expect(renderEstimateProposalPdf(fixture)).rejects.toThrow("component amounts");

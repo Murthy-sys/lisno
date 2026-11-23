@@ -23,6 +23,8 @@ const selectedComponentIds = z.array(componentId).max(50).refine(ids => new Set(
 const status = z.enum(["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client", "sent_to_client", "client_changes_requested", "client_approved"]);
 const reviewSchema = z.object({ id, version: z.number().int().positive(), status: z.enum(["pending", "approved", "changes_requested", "superseded"]), deliveryStatus: z.enum(["queued", "sending", "sent", "failed", "disabled"]), deliveryAttemptCount: z.number().int().nonnegative(), deliveredAt: z.string().nullable() }).passthrough();
 const configuredMetadata = {
+  pmcVendorPayable: z.literal(true).optional(),
+  pmcMarginSnapshot: z.object({ pmcMarginBps: paise, pmcMarginAmountPaise: paise }).optional(),
   dimensionsMandatory: z.boolean().optional(),
   dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
   dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
@@ -139,6 +141,7 @@ const catalogueLine = z.object({ applicableTiers: z.array(z.enum(["signature", "
   inHouseComponents: z.array(z.object({ id: componentId, basketId: id, subBasketId: id.nullable(), basketName: z.string(), subBasketName: z.string().nullable(), baseRatePaise: paise.nullable(), unavailableReason: z.string().nullable().optional() }).passthrough()).max(50).refine(rows => new Set(rows.map(row => row.id)).size === rows.length).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(),
   uom: z.object({ id, code: z.string(), name: z.string(), decimalScale: z.number().int().min(0).max(6) }),
+  pmcPricing: z.object({ baseRatePaise: paise, lowQuantityLimit: z.string(), impactBps: paise, pmcMarginBps: paise }).optional(),
   modeBaseRatesPaise: z.object({ pmc: paise.nullable(), sub_vendor: paise.nullable(), in_house: paise.nullable() }).optional()
 }).passthrough();
 const basketSchema = z.object({ id, name: z.string(), displayOrder: z.number(), description: z.string().nullish(),

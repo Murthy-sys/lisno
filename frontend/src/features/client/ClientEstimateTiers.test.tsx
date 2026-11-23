@@ -257,3 +257,22 @@ describe("client working estimate tiers", () => {
     expect(api.updateEstimateTier).not.toHaveBeenCalled(); expect(api.updateEstimateTierGroup).not.toHaveBeenCalled();
   });
 });
+
+it("keeps the working total and saved PMC recipients on the same saved basis", async () => {
+  const detail = fixture();
+  detail.pmcPaymentSummary = { version: 1, vendorPayablePaise: 11800, lisnoPayablePaise: 2950,
+    pmcTotalPayablePaise: 14750, otherWorkPayablePaise: 0, roundOffPaise: 0,
+    customerTotalPayablePaise: 14750, nonPmcMilestoneBasisPaise: 0 };
+  Object.assign(detail.lines[0]!, { pricingMode: "pmc", pmcPaymentSplit: {
+    version: 1, marginBps: 2000, vendorAmountPaise: 10000, lisnoAmountPaise: 2500, estimatedValuePaise: 12500,
+    vendorPayablePaise: 11800, lisnoPayablePaise: 2950, totalPayablePaise: 14750, taxBasis: { subtotalPaise: 10000, gstPaise: 1800 }
+  } });
+  setup(detail);
+  await screen.findByText("Ceiling");
+  expect(screen.getByText("Current total including GST").nextElementSibling).toHaveTextContent("₹147.5");
+  expect(screen.getByText("PMC payable to Lisno").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(screen.getByText("Payable to vendor · remaining share").nextElementSibling).toHaveTextContent("₹118");
+  expect(screen.getByText("Saved amount incl. GST")).toHaveTextContent("₹147.5");
+  await userEvent.setup().click(tier("Premium"));
+  expect(screen.getByText("Selected vendor payable incl. GST: ₹165.2. Save to update the full Lisno and vendor payment breakdown.")).toBeVisible();
+});

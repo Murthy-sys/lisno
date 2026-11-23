@@ -1,3 +1,5 @@
+import { allocateEstimatePayables } from "../domain/estimate-gst-presentation.js";
+import { estimatePdfTax, recordedPaise } from "./estimate-pdf-pricing.js";
 import type mongoose from "mongoose";
 import { sha256Hex, type EstimateClientReviewSnapshot } from "../domain/estimate-client-review.js";
 import { ApiError } from "../middleware/errors.js";
@@ -20,6 +22,7 @@ export interface ClientQuotationProjection {
   snapshot: EstimateClientReviewSnapshot;
   visibilityDigest: string;
   dependencies: ClientVisibilityDependency[];
+  includedPayablesPaise?: number[];
 }
 
 export interface ClientQuotationProjectionService {
@@ -64,8 +67,12 @@ export function createClientQuotationProjectionService(input: {
           revisionVersion: current.revisionVersion, visible, available: true };
       });
       const visible = new Set(dependencies.filter(row => row.available && row.visible).map(row => row.mainLineId));
-      const lineItems = source.lineItems.filter(line => line.clientVisible !== false &&
-        (line.source !== "configuration" || visible.has(line.mainLineId!))).map(line => line.source === "configuration"
+      const isVisible = (line: typeof source.lineItems[number]) => line.clientVisible !== false &&
+        (line.source !== "configuration" || visible.has(line.mainLineId!));
+      const included = source.lineItems.filter(line => line.included);
+      const payables = allocateEstimatePayables(included.map(line => recordedPaise(line.amountPaise, line.amount)), estimatePdfTax(source));
+      const includedPayablesPaise = payables.filter((_, index) => isVisible(included[index]!));
+      const lineItems = source.lineItems.filter(isVisible).map(line => line.source === "configuration"
           ? { ...line, classification: line.classification ?? "standard" as const } : { ...line });
       const baskets = new Set(lineItems.flatMap(line => line.mainBasketId ? [line.mainBasketId] : []));
       const selectedMainBasketIds = source.selectedMainBasketIds?.filter(id => baskets.has(id));
@@ -75,7 +82,7 @@ export function createClientQuotationProjectionService(input: {
           selectedMainBasketClassifications: selectedMainBasketIds.map(mainBasketId => ({ mainBasketId,
             classification: source.selectedMainBasketClassifications?.find(row => row.mainBasketId === mainBasketId)?.classification ?? "standard" })) } : {})
       };
-      return { snapshot, dependencies, visibilityDigest: sha256Hex(JSON.stringify({
+      return { snapshot, dependencies, includedPayablesPaise, visibilityDigest: sha256Hex(JSON.stringify({
         policyVersion: CLIENT_QUOTATION_RENDITION_POLICY_VERSION, source, dependencies
       })) };
     }

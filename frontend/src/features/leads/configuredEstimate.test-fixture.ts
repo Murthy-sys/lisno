@@ -15,3 +15,9 @@ export function configuredLineFixtures(catalogue: EstimationCatalogue, rooms: re
   }));
   return buildConfiguredLines(catalogue, rooms, baskets, fresh, preservePersisted);
 }
+
+
+/** A complete quantity-independent PMC configuration for fixtures exercising unrelated controls. */
+export function pmcPricingFixture(baseRatePaise: number | null) {
+  return baseRatePaise === null ? undefined : { baseRatePaise, lowQuantityLimit: "1", impactBps: 0, pmcMarginBps: 2000 };
+}

@@ -317,7 +317,8 @@ export function createEstimateDeliveryService(input: {
         clientName: payload.estimateSnapshot.clientName,
         projectName: payload.estimateSnapshot.projectName,
         estimateVersion: payload.estimateVersion,
-        total: payload.estimateSnapshot.total,
+        total: payload.estimateSnapshot.pmcPaymentSummary === undefined ? payload.estimateSnapshot.total
+          : payload.estimateSnapshot.pmcPaymentSummary.customerTotalPayablePaise / 100,
         portalUrl: input.portalUrl,
         attachment: {
           filename: attachment.filename,

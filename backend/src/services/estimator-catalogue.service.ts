@@ -1,3 +1,4 @@
+import { readEstimatePmcPricing, type EstimatePmcPricing } from "../domain/estimate-pmc-payable.js";
 import { isMainLineApplicableToRoom, isRoomCategoryId, type RoomCategoryId } from "../domain/estimate-room-options.js";
 import { readInHouseUsagePolicy, type InHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
@@ -25,17 +26,19 @@ import { UserModel } from "../models/User.js";
 import type { PublicUser } from "./auth.service.js";
 
 export interface EstimatorCatalogueTierPricing {
+  pmcPricing?: EstimatePmcPricing;
   /** Internal selection authority. Never serialize this member to an estimator. */
   inHousePolicy?: InHouseUsagePolicy;
   inHouseUsage?: "estimator" | "execution" | null;
   inHousePricingState?: "ready" | "incomplete" | "invalid";
-  /** Legacy wire name: unit-rate modes contain final selling rates, including their configured maximum. */
+  /** PMC is a vendor base rate. Execution modes expose selling rates. */
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
     basketName: string; subBasketName: string | null; baseRatePaise: number | null; unavailableReason?: string | null }>;
 }
 
 export interface EstimatorCatalogueLine {
+  pmcPricing?: EstimatePmcPricing;
   id: string;
   mainLineId: string;
   basketId: string;
@@ -150,7 +153,7 @@ export interface EstimatorCatalogueRecommendationSource {
   guidance: RecommendationGuidance[];
 }
 
-/** Project estimation rates only; margin percentages and source cost details stay in Configuration. */
+/** Internal Sales catalogue includes the PMC inputs needed for a quantity-specific estimate preview. */
 export async function listEstimatorCatalogue(
   actor: PublicUser,
   pagination: { limit: number; offset: number },
@@ -669,9 +672,11 @@ async function projectLines(
       const selected = components?.filter(component => policy.componentIds.includes(component.id));
       const inHousePricingState = policy.state === "legacy" ? undefined : policy.state !== "ready" ? policy.state
         : !configured || !selected?.length || selected.length !== policy.componentIds.length || selected.some(component => !componentIsAvailable(component) || !component.labor || !component.material || (inHouseComponentBaseRate(component) ?? 0) <= 0) ? "incomplete" : "ready";
+      const pmcPricing = configured ? readEstimatePmcPricing(section!.payload, Number(uom.decimalScale)) : undefined;
       return {
+        ...(pmcPricing ? { pmcPricing } : {}),
         ...(policy.state === "legacy" ? {} : { inHousePolicy: policy, inHouseUsage: policy.usage, inHousePricingState }),
-        modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null),
+        modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null, pmcPricing ?? null),
         ...(components === undefined && policy.state === "legacy" ? {} : { inHouseComponents: (components ?? []).map(component => {
           const basket = componentBaskets.get(component.basketId);
           const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;

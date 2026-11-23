@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -410,6 +411,20 @@ describe("initial Estimate PDF delivery", () => {
     expect(harness.reviews.requireRetryScope).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
     expectSafeSummary(result, harness.record);
+  });
+
+  it("uses the frozen customer payable in split-bearing email text without replacing vendor totals", async () => {
+    const original = round().estimateSnapshot as any;
+    const payment = buildEstimatePmcPayments(original.lineItems.map((line: any) => ({ ...line, pricingMode: "pmc",
+      pmcVendorPayable: true, amountPaise: 120000000, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 30000000 } })),
+      { subtotalPaise: 120000000, gstPaise: 21600000, totalPaise: 141600000 });
+    const estimateSnapshot = { ...original, ...payment, subtotalPaise: 120000000, gstPaise: 21600000, totalPaise: 141600000 };
+    const send = vi.fn(async () => ({ kind: "sent" as const }));
+    const harness = setup({ round: { estimateSnapshot }, mailer: enabledMailer(send) });
+    await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ total: 1770000 }));
+    expect((harness.record.estimateSnapshot as any).total).toBe(1416000);
+    expect((harness.record.estimateSnapshot as any).pmcPaymentSummary.customerTotalPayablePaise).toBe(177000000);
   });
 
   it("leases generation one once, sends the safe rendition and immutable snapshot presentation, and atomically completes sent", async () => {

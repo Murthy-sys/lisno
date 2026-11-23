@@ -54,6 +54,8 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  pmcVendorPayable?: true | undefined;
+  pmcMarginSnapshot?: { pmcMarginBps: number; pmcMarginAmountPaise: number } | undefined;
   componentPricing?: EstimateComponentPricing | undefined;
   aggregatePricing?: EstimateAggregatePricing | undefined;
   inHouseUsage?: "estimator" | "execution" | null | undefined;

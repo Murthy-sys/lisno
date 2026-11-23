@@ -2,7 +2,7 @@ import { buildConfiguredLines, configuredLineAmountPaise, deselectConfiguredReco
 import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { getEstimateRoomDefinitions, mergeSelectedRoomDefinitions, parseBedroomCount } from "./estimateRoomOptions";
 import { estimateEditable, previewEstimateTotals, refreshStaffForm, restoreStaffForm, staffFormInput, validateStaffForm } from "./staffEstimateModel";
-import { catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture, lifecycleFixture } from "./__tests__/fixtures";
+import { catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture, lifecycleFixture, lineFixture } from "./__tests__/fixtures";
 
 describe("native estimate authoring model", () => {
  it("round trips aggregate prices with no component identifiers and blocks changed Configuration", () => {
@@ -103,6 +103,25 @@ describe("native estimate authoring model", () => {
   const pmc = updateConfiguredLinePricing(line, { pricingMode: "pmc" }); expect(pmc).toMatchObject({ rateSource: "configuration", rateInput: "123.45" });
   const standard = updateConfiguredLinePricing(pmc, { classification: "standard" }); expect(standard).toMatchObject({ pricingMode: "sub_vendor", rateInput: "234.56" });
   expect(parseSellingRate("12.345").kind).toBe("invalid"); expect(previewEstimateTotals({ ...form, lines: [{ ...line, rateInput: "" }] })).toBeNull();
+ });
+ it("calculates the PMC vendor rate and maximum margin across a quantity threshold, preserves approved values", () => {
+  const catalogue = structuredClone(catalogueFixture);
+  const source = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+  source.pmcPricing = { baseRatePaise: 10_000, lowQuantityLimit: "5", impactBps: 1000, pmcMarginBps: 2000 };
+  const form = restoreStaffForm(estimateFixture(), leadFixture, catalogue);
+  const low = updateConfiguredLinePricing(form.lines[0]!, { pricingMode: "pmc" });
+  expect(low.rateInput).toBe("110");
+  expect(configuredLineAmountPaise(low)).toBe(27_500);
+  const regular = updateConfiguredLinePricing(low, { quantity: 10 });
+  expect(regular.rateInput).toBe("100");
+  expect(staffFormInput({ ...form, lines: [regular] }).lineItems[0]).toMatchObject({ pricingMode: "pmc", rateSource: "configuration", quantity: 10, ratePaise: 10000 });
+  expect(previewEstimateTotals({ ...form, lines: [regular] })?.totalPaise).toBe(118000);
+  const missing = refreshStaffForm({ ...form, lines: [regular] }, { ...catalogue, items: catalogue.items.map(basket => ({ ...basket, subBaskets: basket.subBaskets.map(group => ({ ...group, mainLines: group.mainLines.map(line => ({ ...line, pmcPricing: undefined })) })) })) });
+  expect(validateStaffForm(missing)).toContain("PMC vendor pricing");
+  const frozen = restoreStaffForm(estimateFixture({ status: "client_approved", lineItems: [{ ...lineFixture, pricingMode: "pmc" as const, rateSource: "configuration" as const, ratePaise: 1234, amountPaise: 3085 }] }), leadFixture, catalogue);
+  expect(frozen.lines[0]?.rateInput).toBe("12.34");
+  expect(configuredLineAmountPaise(frozen.lines[0]!)).toBe(3085);
+  expect(frozen.lines[0]?.savedPmc?.vendorPayable).toBe(false);
  });
  it("preserves legacy items and stable IDs alongside configured items", () => {
   const legacy = { source: "legacy" as const, id: "legacy-one", catalogueId: "historical", roomName: "Kitchen", specification: "Existing fixture", unit: "set", rate: 901, quantity: 2, included: true };

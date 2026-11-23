@@ -49,6 +49,7 @@ const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   { key: "GET /projects/:projectId/design-team", permission: "projects.design_team.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "PUT /projects/:projectId/secondary-designers", permission: "projects.design_team.manage", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "baseline" },
   { key: "GET /projects/:projectId/quotation", permission: "estimation.quotation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "GET /projects/:projectId/quotation/draft/pdf", permission: "estimation.quotation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "GET /projects/:projectId/quotation/items", permission: "estimation.quotation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "POST /projects/:projectId/quotation/recommendations/query", permission: "estimation.quotation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "GET /projects/:projectId/quotation/setup", permission: "estimation.quotation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
@@ -269,9 +270,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 513 normative operation rows", () => {
+  it("matches all 514 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(513);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(514);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -575,7 +576,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 513-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 514-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -585,8 +586,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(513);
-    expect(new Set(expectedKeys).size).toBe(513);
+    expect(expectedKeys).toHaveLength(514);
+    expect(new Set(expectedKeys).size).toBe(514);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -633,8 +634,8 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 513 unique keys and exactly 226 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(513);
+  it("has 514 unique keys and exactly 226 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(514);
     expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(226);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)

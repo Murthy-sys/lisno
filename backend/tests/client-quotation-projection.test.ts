@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClientQuotationProjectionService } from "../src/services/client-quotation-projection.service.js";
 import { presentClientEstimateWithVisibility } from "../src/services/estimate-client-presentation.js";
@@ -33,6 +34,28 @@ function service(options: { missing?: string; malformed?: unknown; revision?: st
 }
 
 describe("client quotation current visibility", () => {
+  it("preserves saved PMC recipient totals before filtering hidden rows and rejects partial evidence", async () => {
+    const original = snapshot();
+    const payment = buildEstimatePmcPayments(original.lineItems.map((row, index) => index < 2 ? {
+      ...row, classification: "special" as const, pricingMode: "pmc" as const, rateSource: "configuration" as const,
+      pmcVendorPayable: true, sourceItemVersion: 3, sourceRevisionVersion: 5,
+      pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 6250 }
+    } : row), { subtotalPaise: 100000, gstPaise: 18000, totalPaise: 118000 });
+    const source = { ...original, ...payment };
+    const projected = await service().projection.project(source);
+    expect(projected.snapshot.pmcPaymentSummary).toEqual(payment.pmcPaymentSummary);
+    expect(projected.snapshot.pmcPaymentSummary).toMatchObject({ vendorPayablePaise: 59000, lisnoPayablePaise: 14750,
+      pmcTotalPayablePaise: 73750, otherWorkPayablePaise: 59000, customerTotalPayablePaise: 132750 });
+    expect(projected.snapshot.lineItems.map(row => row.id)).toEqual(["shown", "historical"]);
+    expect(projected.snapshot.lineItems[0]).toMatchObject({ sourceItemVersion: 3, sourceRevisionVersion: 5,
+      pmcPaymentSplit: { marginBps: 2000, vendorPayablePaise: 29500, lisnoPayablePaise: 7375, totalPayablePaise: 36875 } });
+    expect(JSON.stringify(projected.snapshot)).not.toMatch(/pmcMarginSnapshot|pmcMarginAmountPaise|basket-hidden/);
+    await expect(service().projection.project({ ...source, pmcPaymentSummary: undefined }))
+      .rejects.toMatchObject({ code: "QUOTATION_SOURCE_UNAVAILABLE" });
+    await expect(service().projection.project({ ...source, pmcPaymentSummary: { ...payment.pmcPaymentSummary, lisnoPayablePaise: 1 } }))
+      .rejects.toMatchObject({ code: "QUOTATION_SOURCE_UNAVAILABLE" });
+  });
+
   it("preserves frozen proposal terms and includes them in rendition cache identity", async () => {
     const proposal = createEstimateProposal({ issuedAt: new Date("2026-11-02T18:45:00Z"), estimateId: "estimate-one", projectNumber: "Lisno000001" });
     const original = { ...snapshot(), proposal };

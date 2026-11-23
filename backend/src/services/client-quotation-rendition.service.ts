@@ -39,7 +39,7 @@ export function createClientQuotationRenditionService(input: {
       };
       const projected = await projectForRecipient();
       const sourceDigest = sha256Hex(JSON.stringify(round.estimateSnapshot));
-      const approvedTotalPaise = projected.snapshot.totalPaise ?? Math.round(projected.snapshot.total * 100);
+      const approvedTotalPaise = projected.snapshot.pmcPaymentSummary?.customerTotalPayablePaise ?? projected.snapshot.totalPaise ?? Math.round(projected.snapshot.total * 100);
       if (!Number.isSafeInteger(approvedTotalPaise) || approvedTotalPaise < 0) unavailable();
       const identity = { reviewRoundId, visibilityDigest: projected.visibilityDigest, policyVersion: CLIENT_QUOTATION_RENDITION_POLICY_VERSION };
       let row = await ClientQuotationRenditionModel.findOne(identity).select("+storageReference").lean();
@@ -47,7 +47,7 @@ export function createClientQuotationRenditionService(input: {
         const snapshot = projected.snapshot;
         const generated = await input.pdf.generate({
           ...snapshot, id: round.estimateId, version: round.estimateVersion, status: "sent_to_client",
-          lineItems: [...snapshot.lineItems],
+          lineItems: [...snapshot.lineItems], includedPayablesPaise: projected.includedPayablesPaise,
           lead: { clientName: snapshot.clientName, clientEmail: round.recipientEmail,
             projectName: snapshot.projectName, location: snapshot.location }
         }, { profile: "compact_client_delivery" });

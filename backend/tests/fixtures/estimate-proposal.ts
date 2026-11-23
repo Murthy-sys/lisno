@@ -18,3 +18,26 @@ export function proposalFixture(): EstimatePdfInput & { proposal: EstimatePropos
     lead: { clientName: "Ananya Rao", clientEmail: "ananya@example.test", projectName: "Cedar Grove Residence", location: "Bengaluru" },
     proposal: createEstimateProposal({ issuedAt: new Date("2026-11-02T10:00:00.000Z"), projectNumber: "Lisno000125", estimateId: "synthetic-proposal", preparedBy: "Design Team" }) };
 }
+
+/** Unequal PMC rows use saved 20% and 15% shares; currency values are in paise. */
+export function pmcProposalFixture(mixed = false): EstimatePdfInput & { proposal: EstimateProposalMetadata } {
+  const fixture = proposalFixture();
+  const subtotalPaise = mixed ? 210013 : 185000, gstPaise = mixed ? 37802 : 33300;
+  const totalPaise = mixed ? 247800 : 218300, roundOffPaise = mixed ? -15 : 0;
+  const taxBasis = { subtotalPaise, gstPaise };
+  fixture.lineItems = [
+    { ...fixture.lineItems[0], mainLineName: "PMC ceiling", quantity: 10, ratePaise: 10000, rate: 100, amountPaise: 100000, amount: 1000,
+      pricingMode: "pmc", pmcVendorPayable: true,
+      pmcPaymentSplit: { version: 1, marginBps: 2000, vendorAmountPaise: 100000, lisnoAmountPaise: 25000, estimatedValuePaise: 125000,
+        vendorPayablePaise: 118000, lisnoPayablePaise: 29500, totalPayablePaise: 147500, taxBasis } },
+    { ...fixture.lineItems[6], mainLineName: "PMC installation", quantity: 1.25, ratePaise: 68000, rate: 680, amountPaise: 85000, amount: 850,
+      pricingMode: "pmc", pmcVendorPayable: true,
+      pmcPaymentSplit: { version: 1, marginBps: 1500, vendorAmountPaise: 85000, lisnoAmountPaise: 15000, estimatedValuePaise: 100000,
+        vendorPayablePaise: 100300, lisnoPayablePaise: 17700, totalPayablePaise: 118000, taxBasis } }
+  ];
+  if (mixed) fixture.lineItems.push({ ...fixture.lineItems[0], mainLineId: "non-pmc-paint", mainLineName: "Non-PMC painting", pricingMode: "sub_vendor", pmcVendorPayable: undefined,
+    pmcPaymentSplit: undefined, quantity: 1, ratePaise: 25013, rate: 250.13, amountPaise: 25013, amount: 250.13 });
+  return { ...fixture, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+    pmcPaymentSummary: { version: 1, vendorPayablePaise: 218300, lisnoPayablePaise: 47200, pmcTotalPayablePaise: 265500,
+      otherWorkPayablePaise: mixed ? 29515 : 0, nonPmcMilestoneBasisPaise: mixed ? 29515 : 0, roundOffPaise, customerTotalPayablePaise: mixed ? 295000 : 265500 } };
+}

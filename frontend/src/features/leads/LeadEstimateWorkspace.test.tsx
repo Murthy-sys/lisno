@@ -1,3 +1,4 @@
+import { pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
@@ -661,7 +662,7 @@ describe("LeadEstimateWorkspace", () => {
     const catalogue = {
       items: [{ id: "basket-joinery", name: "Joinery", displayOrder: 1, subBaskets: [{
         id: "sub-wardrobes", basketId: "basket-joinery", name: "Wardrobes", displayOrder: 1,
-        mainLines: [{ id: "line-carcass", showByDefault: true, mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-3", modeBaseRatesPaise: { pmc: 9000, sub_vendor: 8005, in_house: 10000 }, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
+        mainLines: [{ id: "line-carcass", showByDefault: true, mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-3", pmcPricing: pmcPricingFixture(9000), modeBaseRatesPaise: { pmc: 9000, sub_vendor: 8005, in_house: 10000 }, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
       }] }],
       pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
     };
@@ -810,7 +811,7 @@ describe("LeadEstimateWorkspace", () => {
       subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
         mainLines: [{ id: "line-pop", showByDefault: true, mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
           name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", inHouseBaseRatePaise: 115_000,
-          modeBaseRatesPaise: { pmc: 95_000, sub_vendor: 105_000, in_house: 115_000 },
+          pmcPricing: pmcPricingFixture(95_000), modeBaseRatesPaise: { pmc: 95_000, sub_vendor: 105_000, in_house: 115_000 },
           uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
       pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 };
     let savedInput: Record<string, unknown> | null = null;
@@ -858,11 +859,11 @@ describe("LeadEstimateWorkspace", () => {
         mainLines: [
           { id: "line-pop", showByDefault: true, mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", name: "POP false ceiling",
             displayOrder: 1, revisionId: "revision-pop", itemVersion: 1, revisionVersion: 1,
-            modeBaseRatesPaise: { pmc: 12000, sub_vendor: 15000, in_house: 18000 },
+            pmcPricing: pmcPricingFixture(12000), modeBaseRatesPaise: { pmc: 12000, sub_vendor: 15000, in_house: 18000 },
             uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } },
           { id: "line-cove", showByDefault: true, mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na", name: "Cove in Gypsum",
             displayOrder: 2, revisionId: "revision-cove", itemVersion: 1, revisionVersion: 1,
-            modeBaseRatesPaise: { pmc: 5050, sub_vendor: 7550, in_house: 10550 },
+            pmcPricing: pmcPricingFixture(5050), modeBaseRatesPaise: { pmc: 5050, sub_vendor: 7550, in_house: 10550 },
             uom: { id: "uom-rft", code: "RFT", name: "Rft", decimalScale: 1 } }
         ] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 };
     let savedEstimate: Record<string, unknown> | null = {
@@ -1007,7 +1008,7 @@ describe("LeadEstimateWorkspace", () => {
           subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [{
             id: "line-pop", showByDefault: true, mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", name: "POP false ceiling",
             displayOrder: 1, revisionId: `revision-pop-${catalogueVersion}`, itemVersion: catalogueVersion, revisionVersion: catalogueVersion,
-            modeBaseRatesPaise: { pmc: catalogueVersion === 1 ? 12025 : 22025, sub_vendor: kind === "new" ? (catalogueVersion === 1 ? 12025 : 22025) : 16000, in_house: 19050 },
+            pmcPricing: pmcPricingFixture(catalogueVersion === 1 ? 12025 : 22025), modeBaseRatesPaise: { pmc: catalogueVersion === 1 ? 12025 : 22025, sub_vendor: kind === "new" ? (catalogueVersion === 1 ? 12025 : 22025) : 16000, in_house: 19050 },
             uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 }
           }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       }
@@ -1106,7 +1107,7 @@ describe("LeadEstimateWorkspace", () => {
       if (url.includes("/estimation/catalogue?")) return response({ items: [{ id: "basket-pmc", name: "Ceilings", displayOrder: 1,
         subBaskets: [{ id: "sub-pmc", basketId: "basket-pmc", name: "Finish", displayOrder: 1, mainLines: [{
           id: "line-pmc", mainLineId: "line-pmc", basketId: "basket-pmc", subBasketId: "sub-pmc", name: "Ceiling finish",
-          displayOrder: 1, revisionId: "revision-pmc", itemVersion: 1, revisionVersion: 1, modeBaseRatesPaise: rates,
+          displayOrder: 1, revisionId: "revision-pmc", itemVersion: 1, revisionVersion: 1, pmcPricing: pmcPricingFixture(rates.pmc), modeBaseRatesPaise: rates,
           uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 }
         }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       if (url.includes("/estimation/catalogue/recommendations?")) return response({ sources: [] });
@@ -1199,7 +1200,7 @@ describe("LeadEstimateWorkspace", () => {
           subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
             mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
               name: "POP false ceiling", displayOrder: 1, revisionId: `revision-pop-${version}`, itemVersion: version,
-              revisionVersion: version, modeBaseRatesPaise: { pmc: 12025, sub_vendor: version === 1 ? 12540 : 22540, in_house: version === 1 ? 18050 : 28050 },
+              revisionVersion: version, pmcPricing: pmcPricingFixture(12025), modeBaseRatesPaise: { pmc: 12025, sub_vendor: version === 1 ? 12540 : 22540, in_house: version === 1 ? 18050 : 28050 },
               uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
           pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       }
@@ -2529,7 +2530,7 @@ it.each([false, true])("preserves explicitly saved In-house components on reload
   ];
   const catalogue = { items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
     mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemVersion: 1, revisionVersion: 1,
-      modeBaseRatesPaise: { pmc: 5000, sub_vendor: 10000, in_house: null }, inHouseComponents: components,
+      pmcPricing: pmcPricingFixture(5000), modeBaseRatesPaise: { pmc: 5000, sub_vendor: 10000, in_house: null }, inHouseComponents: components,
       uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 };
   const pricingFor = (line: Record<string, unknown>) => ({ formulaVersion: "in_house_components_v1", mainLineId: "line-pop", revisionId: "revision-pop", sourceItemVersion: 1, sourceRevisionVersion: 1,
     modeTier: "signature", quantity: String(line.quantity), uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 }, selectedComponentIds: ["base"],

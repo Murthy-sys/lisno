@@ -1,4 +1,6 @@
+import { buildEstimatePmcPayments } from "../domain/estimate-pmc-payment-split.js";
 import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
+import { calculateEstimatePmcPayable } from "../domain/estimate-pmc-payable.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
@@ -212,6 +214,9 @@ async function supersedePending(estimate: Row, actor: PublicUser, session: Clien
 
 async function pricedLine(prior: Row, source: Source, operation: LineOperation, session: ClientSession): Promise<Row> {
   const next: Row = { ...prior, ...currentFields(source) };
+  delete next.pmcPaymentSplit;
+  delete next.pmcMarginSnapshot;
+  delete next.pmcVendorPayable;
   if (operation.pricingMode !== undefined) next.pricingMode = operation.pricingMode;
   if (next.classification !== "special" && next.pricingMode !== undefined && next.pricingMode !== "sub_vendor") {
     throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Standard items use Sub-Vendor pricing.");
@@ -254,6 +259,15 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
     next.componentPricing = calculation;
     next.ratePaise = null;
     next.amountPaise = next.included ? calculation.totalPaise : 0;
+  } else if (next.pricingMode === "pmc") {
+    if (operation.selectedInHouseComponentIds?.length || !pricing.pmcPricing) return unavailable();
+    const payable = calculateEstimatePmcPayable(pricing.pmcPricing, next.quantity, source.line.uom.decimalScale);
+    if (!payable || selectingPrice && payable.revisedUnitRatePaise <= 0) return unavailable();
+    delete next.selectedInHouseComponentIds;
+    next.ratePaise = payable.revisedUnitRatePaise;
+    next.amountPaise = payable.finalVendorChargesPaise;
+    next.pmcVendorPayable = true;
+    next.pmcMarginSnapshot = { pmcMarginBps: payable.pmcMarginBps, pmcMarginAmountPaise: payable.pmcMarginAmountPaise };
   } else {
     if (operation.selectedInHouseComponentIds?.length) return unavailable();
     delete next.selectedInHouseComponentIds;
@@ -320,6 +334,8 @@ async function reconcileRecommendationOrigins(estimate: Row, lineItems: Row[],
         line.included = false;
         line.amountPaise = 0;
         line.amount = 0;
+        delete line.pmcVendorPayable;
+        delete line.pmcMarginSnapshot;
         delete line.componentPricing;
         delete line.pricingBasis;
         removed.add(key(line.roomId, line.mainLineId));
@@ -394,7 +410,7 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           const setupOperation = parsed.data.operations.find(operation => operation.kind === "configure");
           if (setupOperation && !context.client) return missing();
           const setupChanges = setupOperation ? await configureQuotation(estimate, setupOperation, session) : null;
-          const lineItems: Row[] = structuredClone(setupChanges?.lineItems ?? estimate.lineItems);
+          let lineItems: Row[] = structuredClone(setupChanges?.lineItems ?? estimate.lineItems);
           const addedBasketIds = new Set<string>();
           const touched = new Set<string>();
           const groupOperations = parsed.data.operations.filter(operation => operation.kind === "exclude_group");
@@ -505,6 +521,10 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             const next = removingRestricted
               ? { ...prior, included: false, amountPaise: 0, amount: 0 } as Row
               : await pricedLine(base, source, operation, session);
+            if (removingRestricted) {
+              delete next.pmcVendorPayable;
+              delete next.pmcMarginSnapshot;
+            }
             if (!next.included || operation.kind === "add" || operation.included === true && !prior?.included) {
               next.recommendationSourceMainLineIds = next.included ? operation.recommendationSourceMainLineIds ?? [] : [];
             } else if (operation.recommendationSourceMainLineIds !== undefined) {
@@ -529,10 +549,6 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             ]
           } : null;
           const membershipChanges = { ...setupChanges, ...scopeChanges };
-          if (isDeepStrictEqual(lineItems, estimate.lineItems) && Object.entries(membershipChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key]))) {
-            result = await present(context, session);
-            return;
-          }
           let subtotalPaise = 0;
           for (const line of lineItems.filter(line => line.included)) {
             const amount = line.amountPaise ?? (line.source === "configuration" ? null : Math.round(line.amount * 100));
@@ -544,6 +560,16 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
           if (!rounded) return unavailable();
           const { totalPaise, roundOffPaise } = rounded;
+          let pmcPayments: ReturnType<typeof buildEstimatePmcPayments>;
+          try { pmcPayments = buildEstimatePmcPayments(lineItems, { subtotalPaise, gstPaise, totalPaise, roundOffPaise }); }
+          catch { return unavailable(); }
+          lineItems = pmcPayments.lineItems;
+          if (isDeepStrictEqual(lineItems, estimate.lineItems) &&
+            isDeepStrictEqual(pmcPayments.pmcPaymentSummary, estimate.pmcPaymentSummary) &&
+            Object.entries(membershipChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key]))) {
+            result = await present(context, session);
+            return;
+          }
           // Persist the first-actionable anchor before this material save
           // invalidates the current quotation approval. The task upsert keeps
           // its original opened/due dates across later revisions.
@@ -551,11 +577,12 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           await supersedePending(estimate, actor, session, now);
           const physicalChange = estimatePhysicalScopeChanged(estimate, { ...estimate, ...membershipChanges, lineItems });
           const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: parsed.data.expectedVersion, "estimation.editClosedAt": null },
-            { $set: { ...membershipChanges, lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+            { $set: { ...membershipChanges, ...(pmcPayments.pmcPaymentSummary ? { pmcPaymentSummary: pmcPayments.pmcPaymentSummary } : {}), lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
               isIncomplete: lineItems.some(line => line.included && line.source === "configuration" &&
                 (!estimateLineDimensionsValid(line) || !estimateComponentLineAmountIsValid(line) && (!money(line.ratePaise) || !money(line.amountPaise)))),
               status: estimate.estimation.preApproval ? "client_approved" : "draft", "estimation.status": "draft", "estimation.pendingReviewRoundId": null,
               "estimation.salesApproval": null, "estimation.designScopeRevision": estimate.estimation.designScopeRevision + (physicalChange ? 1 : 0) },
+              ...(pmcPayments.pmcPaymentSummary ? {} : { $unset: { pmcPaymentSummary: "" } }),
               $inc: { version: 1, "estimation.pricedRevision": 1 },
               $push: { reviews: { actorId: actor.id, action: context.client ? "client_quotation_saved" : "quotation_saved", note: "", occurredAt: now } } },
             { session, returnDocument: "after", runValidators: true }).lean() as Row | null;

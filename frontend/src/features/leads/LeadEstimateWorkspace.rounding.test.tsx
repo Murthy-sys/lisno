@@ -13,7 +13,7 @@ vi.mock("./estimateRevisionsApi", async importOriginal => ({
   getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
 }));
 
-function setup(subtotalPaise: number, gstPaise: number, frozen = false) {
+function setup(subtotalPaise: number, gstPaise: number, frozen = false, pmc = false) {
   const draft = {
     id: "estimate-rounding", version: 1, status: frozen ? "sent_to_client" : "draft", approvalRequired: false,
     propertyType: "2BHK", rooms: [{ id: "room-living", label: "Living Room", typeId: "living", sqft: 300 }],
@@ -22,7 +22,7 @@ function setup(subtotalPaise: number, gstPaise: number, frozen = false) {
     subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: (subtotalPaise + gstPaise) / 100,
     lineItems: [{ id: "saved-line", source: "configuration", catalogueId: "main-line", roomId: "room-living", roomName: "Living Room",
       mainBasketId: "basket", mainBasketName: "Finishes", subBasketId: "sub", subBasketName: "Walls", mainLineId: "main-line", mainLineName: "Wall finish",
-      itemType: "main_line", classification: "special", pricingMode: "pmc", modeTier: "signature", rateSource: "manual",
+      itemType: "main_line", classification: "special", pricingMode: pmc ? "pmc" : "sub_vendor", modeTier: "signature", rateSource: "manual",
       revisionId: "revision", sourceItemVersion: 1, sourceRevisionVersion: 1,
       uomId: "uom", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2, unit: "sq ft", specification: null,
       quantity: 1, ratePaise: subtotalPaise, rate: subtotalPaise / 100, amountPaise: subtotalPaise, amount: subtotalPaise / 100, included: true }]
@@ -80,6 +80,13 @@ describe("staff final estimate rounding", () => {
     expect(screen.getByText(new RegExp(`per sq ft`))).toHaveTextContent(`₹${(subtotalPaise + gstPaise) / 100} per sq ft`);
   });
 
+  it("labels an unmarked historical PMC estimate as total payable without attributing the old price to the vendor", async () => {
+    setup(8688, 1564, true, true);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Summary" }));
+    expect(screen.getByText("Total payable (incl. GST)").closest("span")).toHaveTextContent("₹102.52");
+    expect(screen.queryByText(/payable to vendor/i)).not.toBeInTheDocument();
+  });
   it("keeps frozen legacy totals exactly as saved without inventing a rounding adjustment", async () => {
     setup(8688, 1564, true);
     const user = userEvent.setup();

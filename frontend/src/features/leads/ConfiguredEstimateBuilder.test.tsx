@@ -1,5 +1,5 @@
 import { pickerSelect, selectPickerBranch, selectPickerLine } from "./salesItemPicker.test-fixture";
-import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
+import { configuredLineFixtures, pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -18,7 +18,7 @@ const catalogue: EstimationCatalogue = {
     id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
     mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", showByDefault: true,
       name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemType: "main_line",
-      inHouseBaseRatePaise: 115_000, modeBaseRatesPaise: { pmc: 95_000, sub_vendor: 105_000, in_house: 115_000 }, uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }],
+      inHouseBaseRatePaise: 115_000, pmcPricing: pmcPricingFixture(95_000), modeBaseRatesPaise: { pmc: 95_000, sub_vendor: 105_000, in_house: 115_000 }, uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }],
     temporaryItems: [{ id: "line-cove", mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na", showByDefault: true,
       name: "Cove in Gypsum", displayOrder: 2, revisionId: "revision-cove", itemType: "temporary",
       inHouseBaseRatePaise: 12_500, modeBaseRatesPaise: { pmc: 0, sub_vendor: 10_500, in_house: null }, uom: { id: "uom-rft", code: "RFT", name: "Rft", decimalScale: 1 } }]
@@ -37,7 +37,7 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
   const [lines, setLines] = useState(initialLines);
   const [roomId, setRoomId] = useState(roomList[0]!.id);
   const update = (next: ConfiguredLineDraft[]) => { setLines(next); onLinesChange?.(next); };
-  return <ConfiguredEstimateBuilder showInternalTierDetails rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
+  return <ConfiguredEstimateBuilder rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
     pricingModeEditable={pricingModeEditable} selectedMainBasketIds={new Set(availableCatalogue.items.map(basket => basket.id))} lines={lines} itemPresentation={itemPresentation} reviewContextKey={reviewContextKey}
     excludedReviewKeys={validateExcluded ? new Set(lines.filter(line => line.persistedId && !line.included &&
       (configuredQuantityUnits(line.quantity, line.uomDecimalScale, false) === null || parseSellingRate(line.rateInput).kind === "invalid")).map(line => line.key)) : undefined}
@@ -60,6 +60,30 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
     roomIcons={{}} moneyPaise={moneyPaise} editable={editable} />;
 }
 const chosen = () => configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
+
+describe("required recommendation selection", () => {
+  it("explains the source and protects inclusion while preserving quantity and tier editing", async () => {
+    const user = userEvent.setup();
+    const lines = chosen();
+    const required = lines.find(line => line.mainLineId === "line-cove")!;
+    const onUpdateLine = vi.fn(), refresh = vi.fn();
+    render(<ConfiguredEstimateBuilder rooms={rooms} activeRoomId={rooms[0]!.id} onSelectRoom={vi.fn()} catalogue={catalogue}
+      selectedMainBasketIds={new Set(["basket-pop"])} lines={lines} onUpdateLine={onUpdateLine}
+      requiredBy={new Map([[required.key, ["POP false ceiling"]]])} recommendationMode="probable"
+      requiredRecommendationIssue="Checking required items in Bedroom. Save is available after this check."
+      onRefreshAvailableItems={refresh} refreshingAvailableItems={false} roomTotal={() => 0} roomIcons={{}} moneyPaise={moneyPaise} editable />);
+    expect(screen.getByRole("checkbox", { name: "Include Cove in Gypsum in Living & Dining, required by POP false ceiling" })).toBeDisabled();
+    expect(screen.getByText("Required by POP false ceiling. Remove the source item first to exclude this item.")).toBeVisible();
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity \(Rft\) for .*Cove in Gypsum in Living & Dining/ });
+    expect(quantity).toBeEnabled();
+    fireEvent.change(quantity, { target: { value: "7" } });
+    expect(onUpdateLine).toHaveBeenCalledWith(required.key, { quantity: 7 });
+    expect(screen.getByRole("radio", { name: /Signature tier for .*Cove in Gypsum in Living & Dining/ })).toBeEnabled();
+    expect(screen.getByText("Checking required items in Bedroom. Save is available after this check.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Refresh required items" }));
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+});
 
 describe("Sales direct catalogue browsing", () => {
   it("filters POP Gypsum by room type in default browsing, search and the item picker when switching rooms", async () => {
@@ -301,7 +325,7 @@ describe("Sales direct catalogue browsing", () => {
     expect(screen.queryByText(/Private specification|Private brand|Internal specifications/)).not.toBeInTheDocument();
   });
 
-  it("displays server-resolved Mode details for Signature and Functional while preserving Premium details and draft values", async () => {
+  it("shows only the active tier description as the Sales user changes tiers", async () => {
     const user = userEvent.setup(), current = structuredClone(catalogue), onLinesChange = vi.fn();
     const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
     const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
@@ -324,31 +348,23 @@ describe("Sales direct catalogue browsing", () => {
     const initialAmount = within(row).getByRole("status", { name: /Amount for/ }).textContent;
     const rate = within(row).getByRole("textbox", { name: /Selling rate/ });
     const initialRate = (rate as HTMLInputElement).value;
-    expect(row.querySelector(".estimate-line-tier-details")?.textContent).toBe("Mode board (Saint-Gobain)");
-    expect(within(row).getByRole("region", { name: /^Signature internal specifications for/ })).toBeVisible();
-    expect(within(row).getAllByRole("listitem").map(item => item.textContent)).toEqual(["Mode board (Saint-Gobain)"]);
-    expect(row.querySelector("details, summary")).toBeNull();
-    expect(screen.queryByText("Signature ceiling finish.")).not.toBeInTheDocument();
+    const expectDescription = (tier: string, description: string) => {
+      expect(within(row).getByRole("region", { name: new RegExp(`^${tier} description for`) }).textContent).toBe(description);
+      expect(row).not.toHaveTextContent(/Mode board|Premium board|Saint-Gobain|Knauf/);
+    };
+    expectDescription("Signature", source.tierDescriptions.signature!);
     expect(within(row).getByRole("checkbox")).toBeChecked();
     expect(within(row).getByRole("spinbutton")).toHaveValue(1);
     expect(within(row).getByRole("status", { name: /Amount for/ })).toHaveTextContent(initialAmount!);
     expect(rate).toHaveValue(initialRate);
     expect(onLinesChange).not.toHaveBeenCalled();
     await user.click(within(row).getByRole("radio", { name: /Premium tier for/ }));
-    expect(screen.queryByText("Mode description with premium specifications.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Signature ceiling finish.")).not.toBeInTheDocument();
-    expect(screen.getByText("Premium board (Knauf)")).toBeVisible();
-    expect(screen.queryByText("Mode board (Saint-Gobain)")).not.toBeInTheDocument();
-    expect(row.querySelector(".estimate-line-tier-details")?.textContent).toBe("Premium board (Knauf)");
-    expect(within(row).getByRole("region", { name: /^Premium internal specifications for/ })).toBeVisible();
+    expectDescription("Premium", source.tierDescriptions.premium!);
+    expect(screen.queryByText(source.tierDescriptions.signature!)).not.toBeInTheDocument();
     expect(onLinesChange).toHaveBeenCalledTimes(1);
     await user.click(within(row).getByRole("radio", { name: /Functional tier for/ }));
-    expect(screen.queryByText("Mode description with default specifications.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Mode description with premium specifications.")).not.toBeInTheDocument();
-    expect(within(row).getAllByRole("listitem").map(item => item.textContent)).toEqual(["Mode board (Saint-Gobain)"]);
-    expect(screen.queryByText("Premium board (Knauf)")).not.toBeInTheDocument();
-    expect(row.querySelector(".estimate-line-tier-details")?.textContent).toBe("Mode board (Saint-Gobain)");
-    expect(within(row).getByRole("region", { name: /^Functional internal specifications for/ })).toBeVisible();
+    expectDescription("Functional", source.tierDescriptions.functional!);
+    expect(screen.queryByText(source.tierDescriptions.premium!)).not.toBeInTheDocument();
     expect(onLinesChange).toHaveBeenCalledTimes(2);
     const functionalRate = (rate as HTMLInputElement).value;
     expect(row.querySelector("details, summary")).toBeNull();
@@ -366,20 +382,14 @@ describe("Sales direct catalogue browsing", () => {
     const props = { rooms, activeRoomId: rooms[0]!.id, onSelectRoom: vi.fn(), catalogue,
       lines: [line], selectedMainBasketIds: new Set(["basket-pop"]), onUpdateLine: vi.fn(),
       onRefreshAvailableItems: vi.fn(), refreshingAvailableItems: false,
-      roomTotal: () => 105000, roomIcons: {}, moneyPaise, editable: false, showInternalTierDetails: true };
+      roomTotal: () => 105000, roomIcons: {}, moneyPaise, editable: false };
     const { container, rerender } = render(<ConfiguredEstimateBuilder {...props} />);
-    expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
-    expect(screen.getByText("Saved board (Knauf)")).toBeVisible();
-    expect(container.querySelector(".estimate-line-tier-details")?.textContent).toBe("Saved board (Knauf)");
+    expect(screen.getByText("Saved ceiling finish.")).toBeVisible();
+    expect(container).not.toHaveTextContent(/Saved board|Knauf/);
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
-    rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, tierDetails: undefined }]} />);
-    expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
+    rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, tierDescriptions: { signature: "  " } }]} />);
     expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
-    expect(screen.queryByText("Saved board (Knauf)")).not.toBeInTheDocument();
-    rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, tierDetails: undefined, tierDescriptions: undefined }]} />);
-    expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
-    expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Saved board (Knauf)")).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/Saved board|Knauf/);
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, sourceMissing: true }]} />);
     expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
     expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
@@ -388,7 +398,7 @@ describe("Sales direct catalogue browsing", () => {
     expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
     expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, tierDetails: { signature: { specifications: [] } } }]} />);
-    expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
+    expect(screen.getByText("Saved ceiling finish.")).toBeVisible();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, rateSource: "manual" }]} />);
     expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
     expect(container.querySelector(".estimate-line-tier-details")).toBeNull();
@@ -1073,8 +1083,8 @@ describe("selected item editing regressions", () => {
     const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
     source.applicableTiers = ["signature", "premium", "functional"];
     source.tierPricing = {
-      signature: { modeBaseRatesPaise: { pmc: 95000, sub_vendor: 105000, in_house: null } },
-      premium: { modeBaseRatesPaise: { pmc: 24000, sub_vendor: null, in_house: null } },
+      signature: { pmcPricing: pmcPricingFixture(95000), modeBaseRatesPaise: { pmc: 95000, sub_vendor: 105000, in_house: null } },
+      premium: { pmcPricing: pmcPricingFixture(24000), modeBaseRatesPaise: { pmc: 24000, sub_vendor: null, in_house: null } },
       functional: { modeBaseRatesPaise: { pmc: null, sub_vendor: 36000, in_house: null } }
     };
     const initial = configuredLineFixtures(current, rooms, new Set(["basket-pop"]), [])[0]!;
@@ -1114,7 +1124,7 @@ describe("selected item editing regressions", () => {
     expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /Increase quantity/ }));
-    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ pricingMode: "pmc", classification: "special", rateInput: "42", rateSource: "manual" })]);
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ pricingMode: "pmc", classification: "special", rateInput: "950", rateSource: "configuration" })]);
   });
 
   it("shows the saved mode without mode controls when its current source is missing", () => {
@@ -1124,6 +1134,35 @@ describe("selected item editing regressions", () => {
     render(<LiveBuilder initialLines={[line]} />);
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
+  });
+
+  it("explains catalogue, source, access and read-only restrictions on the selected row", async () => {
+    const user = userEvent.setup();
+    const line = chosen()[0]!;
+    const props = { rooms, activeRoomId: rooms[0]!.id, onSelectRoom: vi.fn(), catalogue, lines: [line],
+      selectedMainBasketIds: new Set(["basket-pop"]), onUpdateLine: vi.fn(), onRefreshAvailableItems: vi.fn(),
+      refreshingAvailableItems: false, roomTotal: () => 0, roomIcons: {}, moneyPaise, editable: true };
+    const view = render(<ConfiguredEstimateBuilder {...props} />);
+    const toggle = () => screen.getByRole("switch", { name: /PMC pricing mode/ });
+    expect(toggle()).toBeEnabled();
+    for (const [options, reason] of [
+      [{ refreshingAvailableItems: true }, "Loading current pricing."],
+      [{ availableItemsState: "stale" }, "Refresh available items to load current pricing."],
+      [{ pricingModeEditable: false }, "Your access at this estimate stage does not allow pricing mode changes."],
+      [{ lines: [{ ...line, persistedId: "saved-pop", sourceMissing: true }] }, "Current Configuration for this main line is unavailable."],
+      [{ editable: false }, "This estimate is read-only."]
+    ] as const) {
+      view.rerender(<ConfiguredEstimateBuilder {...props} {...options} lines={"lines" in options ? [...options.lines] : props.lines} />);
+      expect(toggle()).toBeDisabled();
+      const info = screen.getByRole("button", { name: /PMC.*POP false ceiling/i });
+      expect(info).toHaveAttribute("aria-expanded", "false");
+      await user.click(info);
+      expect(screen.getByText(reason)).toBeVisible();
+      await user.keyboard("{Escape}");
+    }
+    view.rerender(<ConfiguredEstimateBuilder {...props} />);
+    expect(toggle()).toBeEnabled();
+    expect(props.onUpdateLine).not.toHaveBeenCalled();
   });
 
   it("preserves saved classification and Sub-Vendor when mode editing is unavailable", async () => {
@@ -1178,13 +1217,27 @@ describe("selected item editing regressions", () => {
     render(<LiveBuilder initialLines={[line]} onLinesChange={changed} />);
     const pmc = screen.getByRole("switch", { name: /PMC pricing mode/ });
     expect(pmc).toBeDisabled();
-    expect(pmc).toHaveAccessibleDescription("Price not configured");
+    await user.click(screen.getByRole("button", { name: /PMC.*Cove in Gypsum/i }));
+    expect(screen.getByText("Signature PMC pricing is unavailable in Configuration.")).toBeVisible();
     await user.click(pmc);
     const rate = screen.getByRole("textbox", { name: /Selling rate/ });
     expect(rate).toBeDisabled(); expect(rate).toHaveValue("123.9");
     fireEvent.change(rate, { target: { value: "71.25" } });
     expect(rate).toHaveValue("123.9");
     expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a saved PMC base price with incomplete settings from an unpriced tier", async () => {
+    const user = userEvent.setup();
+    const line = chosen()[0]!;
+    const availability = { pmc: true, sub_vendor: true, in_house: false };
+    render(<LiveBuilder initialLines={[{ ...line, pmcPricing: undefined, basePriceAvailability: {
+      default: availability, signature: availability, premium: availability, functional: availability
+    } }]} />);
+    const toggle = screen.getByRole("switch", { name: /PMC pricing mode/ });
+    expect(toggle).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /PMC.*POP false ceiling/i }));
+    expect(screen.getByText("Signature has a PMC base price. Check its saved low-quantity limit, impact and maximum margin.")).toBeVisible();
   });
 
   it("keeps missing historical prices read-only and blocks an unavailable PMC transition", async () => {

@@ -16,19 +16,20 @@ const json = (data: unknown) => Response.json({ data });
 const failure = (status: number) => Response.json({ error: { code: "REVISION_UNAVAILABLE", message: "Revision unavailable" } }, { status });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
-function setup(withRequest = false) {
+function setup(withRequest = false, initialStatus: EstimateDraft["status"] = "draft") {
   const room = { id: "living", typeId: "living", label: "Living Room", sqft: 100, length: 10, width: 10 };
   const otherRoom = { ...room, id: "bedroom", typeId: "bedroom-master", label: "Bedroom" };
   const line: ConfiguredEstimateLine = {
     id: "saved-line", source: "configuration", catalogueId: "main", roomId: room.id, roomName: room.label,
     mainBasketId: "basket", mainBasketName: "Current interiors", subBasketId: "sub", subBasketName: "Current finishes",
-    mainLineId: "main", mainLineName: "Current ceiling", revisionId: "current-config", uomId: "unit", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2,
+    mainLineId: "main", mainLineName: "Current ceiling", revisionId: "current-config", sourceItemVersion: 1, sourceRevisionVersion: 1,
+    uomId: "unit", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2,
     unit: "sq ft", quantity: 1, included: true, pricingMode: "sub_vendor", rateSource: "manual", rate: 100, ratePaise: 10000, amount: 100, amountPaise: 10000, specification: null
   };
   let estimate: EstimateDraft = {
     id: "estimate", projectId: "project", projectNumber: "Lisno000009", version: 4, propertyType: "2BHK", rooms: [room, otherRoom], scopes: [], selectedMainBasketIds: ["basket"],
-    lineItems: [line], subtotal: 100, gst: 18, total: 118, status: "draft", approvalRequired: false,
-    estimation: { workflowVersion: 2, phase: "pre", status: "draft", requirementsVersion: 1, editClosedAt: null, preApproval: null, finalApproval: null, designScopeRevision: 1, approvedDesignScopeRevision: null, pendingReviewRoundId: null, preparationSnapshotId: null }
+    lineItems: [line], subtotal: 100, gst: 18, total: 118, status: initialStatus, approvalRequired: false,
+    estimation: { workflowVersion: 2, phase: "pre", status: initialStatus, requirementsVersion: 1, editClosedAt: null, preApproval: null, finalApproval: null, designScopeRevision: 1, approvedDesignScopeRevision: null, pendingReviewRoundId: null, preparationSnapshotId: null }
   };
   const first: EstimateRevisionDetail = {
     id: "round-one", estimateId: "estimate", estimateVersion: 1, sendGeneration: 1, phase: "pre", workflowVersion: 2,
@@ -54,7 +55,9 @@ function setup(withRequest = false) {
       estimate = { ...estimate, ...body, version: estimate.version! + 1, lineItems: body.lineItems.map(value => value.source === "configuration" ? { ...line, ...value } : value) };
       return json(estimate);
     }
-    if (url.startsWith("/api/v1/estimation/catalogue/recommendations")) return json({ sources: [] });
+    if (url.startsWith("/api/v1/estimation/catalogue/recommendations")) return json({ sources: [{
+      mainLineId: "main", available: true, revisionId: "current-config", itemVersion: 1, revisionVersion: 1, rules: [], guidance: []
+    }] });
     if (url.startsWith("/api/v1/estimation/catalogue?")) return json({ items: [{ id: "basket", name: "Current interiors", displayOrder: 1,
       subBaskets: [{ id: "sub", basketId: "basket", name: "Current finishes", displayOrder: 1,
         mainLines: [{ id: "main", mainLineId: "main", basketId: "basket", subBasketId: "sub", name: "Current ceiling", displayOrder: 1, showByDefault: true,
@@ -66,6 +69,9 @@ function setup(withRequest = false) {
       state.requirements = [{ ...request, ...body, version: request.version + 1 }]; state.requirementsVersion += 1;
       estimate = { ...estimate, version: estimate.version! + 1 };
       return json(requirementsResponse());
+    }
+    if (url.startsWith("/api/v1/estimates/estimate/pdf?audience=client&expectedVersion=") || url.endsWith("/pdf?audience=client")) {
+      return new Response("%PDF-1.7 customer fixture", { headers: { "Content-Type": "application/pdf" } });
     }
     if (url.startsWith("/api/v1/estimates/estimate/revisions")) {
       const revisionId = url.split("/")[6];
@@ -88,6 +94,16 @@ async function selectRevision(user: ReturnType<typeof userEvent.setup>, name: Re
 }
 
 describe("Estimate workspace revisions", () => {
+  it("opens the version submitted for internal review before a client round exists", async () => {
+    const fixture = setup(false, "pending_manager_assignment");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "View quotation PDF" }));
+    expect(await screen.findByRole("dialog", { name: "Quotation in internal review · Version 4" })).toBeVisible();
+    await waitFor(() => expect(fixture.requests.map(request => request.url)).toContain(
+      "/api/v1/estimates/estimate/pdf?audience=client&expectedVersion=4&stage=internal-review"
+    ));
+  });
+
   it("shows GST-inclusive totals, removes the masthead, and preserves current edits and room/filter state across history", async () => {
     const fixture = setup(); const user = userEvent.setup();
     await screen.findByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
@@ -127,6 +143,33 @@ describe("Estimate workspace revisions", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(fixture.saves).toHaveLength(1));
     expect(fixture.saves[0]!.lineItems[0]).toMatchObject({ quantity: 3, ratePaise: 10000 });
+  });
+
+  it("opens the saved legacy draft and an explicitly selected earlier customer revision after later edits", async () => {
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL() { return "blob:legacy-quotation"; }
+      static revokeObjectURL() {}
+    });
+    const fixture = setup(), user = userEvent.setup();
+    const viewPdf = () => screen.getByRole("button", { name: "View quotation PDF" });
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: /Quantity.*Current ceiling/ })).toBeEnabled());
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity.*Current ceiling/ });
+    await user.clear(quantity); await user.type(quantity, "3");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    await user.click(viewPdf());
+    const current = await screen.findByRole("dialog", { name: "Draft quotation · Version 5" });
+    expect(await within(current).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await selectRevision(user, /Pre-estimate · R1/);
+    await screen.findByRole("article", { name: "Published ceiling" });
+    await user.click(viewPdf());
+    const historical = await screen.findByRole("dialog", { name: "Submitted quotation · Version 1" });
+    expect(await within(historical).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    expect(fixture.requests.filter(r => r.url.includes("/pdf?")).map(r => r.url)).toEqual([
+      "/api/v1/estimates/estimate/pdf?audience=client&expectedVersion=5",
+      "/api/v1/estimates/estimate/revisions/round-one/pdf?audience=client"
+    ]);
   });
 
   it("keeps the selected revision isolated when older requests finish later", async () => {
