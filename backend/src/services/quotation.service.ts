@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
@@ -165,6 +166,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
   const quotationApproval = await resolveCurrentQuotationApproval(estimate, session);
   const current = await resolveEstimatorCatalogueLines(detail.lines.map(line => line.mainLineId), session);
   const visible = await visibleQuotationSources(estimate, session);
+  const roomTypes = new Map((estimate.rooms ?? []).map((room: Row) => [room.id, room.typeId] as const));
   const presented = [];
   for (const line of detail.lines) {
     const source = current.get(line.mainLineId);
@@ -176,6 +178,9 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     const classification = saved?.classification ?? quotationClassification(estimate, line.mainLineId, saved?.mainBasketId);
     const pricingModeChoices = saved ? await quotationPricingModeChoices({ ...saved, classification }, source, session) : [];
     presented.push({ ...line, roomId: saved?.roomId ?? null, included: saved?.included === true,
+      ...(detail.editingAllowed && saved && source &&
+        !isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(saved.roomId) as string | undefined)
+        ? { roomMismatch: true } : {}),
       classification, pricingModeChoices,
       choices: pricingModeChoices.find(option => option.pricingMode === line.pricingMode)?.choices ?? line.choices,
       ...(safeOrigins === undefined ? {} : { recommendationSourceMainLineIds: safeOrigins }),
@@ -191,7 +196,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     baskets: quotationBaskets(estimate, visible), groups: quotationGroups(estimate, groupMembers(estimate, visible)),
     setup, workflowVersion: 3 as const, phase: estimate.estimation.phase as "pre" | "post",
     status, pricedRevision: Number(estimate.estimation.pricedRevision),
-    rooms: (estimate.rooms ?? []).map((room: Row) => ({ id: String(room.id), name: String(room.label ?? room.name ?? room.id) })),
+    rooms: (estimate.rooms ?? []).map((room: Row) => ({ id: String(room.id), typeId: room.typeId ?? null, name: String(room.label ?? room.name ?? room.id) })),
     reviewState: estimate.estimation.editClosedAt ? "approved" as const : status === "sent_to_client" ? "ready_for_approval" as const :
       (estimate.reviews ?? []).at(-1)?.action === "client_quotation_saved" ? "awaiting_staff_review" as const : "draft" as const };
 }
@@ -279,7 +284,11 @@ async function reconcileRecommendationOrigins(estimate: Row, lineItems: Row[],
   for (const change of requested) for (const originId of change.operation.recommendationSourceMainLineIds!) {
     const origin = current.get(key(change.roomId, originId));
     const source = sources.get(originId);
-    if (originId === change.mainLineId || !origin?.included || !source || origin.clientVisible === false || !sameParent(origin, source)) {
+    const room = estimate.rooms.find((entry: Row) => entry.id === change.roomId);
+    const previousTarget = estimate.lineItems.find((line: Row) => line.roomId === change.roomId && line.mainLineId === change.mainLineId);
+    const savedOrigin = previousTarget?.included && previousTarget.recommendationSourceMainLineIds?.includes(originId);
+    if (originId === change.mainLineId || !origin?.included || !source || origin.clientVisible === false || !sameParent(origin, source) ||
+      !savedOrigin && !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room?.typeId)) {
       throw new ApiError(400, "QUOTATION_RECOMMENDATION_SOURCE_INVALID", "Choose a current recommendation source in the same room.");
     }
   }
@@ -339,16 +348,21 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       const context = await contextFor(actor, projectId);
       return readQuotationRecommendations(context.estimate!, parsed.data);
     },
-    async items(actor: PublicUser, projectId: string, input: { search?: string; limit?: number; offset?: number;
+    async items(actor: PublicUser, projectId: string, input: { roomId?: string; search?: string; limit?: number; offset?: number;
       mainBasketId?: string; subBasketId?: string } = {}) {
       const context = await contextFor(actor, projectId);
       const estimate = context.estimate!;
       const limit = Math.min(50, Math.max(1, input.limit ?? 20));
       const offset = Math.max(0, input.offset ?? 0);
       const sources = await visibleQuotationSources(estimate, undefined, true);
+      const rooms: Row[] = estimate.rooms ?? [];
+      const destinations = input.roomId ? rooms.filter(room => room.id === input.roomId) : rooms;
+      if (input.roomId && !destinations.length) return missing();
       const candidates = [];
       for (const source of sources.values()) {
         if (!source.line.hasConfiguredBasePrice) continue;
+        if (source.line.applicableRoomCategories?.length &&
+          !destinations.some(room => isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId))) continue;
         if (input.mainBasketId && source.line.basketId !== input.mainBasketId ||
           input.subBasketId && source.line.subBasketId !== input.subBasketId) continue;
         if (input.search && ![source.line.name, source.mainBasketName, source.subBasketName ?? ""].join(" ")
@@ -470,6 +484,10 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             const roomId = operation.kind === "add" ? operation.roomId : prior!.roomId;
             const room = estimate.rooms.find((row: Row) => row.id === roomId);
             if (!room || operation.kind !== "add" && !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) return missing();
+            if ((operation.kind === "add" || operation.included !== false) &&
+              !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId)) {
+              throw new ApiError(400, "ESTIMATE_ROOM_NOT_APPLICABLE", "This Main Line is not configured for the selected room or place.");
+            }
             const key = `${roomId}\u0000${mainLineId}`;
             if (touched.has(key)) throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "Change each quotation item once per save.");
             touched.add(key);
@@ -482,7 +500,11 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
               await fenceEstimateTierSource({ ...base, ...currentFields(source) }, session);
               fenced.add(mainLineId);
             }
-            const next = await pricedLine(base, source, operation, session);
+            const removingRestricted = operation.kind === "update" && operation.included === false &&
+              !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId);
+            const next = removingRestricted
+              ? { ...prior, included: false, amountPaise: 0, amount: 0 } as Row
+              : await pricedLine(base, source, operation, session);
             if (!next.included || operation.kind === "add" || operation.included === true && !prior?.included) {
               next.recommendationSourceMainLineIds = next.included ? operation.recommendationSourceMainLineIds ?? [] : [];
             } else if (operation.recommendationSourceMainLineIds !== undefined) {

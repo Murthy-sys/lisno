@@ -449,35 +449,43 @@ const currentPricingConsumers: InvalidateQueryFilters[] = [
 
 export async function invalidateKnowledgeSectionMutation(
   queryClient: QueryClient,
-  mainLineId: string
+  mainLineId: string,
+  options?: { readonly throwOnError: boolean }
 ): Promise<void> {
   const basketId = queryClient.getQueryData<KnowledgeItemDetail>(knowledgeQueryKeys.item(mainLineId))?.basketId;
-  await Promise.allSettled([
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) }),
-    ...currentPricingConsumers.map((filters) => queryClient.invalidateQueries(filters)),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
-    invalidateTemporaryMainLineDetails(queryClient),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
-    queryClient.invalidateQueries({
+  const invalidate = (filters: InvalidateQueryFilters) => options
+    ? queryClient.invalidateQueries(filters, options)
+    : queryClient.invalidateQueries(filters);
+  const results = await Promise.allSettled([
+    invalidate({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) }),
+    ...currentPricingConsumers.map((filters) => invalidate(filters)),
+    invalidate({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
+    invalidateTemporaryMainLineDetails(queryClient, options),
+    invalidate({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
+    invalidate({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
+    invalidate({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
+    invalidate({ queryKey: knowledgeQueryKeys.itemLists() }),
+    invalidate({
       queryKey: knowledgeQueryKeys.item(mainLineId)
     }),
-    queryClient.invalidateQueries({
+    invalidate({
       queryKey: knowledgeQueryKeys.histories()
     }),
-    queryClient.invalidateQueries({
+    invalidate({
       queryKey: knowledgeQueryKeys.activationReviews()
     }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
-    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
-    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
-    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
-    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
-    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
-    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
+    invalidate({ queryKey: knowledgeQueryKeys.contexts() }),
+    invalidate({ queryKey: estimateRequirementsKeys.all }),
+    invalidate({ queryKey: estimationCatalogueKeys.all }),
+    invalidate({ queryKey: projectDesignRequirementsKeys.all }),
+    invalidate({ queryKey: projectWorkflowKeys.all }),
+    invalidate({ queryKey: procurementBasketKeys.lists() }),
+    invalidate({ queryKey: procurementBasketKeys.details() })
   ]);
+  if (options?.throwOnError) {
+    const failed = results.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+  }
 }
 
 /** Refresh saved current configuration consumers once after a bulk margin mutation. */

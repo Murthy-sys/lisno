@@ -16,6 +16,16 @@ const props = { currentLine: line, item: draftQuotationItem(line), selected: tru
   canChangePricingMode: false, onTogglePmc: vi.fn(), onChange: vi.fn(), money: (value: number | null) => String(value) };
 
 describe("client estimator description", () => {
+  it("keeps an incompatible saved row visible and removable while blocking new inclusion", () => {
+    const saved = { ...line, roomMismatch: true };
+    const view = render(<ClientQuotationLine {...props} currentLine={saved} />);
+    expect(screen.getByText(/no longer applies to Living room/)).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Include Ceiling in Living room" })).toBeEnabled();
+    expect(screen.getByLabelText("Saved amount including GST for Ceiling in Living room")).toHaveTextContent("118000");
+    view.rerender(<ClientQuotationLine {...props} currentLine={{ ...saved, included: false }} selected={false} />);
+    expect(screen.getByRole("checkbox", { name: "Include Ceiling in Living room" })).toBeDisabled();
+  });
+
   it("shows only the selected tier description and follows unsaved tier changes", () => {
     const view = render(<ClientQuotationLine {...props} />);
     expect(screen.getByText(/Signature finish/).textContent).toBe("Signature finish.\nIncludes installation.");

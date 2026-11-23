@@ -1,3 +1,4 @@
+import { selectPickerLine } from "./salesItemPicker.test-fixture";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -423,11 +424,7 @@ describe("Collaborative estimate workspace", () => {
     }));
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Add items" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "new-basket");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), "new-sub");
-    await user.type(screen.getByRole("searchbox", { name: "Search available items" }), "Additional");
-    await user.click(screen.getByRole("button", { name: "Add Additional finish" }));
-    expect(screen.getByRole("button", { name: "Added Additional finish" })).toBeDisabled();
+    await user.click(await selectPickerLine(user, "Woodwork", "Doors", "Additional finish"));
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Additional finish.*Living Room/i })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await screen.findByText("Submitted to the client portal for approval.");
@@ -466,7 +463,7 @@ describe("Collaborative estimate workspace", () => {
     const { saves } = setup(draft, structuredClone(requirements), catalogue);
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Add items" }));
-    await user.click(screen.getByRole("button", { name: "Add Additional finish" }));
+    await user.click(await selectPickerLine(user, "Woodwork", "Doors", "Additional finish"));
     await user.click(screen.getByRole("checkbox", { name: /Additional finish/ }));
     expect(screen.queryByRole("spinbutton", { name: /Additional finish/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Submit" }));
@@ -485,9 +482,10 @@ describe("Collaborative estimate workspace", () => {
     const { saves } = setup(draft, structuredClone(requirements), catalogue);
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Add items" }));
-    const first = screen.getByRole("button", { name: "Add Additional A" });
-    const second = screen.getByRole("button", { name: "Add Additional B" });
-    act(() => { first.click(); first.click(); second.click(); });
+    const first = await selectPickerLine(user, "Extra A", "Sub A", "Additional A");
+    act(() => { first.click(); first.click(); });
+    await user.click(screen.getByRole("button", { name: "Add items" }));
+    await user.click(await selectPickerLine(user, "Extra B", "Sub B", "Additional B"));
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await screen.findByText("Submitted to the client portal for approval.");
     const saved = saves[0] as EstimateDraftInput;

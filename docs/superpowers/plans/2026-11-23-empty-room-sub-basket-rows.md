@@ -1,0 +1,11 @@
+# Hide empty Main Baskets and Sub-Baskets in Estimation
+
+Follow the [approved specification](../specs/2026-11-23-empty-room-sub-basket-rows-design.md).
+
+1. **Capture the baseline.** The integration owner inspects the working-tree diff and identifies the existing tests that expect a picker-only group to show an empty heading.
+2. **Update room visibility.** The UI owner edits `frontend/src/features/leads/ConfiguredEstimateBuilder.tsx`. For a ready catalogue, show a Sub-Basket only when it has displayable rows. Derive Main Basket sections and shortcuts from the same room-level rule: a direct row or a populated Sub-Basket keeps the parent visible. Resolve the active basket filter against the visible parents on room switch. Keep Add items available from the full eligible catalogue even when every parent is hidden. Preserve loading, error, search, paging and saved-assignment review behavior.
+3. **Cover the reported example.** The test owner updates `ConfiguredEstimateBuilder.test.tsx`. Select Balcony / Utility with a Bedroom-only POP Gypsum default and verify the group is absent. Include an eligible optional line in that group, find it through Add items, and verify adding it reveals the group. Check that the Bedroom-only line stays out of the Balcony picker, room switches restore the correct rows and totals, and hiding the group triggers no save or removal. Update assertions that expected a picker-only group heading.
+   In the same test slice, assert that an empty parent loses both its section and shortcut. Cover a direct item and a populated sibling independently. With every parent hidden, add the first eligible optional item and verify that its parent, shortcut and group appear. Switch rooms with a basket filter active and verify the remaining visible baskets are reachable.
+4. **Verify the integrated change.** Run the builder and estimate workspace test suites, frontend typecheck and build, and `git diff --check`. Check the Balcony / Utility example and picker interaction in a browser at desktop and mobile widths, including access to Add items when every basket is hidden.
+
+Steps 2 and 3 can run in parallel after the baseline check because they own separate files. Integration and verification follow both.

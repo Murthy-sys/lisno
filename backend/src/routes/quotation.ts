@@ -8,7 +8,7 @@ import { createQuotationService, quotationPatchSchema, quotationRecommendationQu
 import type { AuthService } from "../services/auth.service.js";
 import type { AuditService } from "../services/audit.service.js";
 
-const candidatesQuery = z.object({ search: z.string().trim().max(200).optional(),
+const candidatesQuery = z.object({ roomId: z.string().trim().min(1).max(500).optional(), search: z.string().trim().max(200).optional(),
   mainBasketId: z.string().trim().min(1).max(500).optional(), subBasketId: z.string().trim().min(1).max(500).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20), offset: z.coerce.number().int().min(0).max(100_000).default(0) }).strict();
 

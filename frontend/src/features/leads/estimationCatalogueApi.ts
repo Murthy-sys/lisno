@@ -1,3 +1,4 @@
+import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { ApiError, apiClient, type Pagination } from "../../api/client";
@@ -54,6 +55,7 @@ export interface EstimationCatalogueMainLine {
   clientVisible?: boolean;
   /** Only explicit true adds an unused preview to default estimation browsing. */
   showByDefault?: boolean;
+  applicableRoomCategories?: readonly RoomCategoryId[];
   dimensionsMandatory?: boolean;
   dimensionRule?: EstimateDimensionRule | null;
   displayOrder: number;

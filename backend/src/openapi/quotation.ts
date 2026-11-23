@@ -1,3 +1,4 @@
+import { ROOM_CATEGORIES } from "../domain/estimate-room-options.js";
 import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 import { ESTIMATE_TIER_SCHEMAS } from "./estimate-tiers.js";
 
@@ -65,7 +66,7 @@ export const QUOTATION_SCHEMAS = {
     phase: { type: "string", enum: ["pre", "post"] }, status: text }),
   QuotationLine: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine,
     properties: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.properties, ...grouping,
-      roomId: id, included: { type: "boolean" }, source: { ...source, nullable: true }, classification, pricingModeChoices,
+      roomId: id, roomMismatch: { type: "boolean", description: "True for a saved editable assignment that no longer applies to its room." }, included: { type: "boolean" }, source: { ...source, nullable: true }, classification, pricingModeChoices,
       recommendationSourceMainLineIds: { ...origins, description: "Omitted when any stored origin is not Client-visible. Omission does not imply independent selection or authorize client-side dependent cleanup." } },
     required: [...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.required, ...Object.keys(grouping), "roomId", "included", "source"] },
   QuotationGroup: object({ ...groupScope, includedCount: { type: "integer", minimum: 1 }, sourceToken }),
@@ -83,13 +84,14 @@ export const QUOTATION_SCHEMAS = {
       pricedRevision: version, phase: { type: "string", enum: ["pre", "post"] }, status: text,
       ...QUOTATION_APPROVAL_PROPERTIES,
       reviewState: { type: "string", enum: ["draft", "awaiting_staff_review", "ready_for_approval", "approved"] },
-      rooms: { type: "array", items: object({ id, name: text }) }, editingAllowed: { type: "boolean" },
+      rooms: { type: "array", items: object({ id, name: text, typeId: { ...text, nullable: true } }) }, editingAllowed: { type: "boolean" },
       canChangePricingMode: { type: "boolean", description: "Actor-scoped mode authority: Client plus assigned Sales initially; Client plus assigned primary Designer after initial Client approval. Edit locks and Standard/Special eligibility still apply." },
       totalPaise: { type: "integer", minimum: 0, nullable: true }, roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Signed final-total adjustment in paise, applied after GST. More than 50 paise rounds up; exactly 50 rounds down. Absent on historical unrounded estimates." }, lines: { type: "array", items: ref("QuotationLine") },
       excludedLines: { type: "array", items: ref("QuotationLine"), description: "Visible excluded saved rows retain stable IDs and user choices for re-addition. They do not contribute to totals." },
       baskets: { type: "array", items: ref("QuotationBasket"), description: "Complete safe hierarchy within project-selected baskets, independent of candidate pagination." },
       groups: { type: "array", items: ref("QuotationGroup") }, setup: ref("QuotationSetup") } },
   QuotationCandidate: object({ mainLineId: id, name: text, source, ...grouping,
+    applicableRoomCategories: { type: "array", uniqueItems: true, maxItems: ROOM_CATEGORIES.length, items: { type: "string", enum: ROOM_CATEGORIES.map(category => category.id) }, description: "Room and place categories in which this Main Line can be newly assigned. Missing or empty means all rooms." },
     pricingMode, classification, pricingModeChoices, modeTier: tier, dimensionsMandatory: { type: "boolean" },
     dimensionRule: { ...ref("EstimateDimensionRule"), nullable: true }, uomName: text,
     choices: { type: "array", items: ref("EstimateTierChoice") } }),

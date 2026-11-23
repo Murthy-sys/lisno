@@ -23,8 +23,8 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   const line = item.line;
   const label = `${currentLine.mainLineName} in ${currentLine.roomName}`;
   const unavailable = !currentLine.source;
-  const blocked = disabled || unavailable || grouped;
-  const fieldsDisabled = blocked || !selected;
+  const blocked = disabled || unavailable || grouped || Boolean(currentLine.roomMismatch && !currentLine.included);
+  const fieldsDisabled = blocked || !selected || Boolean(currentLine.roomMismatch);
   const choices = quotationItemChoices({ ...item, line: { ...item.line, pricingMode: currentLine.pricingMode, choices: currentLine.choices, pricingModeChoices: currentLine.pricingModeChoices } });
   const choice = choices.find(option => option.modeTier === item.modeTier);
   const governed = hasGovernedInHousePrice(choice);
@@ -61,10 +61,11 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
       <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price incl. GST" : `Rate incl. GST (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price including GST for ${label}`}>{governed ? money(estimatePriceIncludingGst(aggregate?.totalPaise)) : components ? "From components" : money(estimatePriceIncludingGst(choice?.ratePaise))}</output></div>
       <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"} incl. GST</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} including GST for ${label}`}>{item.kind === "update" ? money(estimatePriceIncludingGst(currentLine.amountPaise)) : "After save"}</output></div>
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
-        {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
+        {...(!line.dimensionsMandatory && selected && !fieldsDisabled ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
     </>}>
     {selected ? <EstimateLineTierDetails rowKey={line.id} label={label} tier={item.modeTier}
       description={unavailable ? null : choice?.description} details={undefined} /> : null}
+    {currentLine.roomMismatch ? <p className="configured-estimate-line__message" role="status">Review this saved item. Its Main Line no longer applies to {currentLine.roomName}.</p> : null}
     {unavailable ? <p className="configured-estimate-line__message" role="status">This saved item is unavailable in the current Configuration. Your team must review it before you can edit or remove it. Saved amounts are unchanged.</p> : null}
     {selected && line.dimensionsMandatory ? line.dimensionRule
       ? <EstimateDimensionsFields label={label} dimensions={item.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={fieldsDisabled} onChange={dimensions => onChange({ dimensions })} />

@@ -831,3 +831,28 @@
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration .knowledge-overview-surfaces__table { font-size: 12px; }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration .knowledge-overview-surfaces__table tbody th { font-size: 12px; }
 }
+
+.knowledge-room-categories { min-inline-size: 0; }
+.knowledge-room-categories__trigger.ui-control {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  block-size: auto;
+  min-block-size: 44px;
+  text-align: start;
+  white-space: normal;
+}
+.knowledge-room-categories__choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 0 12px;
+  margin-block-start: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+}
+.knowledge-room-categories__choices label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 44px;
+  cursor: pointer;
+}

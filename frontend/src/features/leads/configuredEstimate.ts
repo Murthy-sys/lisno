@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { estimateAggregatePricingMatchesLine, readEstimateAggregatePricing, toEstimateAggregatePricing, type EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentPricingMatchesLine, readEstimateComponentPricing, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { calculateDimensionQuantity, estimateDimensionRulesEqual, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
@@ -9,11 +10,13 @@ import { estimationLinePricingMode, isEstimationLinePriceVisible, isEstimationTi
 export interface ConfiguredEstimateRoom {
   id: string;
   label: string;
+  typeId?: string;
 }
 
 export interface ConfiguredLineDraft {
   key: string;
   persistedId?: string;
+  roomMismatch?: boolean;
   roomId: string;
   roomName: string;
   catalogueId: string;
@@ -125,7 +128,7 @@ export function configuredTierUnavailableReason(line: TierPricingSource, modeTie
 
 export function configuredLineCanInclude(line: ConfiguredLineDraft): boolean {
   const mode = estimationLinePricingMode(line);
-  return !line.sourceMissing && isEstimationLinePriceVisible(line, mode) &&
+  return !line.roomMismatch && !line.sourceMissing && isEstimationLinePriceVisible(line, mode) &&
     configuredTierUnavailableReason(line, line.modeTier ?? "signature", mode) === null;
 }
 
@@ -372,6 +375,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
   return {
     key: configuredLineKey(line.roomId, line.mainLineId),
     persistedId: line.id,
+    roomMismatch: line.roomMismatch,
     roomId: line.roomId,
     roomName: line.roomName,
     catalogueId: line.catalogueId,
@@ -470,18 +474,24 @@ function newLine(
 }
 
 /** Materialize only the item explicitly chosen for one room. */
-export function createConfiguredLine(
+function findConfiguredSource(
   catalogue: EstimationCatalogue,
-  room: ConfiguredEstimateRoom,
   target: { mainLineId: string; basketId: string; subBasketId: string | null }
-): ConfiguredLineDraft | null {
+) {
   const basket = catalogue.items.find(item => item.id === target.basketId);
   if (!basket) return null;
   const subBasket = target.subBasketId === null ? null : basket.subBaskets.find(item => item.id === target.subBasketId);
   if (target.subBasketId !== null && !subBasket) return null;
   const items = subBasket ? [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])] : basket.directTemporaryItems ?? [];
   const item = items.find(item => item.mainLineId === target.mainLineId);
-  return item ? newLine(room, basket, subBasket ?? null, item) : null;
+  return item ? { basket, subBasket: subBasket ?? null, item } : null;
+}
+
+export function createConfiguredLine(catalogue: EstimationCatalogue, room: ConfiguredEstimateRoom,
+  target: { mainLineId: string; basketId: string; subBasketId: string | null }): ConfiguredLineDraft | null {
+  const source = findConfiguredSource(catalogue, target);
+  return source && isMainLineApplicableToRoom(source.item.applicableRoomCategories, room.typeId)
+    ? newLine(room, source.basket, source.subBasket, source.item) : null;
 }
 
 /** Local acknowledgement of one exact saved Configuration scope; never sent as pricing authority. */
@@ -501,10 +511,15 @@ export function buildConfiguredLines(
   return [...new Map(previous.map(line => [line.key, line])).values()].flatMap<ConfiguredLineDraft>(saved => {
     const room = roomById.get(saved.roomId);
     if (!room) return [];
-    const fresh = selectedMainBasketIds.has(saved.mainBasketId)
-      ? createConfiguredLine(catalogue, room, { mainLineId: saved.mainLineId, basketId: saved.mainBasketId, subBasketId: saved.subBasketId })
+    const source = selectedMainBasketIds.has(saved.mainBasketId)
+      ? findConfiguredSource(catalogue, { mainLineId: saved.mainLineId, basketId: saved.mainBasketId, subBasketId: saved.subBasketId })
       : null;
-    if (!fresh) return [{ ...saved, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, tierDetails: undefined, tierDescriptions: undefined, inHouseComponents: undefined }];
+    if (source && !preservePersisted && saved.itemType === (source.item.itemType ?? "main_line") &&
+      !isMainLineApplicableToRoom(source.item.applicableRoomCategories, room.typeId)) {
+      return [{ ...saved, roomMismatch: true, sourceMissing: false }];
+    }
+    const fresh = source ? newLine(room, source.basket, source.subBasket, source.item) : null;
+    if (!fresh) return [{ ...saved, roomMismatch: undefined, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, tierDetails: undefined, tierDescriptions: undefined, inHouseComponents: undefined }];
     const sourceMissing = saved.mainBasketId !== fresh.mainBasketId ||
       saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType;
     const selectedFresh = withSelectedTierPricing({ ...fresh, modeTier: saved.modeTier ?? "signature" });
@@ -515,6 +530,7 @@ export function buildConfiguredLines(
       storedPricing.revisionId !== fresh.revisionId || storedPricing.sourceItemVersion !== fresh.itemVersion || storedPricing.sourceRevisionVersion !== fresh.revisionVersion));
     if (preservePersisted && saved.persistedId) return {
       ...saved,
+      roomMismatch: undefined,
       configurationPricingChanged: undefined,
       configurationPricingIssue: undefined,
       hasConfiguredBasePrice: fresh.hasConfiguredBasePrice,

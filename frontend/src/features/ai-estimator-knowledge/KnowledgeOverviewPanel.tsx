@@ -6,6 +6,7 @@ import { resolveEstimateDimensionRule } from "../../../../shared/estimation/esti
 import { Button } from "../../components/ui/Button";
 import { Field, Radio, Select } from "../../components/ui/Field";
 import { Surface } from "../../components/ui/Surface";
+import { KnowledgeRoomCategorySelect } from "./KnowledgeRoomCategorySelect";
 import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
 import type { KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 import { KnowledgeModeSurfacePanel } from "./KnowledgeModeSurfacePanel";
@@ -208,6 +209,11 @@ export function KnowledgeOverviewPanel({
             </label>)}
           </div>
         </fieldset> : null}
+        {configuration ? <KnowledgeRoomCategorySelect value={overviewPayload.applicableRoomCategories} disabled={!editable || saving}
+          onChange={applicableRoomCategories => {
+            onOverviewDirty("applicableRoomCategories");
+            onOverviewPayloadChange({ ...overviewPayload, applicableRoomCategories });
+          }} /> : null}
         {showDimensions ? <fieldset className={settingClassName} role="radiogroup" disabled={!editable || saving} aria-describedby={configuration ? `${visibilityId}-dimensions-description ${visibilityId}-dimensions-help` : `${visibilityId}-dimensions-help`}>
           <legend>Dimensions mandatory?</legend>
           {configuration ? <p id={`${visibilityId}-dimensions-description`} className="knowledge-overview__description">Require Length, Width and Height from Sales or the client.</p> : null}

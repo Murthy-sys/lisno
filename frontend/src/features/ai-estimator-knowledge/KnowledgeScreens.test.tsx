@@ -1567,6 +1567,64 @@ describe("AI estimator knowledge screens", () => {
     name: /Does designer need to check stock before selection/
   })).getByRole("radio", { name: answer });
 
+  it("saves closure priority on the current revision and restores it when reopening the tab", async () => {
+    const user = userEvent.setup();
+    let current = item;
+    let overview = section("overview", { showByDefault: true });
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "overview" ? overview : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      current = { ...current, version: current.version + 1 };
+      const saved = mutationSection(key, input.payload, overview.version + 1, current.version);
+      overview = saved;
+      return saved;
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    for (const choice of ["P1", "P2", "P3"]) {
+      await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+      await user.click(await screen.findByRole("radio", { name: choice }));
+      await user.click(screen.getByRole("button", { name: "Save closure priority" }));
+      expect(await screen.findByText("Closure priority saved.")).toBeVisible();
+      expect(overview.payload).toEqual({ showByDefault: true, closurePriority: choice });
+      await user.click(screen.getByRole("tab", { name: "Overview" }));
+    }
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    expect(await screen.findByRole("radio", { name: "P3" })).toBeChecked();
+  });
+
+  it.each(["pending edit", "unknown write"] as const)("pins the original closure priority revision across a draft switch (%s)", async scenario => {
+    const user = userEvent.setup();
+    let current = item;
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, id, key) => ({
+      ...section(key, key === "overview" ? { closurePriority: id === "revision-1" ? "P1" : "P3" } : {}), revisionId: id
+    }));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValue(new Error("Lost response"));
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    await user.click(await screen.findByRole("radio", { name: "P2" }));
+    if (scenario === "unknown write") {
+      await user.click(screen.getByRole("button", { name: "Save closure priority" }));
+      await screen.findByRole("button", { name: "Load current closure priority" });
+    }
+    current = { ...item, version: 5, draftRevisionId: "revision-2", draftRevision: { ...item.draftRevision!, id: "revision-2" } };
+    await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.item("line-1"), current); });
+    const discard = await screen.findByRole("button", { name: "Discard choice and load current revision" });
+    expect(screen.getByRole("radio", { name: "P2" })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Save closure priority" })).not.toBeInTheDocument();
+    if (scenario === "unknown write") {
+      expect(discard).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Load current closure priority" }));
+      expect(await screen.findByText("Saved closure priority on the previous revision: P1.")).toBeVisible();
+      expect(knowledgeApi.getKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "overview");
+    }
+    await user.click(discard);
+    expect(await screen.findByRole("radio", { name: "P3", checked: true })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(scenario === "unknown write" ? 1 : 0);
+  });
+
   it("blocks discarding Design while a direct rules save is still in flight", async () => {
     const user = userEvent.setup();
     let current = item;
@@ -1745,9 +1803,14 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
     const closure = screen.getByRole("tabpanel", { name: "Basket closure priority" });
     expect(within(closure).getByRole("heading", { name: "Basket closure priority", level: 2 })).toBeVisible();
-    expect(closure).toHaveTextContent("No configuration options are available in this section yet.");
-    expect(within(closure).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    if (state === "no revision") {
+      expect(closure).toHaveTextContent("Create a draft revision to configure closure priority.");
+    } else {
+      expect(within(closure).getAllByRole("radio")).toHaveLength(3);
+      expect(closure).toHaveTextContent("No closure priority selected.");
+      if (state === "draft") expect(within(closure).getByRole("button", { name: "Save closure priority" })).toBeDisabled();
+      else expect(within(closure).getByRole("radio", { name: "P2" })).toBeDisabled();
+    }
     expect(screen.getByRole("region", { name: "Workspace status" })).toHaveTextContent("0 of 4 tabs configured");
     expect(knowledgeApi.getKnowledgeSection).toHaveBeenCalledTimes(sectionReads);
     expect(knowledgeApi.getKnowledgeBasketQuality).not.toHaveBeenCalled();
@@ -1795,7 +1858,7 @@ describe("AI estimator knowledge screens", () => {
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "overview", expect.objectContaining({
       payload: { uomId: squareMetre.id }
     }));
-    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save closure priority" })).toBeDisabled();
   });
 
   it("edits a reusable Surface from Overview without replacing the pending Main Line selection", async () => {
@@ -2409,6 +2472,47 @@ describe("AI estimator knowledge screens", () => {
     }));
     await waitFor(() => expect(screen.getByRole("region", { name: "Overview saved summary" })).toHaveTextContent("Square metre"));
     expect(screen.getByRole("region", { name: "Overview saved summary" })).not.toHaveTextContent("Square foot");
+  });
+
+  it("saves room applicability across a failed save, reopens it, and clears it while preserving closure priority", async () => {
+    const user = userEvent.setup();
+    const otherFields = { closurePriority: "P2", uomId: squareFoot.id, showByDefault: true };
+    let loaded = section("overview", otherFields);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "overview" ? loaded : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new Error("Room save failed"))
+      .mockImplementation(async (_line, _revision, key, input) => {
+        const saved = mutationSection(key, input.payload, loaded.version + 1);
+        loaded = saved;
+        return saved;
+      });
+    const path = "/admin/configuration/estimation/items/line-1";
+    const route = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const picker = await screen.findByRole("button", { name: "Applicable rooms / places" });
+    expect(picker).toHaveTextContent("All rooms and places");
+    await user.click(picker);
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+    await user.keyboard("{Escape}");
+    expect(picker).toHaveFocus();
+    expect(picker).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await screen.findByText("Room save failed");
+    expect(picker).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(loaded.payload).toEqual({ ...otherFields, applicableRoomCategories: ["bedroom", "living"] }));
+    view.unmount();
+    view.queryClient.clear();
+    renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const reopened = await screen.findByRole("button", { name: "Applicable rooms / places" });
+    expect(reopened).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(reopened);
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining", checked: true }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom", checked: true }));
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(loaded.payload).toEqual({ ...otherFields, applicableRoomCategories: [] }));
+    expect(reopened).toHaveTextContent("All rooms and places");
   });
 
   it.each([

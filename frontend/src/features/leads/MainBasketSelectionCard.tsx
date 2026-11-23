@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { EstimationCatalogueBasket } from "./estimationCatalogueApi";
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
+import type { EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueTemporaryItem } from "./estimationCatalogueApi";
 import { resolveMainBasketImage } from "./mainBasketImages";
 import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 
@@ -15,19 +16,23 @@ export interface MainBasketSelectionSummary {
 }
 
 type MainBasketSelectionCardProps = ({ basket: EstimationCatalogueBasket; summary?: never } | { summary: MainBasketSelectionSummary; basket?: never }) & {
+  roomTypeIds?: readonly string[];
   selected: boolean;
   disabled: boolean;
   onToggle: () => void;
 };
 
-export function MainBasketSelectionCard({ basket, summary, selected, disabled, onToggle }: MainBasketSelectionCardProps) {
+export function MainBasketSelectionCard({ basket, summary, roomTypeIds, selected, disabled, onToggle }: MainBasketSelectionCardProps) {
+  const visibleDefault = (line: EstimationCatalogueMainLine | EstimationCatalogueTemporaryItem) =>
+    line.showByDefault === true && isEstimationLinePriceVisible(line) &&
+    (!roomTypeIds?.length || roomTypeIds.some(type => isMainLineApplicableToRoom(line.applicableRoomCategories, type)));
   const presentation = summary ?? {
     id: basket.id,
     name: basket.name,
     subBaskets: basket.subBaskets.map((item) => ({ id: item.id, name: item.name,
-      mainLineCount: item.mainLines.filter(line => line.showByDefault === true && isEstimationLinePriceVisible(line)).length,
-      temporaryItemCount: (item.temporaryItems ?? []).filter(line => line.showByDefault === true && isEstimationLinePriceVisible(line)).length })),
-    directTemporaryItemCount: (basket.directTemporaryItems ?? []).filter(line => line.showByDefault === true && isEstimationLinePriceVisible(line)).length
+      mainLineCount: item.mainLines.filter(visibleDefault).length,
+      temporaryItemCount: (item.temporaryItems ?? []).filter(visibleDefault).length })),
+    directTemporaryItemCount: (basket.directTemporaryItems ?? []).filter(visibleDefault).length
   };
   const [expanded, setExpanded] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);

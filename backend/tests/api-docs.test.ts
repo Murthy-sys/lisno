@@ -221,6 +221,8 @@ describe("OpenAPI and Swagger UI", () => {
     const schemas = componentSchemas();
     const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find((entry) =>
       (entry.properties as OpenApiObject)?.showByDefault !== undefined);
+    expect(overview).toHaveProperty("properties.closurePriority.enum", ["P1", "P2", "P3"]);
+    expect(overview?.required ?? []).not.toContain("closurePriority");
     expect(overview).toHaveProperty("properties.showByDefault.type", "boolean");
     expect(overview).toHaveProperty("properties.showByDefault.default", false);
     expect(overview?.required ?? []).not.toContain("showByDefault");

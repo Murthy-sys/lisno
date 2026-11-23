@@ -40,6 +40,7 @@ import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import { KnowledgeModeDefaults } from "./KnowledgeModeDefaults";
+import { KnowledgeClosurePriorityPanel } from "./KnowledgeClosurePriorityPanel";
 import { KnowledgeDesignRulesPanel, type KnowledgeDesignRulesPanelHandle } from "./KnowledgeDesignRulesPanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
@@ -127,10 +128,10 @@ export function KnowledgeItemWorkspacePage() {
   const queryClient = useQueryClient();
   const modePanelRef = useRef<KnowledgeModePanelHandle>(null);
   const qualityPanelRef = useRef<KnowledgeBasketQualityPanelHandle>(null);
-  const designRulesRef = useRef<KnowledgeDesignRulesPanelHandle>(null);
-  const [designDirty, setDesignDirty] = useState(false);
-  const [designSaving, setDesignSaving] = useState(false);
-  const [designUnknownOutcome, setDesignUnknownOutcome] = useState(false);
+  const metadataPanelRef = useRef<KnowledgeDesignRulesPanelHandle>(null);
+  const [metadataDirty, setMetadataDirty] = useState(false);
+  const [metadataSaving, setMetadataSaving] = useState(false);
+  const [metadataUnknownOutcome, setMetadataUnknownOutcome] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const restoreModeFocus = useRef(false);
   const [qualityDirty, setQualityDirty] = useState(false);
@@ -186,8 +187,8 @@ export function KnowledgeItemWorkspacePage() {
   const currentPayload = useRef(payload);
   currentPayload.current = payload;
   const [recommendationBase, setRecommendationBase] = useState<{ session: PendingEditorSession; version: number } | null>(null);
-  const isPlaceholderSection = activeSection === "basket-closure-priority";
-  const isMetadataSection = activeSection === "design";
+  const isClosureSection = activeSection === "basket-closure-priority";
+  const isMetadataSection = activeSection === "design" || isClosureSection;
   const backendSection: KnowledgeSectionKey | null = activeSection === "overview" || activeSection === "recommendations"
     ? activeSection
     : null;
@@ -196,10 +197,18 @@ export function KnowledgeItemWorkspacePage() {
     queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, backendSection ?? "overview"),
     enabled: Boolean(mainLineId && revision?.id && backendSection)
   });
+  // Retain the edited revision while a choice or save outcome needs review.
+  const [closureSession, setClosureSession] = useState<{ line: string; revision: string } | null>(null);
+  const pinnedClosure = isClosureSection && closureSession?.line === mainLineId ? closureSession : null;
+  const overviewRevisionId = pinnedClosure?.revision ?? revision?.id;
+  const closureRevisionRetired = Boolean(pinnedClosure && item?.draftRevisionId !== pinnedClosure.revision);
+  const pinClosureRevision = () => {
+    if (overviewRevisionId) setClosureSession({ line: mainLineId, revision: overviewRevisionId });
+  };
   const savedOverviewQuery = useQuery({
-    queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", "overview"),
-    queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, "overview"),
-    enabled: Boolean(mainLineId && revision?.id)
+    queryKey: knowledgeQueryKeys.section(mainLineId, overviewRevisionId ?? "", "overview"),
+    queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, overviewRevisionId!, "overview"),
+    enabled: Boolean(mainLineId && overviewRevisionId)
   });
   const applicableTiers = applicableKnowledgeTiers(savedOverviewQuery.data?.payload ?? {});
   const selectedSections = knowledgeWorkspaceSectionsForTiers(applicableTiers);
@@ -356,7 +365,7 @@ export function KnowledgeItemWorkspacePage() {
     mainLineId, revisionId: revision?.id, modeTier: activeModeTier, overviewVersion: savedOverviewQuery.data?.version,
     enabled: editable && !itemQuery.isError && savedOverviewQuery.isSuccess && activeModeTier !== null
       && activeModeTier !== "default" && applicableTiers.includes(activeModeTier),
-    hasPendingWork: dirty || modeDirty || modeSaving || qualityDirty || qualitySaving || designDirty || designSaving || designUnknownOutcome
+    hasPendingWork: dirty || modeDirty || modeSaving || qualityDirty || qualitySaving || metadataDirty || metadataSaving || metadataUnknownOutcome
   });
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
@@ -458,8 +467,8 @@ export function KnowledgeItemWorkspacePage() {
   }, [backendSection, editable, editorValid, expectedSectionVersion, itemQuery, saveMutation, sectionQuery]);
 
   const saveActiveSection = useCallback(async (): Promise<boolean> => {
-    if (activeSection === "design") {
-      if (designDirty && !(await designRulesRef.current?.save())) return false;
+    if (isMetadataSection) {
+      if (metadataDirty && !(await metadataPanelRef.current?.save())) return false;
       return true;
     }
     if (activeSection === "quality") return qualityPanelRef.current?.save() ?? false;
@@ -467,13 +476,13 @@ export function KnowledgeItemWorkspacePage() {
       return modePanelRef.current?.save() ?? false;
     }
     return saveSection();
-  }, [activeSection, isModeSection, saveSection, designDirty]);
+  }, [activeSection, isMetadataSection, isModeSection, saveSection, metadataDirty]);
 
   const discardActiveSection = useCallback(() => {
-    if (activeSection === "design") {
-      if (designSaving || designUnknownOutcome) return false;
-      if (designRulesRef.current?.discard() === false) return false;
-      setDesignDirty(false);
+    if (isMetadataSection) {
+      if (metadataSaving || metadataUnknownOutcome) return false;
+      if (metadataPanelRef.current?.discard() === false) return false;
+      setMetadataDirty(false);
       return;
     }
     if (activeSection === "quality") { qualityPanelRef.current?.discard(); setQualityDirty(false); return; }
@@ -489,10 +498,10 @@ export function KnowledgeItemWorkspacePage() {
     setDirty(false);
     setOverviewDirtyFields(new Set());
     setEditorValid(true);
-  }, [activeSection, isModeSection, sectionQuery.data, designSaving, designUnknownOutcome]);
+  }, [activeSection, isMetadataSection, isModeSection, sectionQuery.data, metadataSaving, metadataUnknownOutcome]);
 
-  const activeDirty = isMetadataSection ? designDirty : isPlaceholderSection ? false : activeSection === "quality" ? qualityDirty : isModeSection ? modeDirty : dirty;
-  const activeSaving = isMetadataSection ? designSaving : isPlaceholderSection ? false : activeSection === "quality" ? qualitySaving : isModeSection ? modeSaving : saveMutation.isPending;
+  const activeDirty = isMetadataSection ? metadataDirty : activeSection === "quality" ? qualityDirty : isModeSection ? modeDirty : dirty;
+  const activeSaving = isMetadataSection ? metadataSaving : activeSection === "quality" ? qualitySaving : isModeSection ? modeSaving : saveMutation.isPending;
   const activeSaveError = isModeSection
     ? modeSaveError
     : saveMutation.error && !(saveMutation.error instanceof ApiError && saveMutation.error.code === "VERSION_CONFLICT")
@@ -557,12 +566,13 @@ export function KnowledgeItemWorkspacePage() {
       // Applicability can change while Save/Discard confirmation is pending.
       const target = knowledgeWorkspaceModeTier(next) !== null && !selectableSectionsRef.current.includes(next) ? "mode" : next;
       if (target === "mode" && isModeSection) restoreModeFocus.current = true;
+      setClosureSession(null);
       setActiveSection(target);
       setDirty(false);
       setOverviewDirtyFields(new Set());
       setModeDirty(false);
       setQualityDirty(false);
-      setDesignDirty(false);
+      setMetadataDirty(false);
       setModeSaveError(null);
       setEditorValid(true);
       setConflict(null);
@@ -571,7 +581,7 @@ export function KnowledgeItemWorkspacePage() {
     });
   }
 
-  const inlineSaveSelector = isPlaceholderSection || isMetadataSection ? null : activeSection === "quality"
+  const inlineSaveSelector = isMetadataSection ? null : activeSection === "quality"
     ? qualitySaveCommand?.editable ? ".knowledge-section-command-bar__save" : null
     : revision && editable ? ".knowledge-workspace-status__save" : null;
   const pinnedSaveActive = useKnowledgePinnedSave(workspaceRef, inlineSaveSelector, pendingSession.sourceKey);
@@ -589,7 +599,7 @@ export function KnowledgeItemWorkspacePage() {
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
   const commandError = commandMutation.error instanceof ApiError && commandMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : commandMutation.error?.message ?? null;
   const activeSectionLabel = KNOWLEDGE_WORKSPACE_TAB_LABELS[activeSection];
-  const pageSaveCommand: KnowledgeWorkspaceSaveCommand | undefined = revision && !isPlaceholderSection && !isMetadataSection && activeSection !== "quality" ? {
+  const pageSaveCommand: KnowledgeWorkspaceSaveCommand | undefined = revision && !isMetadataSection && activeSection !== "quality" ? {
     sectionLabel: activeSectionLabel,
     editable,
     dirty: activeDirty,
@@ -693,7 +703,7 @@ export function KnowledgeItemWorkspacePage() {
       {pinnedSaveActive && pinnedSaveCommand ? <KnowledgePinnedSave command={pinnedSaveCommand} /> : null}
       <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
-      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" && !isPlaceholderSection && !isMetadataSection && activeSection !== "quality" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
+      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" && !isMetadataSection && activeSection !== "quality" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
@@ -701,14 +711,17 @@ export function KnowledgeItemWorkspacePage() {
             onSectionChange={selectWorkspaceSection}
             onActiveSectionActivate={isModeSection && activeSection !== "mode" ? () => selectWorkspaceSection("mode") : undefined}
             panelBusy={isModeSection ? modeBusy : Boolean(backendSection && sectionQuery.isFetching)}>
-            {isMetadataSection ? (
-              revision ? <KnowledgeDesignRulesPanel key={`${mainLineId}:${revision.id}`} ref={designRulesRef} item={item} revisionId={revision.id} editable={editable && !itemQuery.isError} vendors={masters.vendors} vendorState={vendorCatalogState} onDirtyChange={setDesignDirty} onSavingChange={setDesignSaving} onUnknownOutcomeChange={setDesignUnknownOutcome} /> : <PageState state="empty" message="Create a draft revision to configure Design rules." />
-            ) : isPlaceholderSection ? (
+            {activeSection === "design" ? (
+              revision ? <KnowledgeDesignRulesPanel key={`${mainLineId}:${revision.id}`} ref={metadataPanelRef} item={item} revisionId={revision.id} editable={editable && !itemQuery.isError} vendors={masters.vendors} vendorState={vendorCatalogState} onDirtyChange={setMetadataDirty} onSavingChange={setMetadataSaving} onUnknownOutcomeChange={setMetadataUnknownOutcome} /> : <PageState state="empty" message="Create a draft revision to configure Design rules." />
+            ) : isClosureSection ? (
               <Surface as="section" className="knowledge-workspace-section">
                 <div className="knowledge-section-heading">
                   <div>
                     <h2>{activeSectionLabel}</h2>
-                    <p>No configuration options are available in this section yet.</p>
+                    {!overviewRevisionId ? <p>Create a draft revision to configure closure priority.</p> : savedOverviewQuery.data ? <>
+                      {savedOverviewQuery.isError ? <InlineMessage tone="error">Closure priority could not be refreshed. <Button onClick={() => void savedOverviewQuery.refetch()}>Retry</Button></InlineMessage> : null}
+                      <KnowledgeClosurePriorityPanel key={JSON.stringify([mainLineId, overviewRevisionId])} ref={metadataPanelRef} revisionRetired={closureRevisionRetired} onBeginEdit={pinClosureRevision} onReleaseRevision={() => setClosureSession(null)} item={item} overview={savedOverviewQuery.data} editable={editable && !closureRevisionRetired && !itemQuery.isError && !savedOverviewQuery.isError} onDirtyChange={setMetadataDirty} onSavingChange={setMetadataSaving} onUnknownOutcomeChange={setMetadataUnknownOutcome} />
+                    </> : savedOverviewQuery.isError ? <PageState state="error" message="Closure priority could not be loaded." action={{ label: "Retry", onAction: () => void savedOverviewQuery.refetch() }} /> : <PageState state="loading" message="Loading closure priority…" />}
                   </div>
                 </div>
               </Surface>
@@ -796,9 +809,9 @@ export function KnowledgeItemWorkspacePage() {
       <KnowledgeBasketDeletionReturn fallbackFocusRef={workspaceRef} />
       {canPreviewClient && clientPreviewLineId === mainLineId ? <KnowledgeMainLineClientPreview
         key={mainLineId} open mainLineId={mainLineId} mainLineName={item.mainLineName}
-        hasUnsavedChanges={dirty || modeDirty || designDirty || qualityDirty || designUnknownOutcome || activeSaving}
+        hasUnsavedChanges={dirty || modeDirty || metadataDirty || qualityDirty || metadataUnknownOutcome || activeSaving}
         onClose={() => setClientPreviewLineId(null)} returnFocusRef={clientPreviewTriggerRef} /> : null}
-      {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={designUnknownOutcome && isMetadataSection ? guard.stayHere : guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy || (isMetadataSection && activeSaving)} error={guard.error} blockingReason={designUnknownOutcome && isMetadataSection ? "A Design save is unconfirmed. Stay here and load the current saved values before leaving." : undefined} /> : null}
+      {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={metadataUnknownOutcome && isMetadataSection ? guard.stayHere : guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy || (isMetadataSection && activeSaving)} error={guard.error} blockingReason={metadataUnknownOutcome && isMetadataSection ? `A ${isClosureSection ? "closure priority" : "Design"} save is unconfirmed. Stay here and load the current saved values before leaving.` : undefined} /> : null}
       {conflict ? <KnowledgeVersionConflictDialog sectionLabel={backendSection ? KNOWLEDGE_SECTION_LABELS[backendSection] : undefined} localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setDirty(false); setOverviewDirtyFields(new Set()); setConflict(null); setServerReview(null); }} /> : null}
       {quickAdd ? quickAdd.type === "surfaces" ? (
         <KnowledgeSurfaceEditorDialog quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} />

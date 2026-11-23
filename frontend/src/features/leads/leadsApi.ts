@@ -78,6 +78,7 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  roomMismatch?: boolean;
   componentPricing?: EstimateComponentPricing;
   aggregatePricing?: EstimateAggregatePricing;
   inHouseUsage?: "estimator" | "execution" | null;

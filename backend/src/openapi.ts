@@ -1,3 +1,4 @@
+import { ROOM_CATEGORIES } from "./domain/estimate-room-options.js";
 import { PROJECT_NUMBER_SCHEMA } from "./openapi/project-number.js";
 import { USER_RESPONSIBILITY_SCHEMAS } from "./openapi/user-responsibilities.js";
 import { DEFAULT_PROJECT_NEXT_ACTION, NATIVE_PLACE_MAX_LENGTH, TENTATIVE_BUDGET_MAX_LENGTH, PROJECT_LANGUAGES, PROJECT_CATEGORIES } from "./contracts/project-initiation.js";
@@ -701,6 +702,7 @@ const queryParametersByOperation: Readonly<
       description: "Use the same Draft and Inactive readiness policy as the opted-in estimator catalogue." }
   ],
   "GET /projects/:projectId/quotation/items": [
+    { name: "roomId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
     { name: "search", in: "query", required: false, schema: { type: "string", maxLength: 200 } },
     { name: "mainBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
     { name: "subBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
@@ -2558,6 +2560,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
         dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
         clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview visibility for all client quotation screens and documents. Internal estimating and approved totals are unchanged." },
+        applicableRoomCategories: { type: "array", uniqueItems: true, maxItems: ROOM_CATEGORIES.length, items: { type: "string", enum: ROOM_CATEGORIES.map(category => category.id) }, description: "Room and place categories in which this Main Line can be newly assigned. Missing or empty means all rooms." },
         showByDefault: { type: "boolean", default: false, readOnly: true, description: "Current saved Overview default-display setting. Only true adds eligible unused previews to default estimation browsing. False retains sources for explicit additions, recommendations and saved estimates." },
         hasConfiguredBasePrice: { type: "boolean", readOnly: true, description: "At least one valid saved base price greater than zero in default, Signature, Premium, or Functional Configuration. Zero-only bases do not qualify; selected source records remain available when false. Discovery metadata only, without a tier or selling-rate fallback." },
         basePriceAvailability: {

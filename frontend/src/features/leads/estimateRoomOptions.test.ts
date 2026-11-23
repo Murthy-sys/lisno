@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { Bath, Bed, Leaf, Pencil, ShowerHead } from "lucide-react";
 import { getBedroomCount, getEstimateRoomDefinitions, getRoomIcon, isValidBedroomCount, mergeSelectedRoomDefinitions, parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
 
-const commonTypes = ["living", "kitchen", "balcony", "foyer", "study", "bath_c", "custom"];
+const commonTypes = ["living", "kitchen", "balcony", "tv_unit", "foyer", "study", "bath_c", "custom"];
 
 describe("estimate room profiles", () => {
   it.each([["1BHK", 1], ["2BHK", 2], ["2.5BHK", 2], ["3BHK", 3], ["3.5BHK", 3], ["4BHK", 4]] as const)("derives %s rooms and independent accessories", (propertyType, count) => {
     const rooms = getEstimateRoomDefinitions(propertyType, 50);
     expect(getBedroomCount(propertyType, 50)).toBe(count);
-    expect(rooms).toHaveLength(7 + count * 3);
+    expect(rooms).toHaveLength(commonTypes.length + count * 3);
     expect(rooms.map((room) => room.typeId)).toEqual(expect.arrayContaining(commonTypes));
     for (let index = 1; index <= count; index += 1) {
       expect(rooms.find((room) => room.label === `Bedroom ${index}`)?.typeId).toBe(index === 1 ? "master" : `bedroom${index}`);
@@ -22,8 +22,8 @@ describe("estimate room profiles", () => {
   it.each(["Villa", "Duplex", "Penthouse", " PENT HOUSE "])("requires an explicit valid count for %s", (propertyType) => {
     expect(requiresBedroomCount(propertyType)).toBe(true);
     expect(getEstimateRoomDefinitions(propertyType, null).map((room) => room.typeId)).toEqual(commonTypes);
-    for (const count of [1, 5, 50]) expect(getEstimateRoomDefinitions(propertyType, count)).toHaveLength(7 + count * 3);
-    for (const count of [0, -1, 1.5, 51, Infinity]) expect(getEstimateRoomDefinitions(propertyType, count)).toHaveLength(7);
+    for (const count of [1, 5, 50]) expect(getEstimateRoomDefinitions(propertyType, count)).toHaveLength(commonTypes.length + count * 3);
+    for (const count of [0, -1, 1.5, 51, Infinity]) expect(getEstimateRoomDefinitions(propertyType, count)).toHaveLength(commonTypes.length);
   });
 
   it("offers a combined Studio living area and common choices without bedroom slots", () => {

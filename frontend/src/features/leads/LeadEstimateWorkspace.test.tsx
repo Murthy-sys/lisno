@@ -536,8 +536,8 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(continueButton);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add items" })).toBeEnabled();
-    expect(screen.getByRole("heading", { name: /^Zinc finishes / })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /^Painting / })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Zinc finishes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Ceiling finishes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Basket selection" })).not.toBeInTheDocument();
     expect(requests.every((request) => request.method === "GET")).toBe(true);
@@ -1453,7 +1453,9 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("button", { name: /^(?:Add|Added) General Items$/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(screen.getByRole("region", { name: "Miscellaneous" })).toHaveTextContent("No default items are configured for this Sub-Basket.");
+    expect(screen.queryByRole("region", { name: "Miscellaneous" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "General Items" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Jump to Main Basket" })).queryByRole("button", { name: /General Items/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Submit" }));

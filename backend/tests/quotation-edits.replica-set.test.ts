@@ -392,6 +392,34 @@ describe("Client inline non-negotiable recommendations", () => {
     expect((await EstimateModel.findById("other-estimate").lean())!.totalPaise).toBe(25960);
   });
 
+  it("filters room applicability before candidate pagination and reports incompatible required targets", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    await Section.updateOne({ _id: "overview-target" }, { $set: { "payload.applicableRoomCategories": ["bedroom"] } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { rooms: [
+      { id: "Room1", typeId: "kitchen", label: "Kitchen" }, { id: "Room2", typeId: "master", label: "Main suite" }] } });
+    expect(await service.items(client, "tier-project", { roomId: "Room1", search: "target", limit: 1 })).toMatchObject({ items: [], total: 0 });
+    expect(await service.items(client, "tier-project", { roomId: "Room2", search: "target", limit: 1 }))
+      .toMatchObject({ total: 1, items: [{ mainLineId: "target", applicableRoomCategories: ["bedroom"] }] });
+    expect(await service.recommendations(client, "tier-project", recommendationRead())).toMatchObject({
+      total: 0, items: [], reviewMessage: expect.stringContaining("room or place") });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] }))
+      .rejects.toMatchObject({ code: "ESTIMATE_ROOM_NOT_APPLICABLE" });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+  });
+
+  it("rejects recommendation origins narrowed by room applicability without changing saved lines", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    await Section.updateOne({ _id: "overview-visible" }, { $set: { "payload.applicableRoomCategories": ["bedroom"] } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.recommendations(client, "tier-project", recommendationRead()))
+      .rejects.toMatchObject({ code: "QUOTATION_RECOMMENDATION_SOURCE_INVALID" });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] }))
+      .rejects.toMatchObject({ code: "QUOTATION_RECOMMENDATION_SOURCE_INVALID" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
   it("projects only visible must-add targets and never internal reasons or hidden counts", async () => {
     await recommendationLine("target");
     await recommendationLine("optional");

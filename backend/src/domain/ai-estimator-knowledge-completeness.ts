@@ -57,7 +57,7 @@ function hasConfiguredContent(sectionKey: KnowledgeSectionKey, payload: unknown)
     return ["recommendations", "exclusions", "budgetAlterations"]
       .some((key) => Array.isArray(record[key]) && record[key].length > 0);
   }
-  return Object.keys(record).some(key => key !== "tierConfigurations");
+  return Object.keys(record).some(key => key !== "tierConfigurations" && (sectionKey !== "overview" || key !== "closurePriority"));
 }
 
 export function deriveKnowledgeCompleteness(input: {

@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
 import { EstimateSubBasketTierInfo, EstimateTierInfoButton } from "./EstimateSubBasketTierInfo";
@@ -11,7 +12,8 @@ import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from
 import type { LucideIcon } from "lucide-react";
 
 import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
-import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/EstimateItemPicker";
+import { SalesEstimateItemPicker } from "./SalesEstimateItemPicker";
+import { EstimateSelectionPagination } from "../estimates/EstimateItemPicker";
 import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
@@ -119,11 +121,10 @@ export function ConfiguredEstimateBuilder({
     const mode = estimationLinePricingMode(line);
     return isEstimationLinePriceVisible(source, mode) && !configuredTierUnavailableReason(source, line.modeTier ?? "signature", mode);
   };
-  const ordinaryRoomLines = filterUnpricedItems ? roomLines.filter(hasVisiblePrice) : roomLines;
+  const mismatchedRoomLines = roomLines.filter(line => line.roomMismatch);
+  const applicableRoomLines = roomLines.filter(line => !line.roomMismatch);
+  const ordinaryRoomLines = filterUnpricedItems ? applicableRoomLines.filter(hasVisiblePrice) : applicableRoomLines;
   const browsableBaskets = browseMainBasketIds ?? selectedMainBasketIds;
-  const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id) &&
-    (browseCatalogue && browsableBaskets.has(basket.id) || ordinaryRoomLines.some(line =>
-      line.mainBasketId === basket.id && !line.sourceMissing)));
   const catalogueRows = useMemo(() => browseCatalogue && activeRoom
     ? buildSalesEstimateCatalogue({ catalogue, room: activeRoom, selectedMainBasketIds, browseMainBasketIds: browsableBaskets, lines }) : [],
   [browseCatalogue, catalogue, activeRoom, selectedMainBasketIds, browsableBaskets, lines]);
@@ -144,11 +145,15 @@ export function ConfiguredEstimateBuilder({
   const reviewLines = lines.filter(line => line.persistedId && !line.included && reviewKeys.has(line.key) && line.key !== inlineReviewKey);
   const displayedReviewKeys = new Set(reviewLines.map(line => line.key));
   const unpricedSelections = filterUnpricedItems ? lines.filter(line => line.roomId === activeRoom?.id &&
-    (line.included || line.persistedId && !displayedReviewKeys.has(line.key)) && !line.sourceMissing &&
+    (line.included || line.persistedId && !displayedReviewKeys.has(line.key)) && !line.sourceMissing && !line.roomMismatch &&
     !hasVisiblePrice(line) && selectedMainBasketIds.has(line.mainBasketId)) : [];
   const availableRoomLines = browseCatalogue ? catalogueRows.filter(row => !displayedReviewKeys.has(row.line.key)).map(row => row.line) : ordinaryRoomLines;
+  const showCataloguePlaceholders = browseCatalogue && (refreshingAvailableItems || availableItemsState !== "ready");
+  const basketsWithRows = new Set(availableRoomLines.filter(line => !line.sourceMissing).map(line => line.mainBasketId));
+  const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id) &&
+    (basketsWithRows.has(basket.id) || showCataloguePlaceholders && browsableBaskets.has(basket.id)));
   const [groupOffsets, setGroupOffsets] = useState<Record<string, number>>({});
-  const recommendationToReveal = useRef<{ roomId: string; target: RecommendedLineTarget } | null>(null);
+  const itemToReveal = useRef<{ roomId: string; target: RecommendedLineTarget } | null>(null);
   const browseFocus = useRef<{ roomId: string; basketId: string; trigger: HTMLButtonElement; fallback: HTMLButtonElement | null } | null>(null);
   useLayoutEffect(() => {
     const pending = browseFocus.current;
@@ -166,50 +171,28 @@ export function ConfiguredEstimateBuilder({
   }, [activeRoom?.id, selectedMainBasketIds, browseCatalogue, browsableBaskets]);
   useEffect(() => { setGroupOffsets({}); }, [activeRoom?.id, search, basketFilter, catalogue]);
   useEffect(() => {
-    const pending = recommendationToReveal.current;
+    const pending = itemToReveal.current;
     if (!pending) return;
-    if (pending.roomId !== activeRoom?.id) { recommendationToReveal.current = null; return; }
+    if (pending.roomId !== activeRoom?.id) { itemToReveal.current = null; return; }
     const target = pending.target;
     const group = availableRoomLines.filter(line => line.mainBasketId === target.basketId && line.subBasketId === target.subBasketId);
     const index = group.findIndex(line => line.mainLineId === target.mainLineId && line.included);
     if (index < 0) return;
-    recommendationToReveal.current = null;
+    itemToReveal.current = null;
     const key = `${target.basketId}:${target.subBasketId ?? "direct"}`;
     setGroupOffsets(current => ({ ...current, [key]: Math.floor(index / 20) * 20 }));
   }, [activeRoom?.id, availableRoomLines]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerSearch, setPickerSearch] = useState("");
-  const [pickerBasket, setPickerBasket] = useState("all");
-  const [pickerSubBasket, setPickerSubBasket] = useState("all");
-  const [pickerOffset, setPickerOffset] = useState(0);
-  useEffect(() => {
-    setPickerOpen(false); setPickerSearch(""); setPickerBasket("all"); setPickerSubBasket("all"); setPickerOffset(0);
-  }, [activeRoom?.id]);
-  const pickerBaskets = catalogue.items;
-  useEffect(() => {
-    const basket = pickerBaskets.find(item => item.id === pickerBasket);
-    if (pickerBasket !== "all" && !basket) {
-      setPickerBasket("all"); setPickerSubBasket("all"); setPickerOffset(0);
-    } else if (pickerSubBasket !== "all" && !basket?.subBaskets.some(item => item.id === pickerSubBasket)) {
-      setPickerSubBasket("all"); setPickerOffset(0);
-    }
-  }, [pickerBaskets, pickerBasket, pickerSubBasket]);
-  const availableTargets = useMemo(() => pickerBaskets.flatMap(basket => [
+  const availableTargets = useMemo(() => catalogue.items.flatMap(basket => [
     ...(basket.directTemporaryItems ?? []).map(item => ({ item, basket, subBasket: null })),
     ...basket.subBaskets.flatMap(subBasket => [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])].map(item => ({ item, basket, subBasket })))
-  ].filter(({ item }) => isEstimationLinePriceVisible(item)).map(({ item, basket, subBasket }) => {
+  ].filter(({ item }) => isEstimationLinePriceVisible(item) && isMainLineApplicableToRoom(item.applicableRoomCategories, activeRoom?.typeId)).map(({ item, basket, subBasket }) => {
     const target = { mainLineId: item.mainLineId, basketId: basket.id, subBasketId: subBasket?.id ?? null };
     const preview = activeRoom ? createConfiguredLine(catalogue, activeRoom, target) : null;
-    return { id: recommendationTargetIdentity(target), name: item.name, context: [basket.name, subBasket?.name].filter(Boolean).join(" / "), target,
+    return { id: recommendationTargetIdentity(target), name: item.name, basketName: basket.name, subBasketName: subBasket?.name ?? "Direct items", target,
       canAdd: Boolean(preview && configuredLineCanInclude(preview)) };
-  })), [catalogue, pickerBaskets, activeRoom]);
-  const pickerQuery = pickerSearch.trim().toLocaleLowerCase();
-  const pickerResults = availableTargets.filter(item =>
-    (pickerBasket === "all" || item.target.basketId === pickerBasket) &&
-    (pickerSubBasket === "all" || item.target.subBasketId === pickerSubBasket) &&
-    (!pickerQuery || `${item.name} ${item.context}`.toLocaleLowerCase().includes(pickerQuery)));
-  const pageOffset = Math.min(pickerOffset, Math.max(0, Math.ceil(pickerResults.length / 20) - 1) * 20);
+  })), [catalogue, activeRoom]);
   const includedTargets = new Set(roomLines.map(line => recommendationTargetIdentity({ mainLineId: line.mainLineId, basketId: line.mainBasketId, subBasketId: line.subBasketId })));
+  const savedRoomLinesById = new Map(lines.filter(line => line.roomId === activeRoom?.id).map(line => [line.mainLineId, line]));
   const addItem = (id: string) => {
     if (!editable || refreshingAvailableItems || availableItemsState !== "ready" || !activeRoom) return false;
     const item = availableTargets.find(item => item.id === id);
@@ -220,6 +203,7 @@ export function ConfiguredEstimateBuilder({
       onUpdateLine(existing.key, { included: true }); return true;
     })();
     if (accepted === false) return false;
+    itemToReveal.current = { roomId: activeRoom.id, target: item.target };
     setSearch(""); setBasketFilter("all");
     setCollapsedBasketIds(current => { const next = new Set(current); next.delete(item.target.basketId); return next; });
     setCollapsedSubBasketIds(current => { const next = new Set(current); next.delete(`${item.target.basketId}:${item.target.subBasketId}`); return next; });
@@ -236,10 +220,10 @@ export function ConfiguredEstimateBuilder({
   const roomAmountLabel = (roomId: string) => lines.some(line => line.roomId === roomId && configuredLineAmountPaise(line) === null)
     ? "Incomplete" : moneyPaise(roomTotal(roomId));
   const browseCountLabel = (groupLines: readonly ConfiguredLineDraft[]) => `${groupLines.filter(line => line.included).length} selected · ${groupLines.length} shown`;
-  const emptyDefaultMessage = (items: readonly { showByDefault?: boolean }[], group: "Sub-Basket" | "Main Basket" | "direct items") => {
+  const emptyDefaultMessage = (items: readonly { showByDefault?: boolean; applicableRoomCategories?: readonly string[] }[], group: "Sub-Basket" | "Main Basket" | "direct items") => {
     if (refreshingAvailableItems || availableItemsState === "loading") return "Default items will appear after loading.";
     if (availableItemsState !== "ready") return "Refresh available items to view defaults.";
-    if (items.some(item => item.showByDefault === true)) return "Default items are unavailable in the current Configuration.";
+    if (items.some(item => item.showByDefault === true && isMainLineApplicableToRoom(item.applicableRoomCategories, activeRoom?.typeId))) return "Default items are unavailable in the current Configuration.";
     return group === "direct items" ? "No default direct items are configured for this Main Basket."
       : `No default items are configured for this ${group}.`;
   };
@@ -278,7 +262,6 @@ export function ConfiguredEstimateBuilder({
     return info || comparison ? <>{info}{comparison}</> : undefined;
   };
   const catalogueGroups: EstimateShellBasket[] = (activeRoom ? visibleBaskets : [])
-    .filter(basket => browseCatalogue || ordinaryRoomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
     .filter(basket => visibleBasketFilter === "all" || visibleBasketFilter === basket.id)
     .map(basket => {
       const compact = browseCatalogue && !browsableBaskets.has(basket.id);
@@ -317,7 +300,7 @@ export function ConfiguredEstimateBuilder({
         directCountLabel: compact ? `${directLines.length} selected` : browseCatalogue ? browseCountLabel(directLines) : undefined,
         directLines: directPage.lines,
         afterDirectLines: directPage.afterLines,
-        subBaskets: subBaskets.filter(subBasket => browseCatalogue && !compact || subBasket.lines.length > 0)
+        subBaskets: subBaskets.filter(subBasket => subBasket.lines.length > 0 || showCataloguePlaceholders && !compact)
           .map(subBasket => ({ id: subBasket.id, name: subBasket.name, count: subBasket.lines.length,
             countLabel: compact ? `${subBasket.lines.length} selected` : browseCatalogue ? browseCountLabel(subBasket.lines) : undefined,
             emptyMessage: browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id)
@@ -339,10 +322,10 @@ export function ConfiguredEstimateBuilder({
   const unavailableNew = roomLines.filter(line => !line.persistedId && line.sourceMissing && selectedMainBasketIds.has(line.mainBasketId));
   const selectRecommendedLine = (target: RecommendedLineTarget) => {
     const source = currentTargets.get(recommendationTargetIdentity(target));
-    if (!source || !isEstimationLinePriceVisible(source)) return false;
+    if (!source || !isMainLineApplicableToRoom(source.applicableRoomCategories, activeRoom?.typeId) || !isEstimationLinePriceVisible(source)) return false;
     const accepted = onSelectRecommendedLine(target);
     if (accepted === false) return false;
-    if (activeRoom) recommendationToReveal.current = { roomId: activeRoom.id, target };
+    if (activeRoom) itemToReveal.current = { roomId: activeRoom.id, target };
     setSearch(""); setBasketFilter("all");
     setCollapsedBasketIds(current => { const next = new Set(current); next.delete(target.basketId); return next; });
     if (target.subBasketId) setCollapsedSubBasketIds(current => {
@@ -428,7 +411,7 @@ export function ConfiguredEstimateBuilder({
     beforeGroups={<>
       <p className="configured-estimate-line__message">Room and basket subtotals are before GST.</p>
       <ExcludedEstimateReview showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
-        canIncludeLine={hasVisiblePrice}
+        canIncludeLine={line => !line.roomMismatch && hasVisiblePrice(line)}
         editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
           const line = byId.get(key);
           if (change.included === true && line && !hasVisiblePrice(line)) return;
@@ -444,18 +427,14 @@ export function ConfiguredEstimateBuilder({
         <p>{availableItemsState === "loading" ? "Loading available items…" : availableItemsState === "error" ? "Available items could not be refreshed. Your selections are preserved." : "Available items are out of date. Refresh before selecting more items."}</p>
         {availableItemsState !== "loading" ? <button type="button" className="button button--secondary" onClick={onRefreshAvailableItems}>Retry available items</button> : null}
       </div> : null}
-      {activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
-        items={pickerResults.slice(pageOffset, pageOffset + 20).map(item => {
-          const saved = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId);
-          const incompatible = Boolean(saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId));
-          return { ...item, selected: includedTargets.has(item.id), disabled: incompatible || !item.canAdd,
+      {activeRoom && editable ? <SalesEstimateItemPicker key={`picker:${activeRoom.id}`} roomName={activeRoom.label} triggerRef={pickerTriggerRef}
+        items={availableTargets.map(item => {
+          const saved = savedRoomLinesById.get(item.target.mainLineId);
+          const incompatible = saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId);
+          return { ...item, selected: includedTargets.has(item.id),
             message: !item.canAdd ? "No usable financial tier is configured for this item." : incompatible ? "This saved item's Configuration grouping changed. Review it before adding it again." : undefined };
         })}
-        total={pickerResults.length} offset={pageOffset} onOffsetChange={setPickerOffset}
-        search={pickerSearch} onSearchChange={value => { setPickerSearch(value); setPickerOffset(0); }}
-        baskets={pickerBaskets} basketId={pickerBasket} onBasketChange={value => { setPickerBasket(value); setPickerSubBasket("all"); setPickerOffset(0); }}
-        subBasketId={pickerSubBasket} onSubBasketChange={value => { setPickerSubBasket(value); setPickerOffset(0); }}
-        state={refreshingAvailableItems ? "loading" : availableItemsState} disabled={!editable || refreshingAvailableItems}
+        state={availableItemsState} refreshing={refreshingAvailableItems}
         onRetry={onRefreshAvailableItems} onAdd={addItem} /> : null}
       {recommendationPopup ? null : recommendations}
       <EstimateSubBasketAmounts lines={roomLines} />
@@ -469,6 +448,20 @@ export function ConfiguredEstimateBuilder({
       <button type="button" className="button button--secondary" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}>Refresh available items</button>
     </div>}
     afterGroups={<>
+        {mismatchedRoomLines.length > 0 ? <section className="configured-estimate-basket" aria-label="Room applicability review">
+          <h2>Room applicability review</h2>
+          <p>These selections are outside the rooms allowed by the current Main Line configuration.</p>
+          {mismatchedRoomLines.map(line => {
+            const amount = configuredLineAmountPaise(line);
+            return <div className="configured-estimate-saved-line" key={line.key}>
+              <strong>{line.mainLineName}</strong>
+              <p>Quantity: {line.quantity} {line.uomName} · Before GST: {amount === null ? "Incomplete" : moneyPaise(amount)}</p>
+              <button type="button" className="button button--secondary" disabled={!editable} onClick={() => onUpdateLine(line.key, { included: false })}>
+                Remove {line.mainLineName} from {activeRoom?.label}
+              </button>
+            </div>;
+          })}
+        </section> : null}
         {unpricedSelections.length ? <section className="configured-estimate-basket"
           aria-label="Items without a positive base price" data-estimate-jump-target="unpriced-selections">
           <header><h2>Items without a positive base price</h2><span>The current tier or pricing method has no usable configured price. Your selections and saved prices are preserved for review.</span></header>
@@ -515,7 +508,7 @@ export function ConfiguredEstimateBuilder({
       ? !selectedMainBasketIds.size ? "Select a Main Basket to choose items."
         : !activeRoom ? "Select a room to see its available items."
         : query ? `No ${browseCatalogue ? "available" : "selected"} items match “${search.trim()}”.`
-        : browseCatalogue ? "No available items in the selected Main Baskets. Refresh available items to check again." : "No items selected in this room. Use Add items to choose what is needed."
+        : browseCatalogue ? "No items to display for this room." : "No items selected in this room. Use Add items to choose what is needed."
       : undefined}
   />
     {infoOpen && tierInfo ? <EstimateSubBasketTierInfo

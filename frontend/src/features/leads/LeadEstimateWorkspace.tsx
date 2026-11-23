@@ -392,10 +392,11 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     staleTime: 60_000,
     retry: false
   });
+  const activeRoomTypeId = rooms.find(room => room.id === activeRoomId)?.typeId;
   const recommendationView = useMemo(() => catalogue.data && (recommendations.data || !recommendationSourceIds.length)
-    ? buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId,
+    ? buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId, roomTypeId: activeRoomTypeId,
       recommendations: recommendations.data ?? { sources: [] } })
-    : null, [catalogue.data, configuredLines, activeRoomId, recommendations.data, recommendationSourceIds.length]);
+    : null, [catalogue.data, configuredLines, activeRoomId, activeRoomTypeId, recommendations.data, recommendationSourceIds.length]);
   const recommendationState = catalogue.isError && catalogue.error instanceof ApiError && catalogue.error.status === 403
     ? "forbidden" as const
     : !catalogue.data || catalogue.isError || recommendationView?.stale
@@ -1116,6 +1117,19 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (!editable || submissionInFlight.current) return;
     if (change.rateInput !== undefined || change.rateSource === "manual") return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
+    if (line?.roomMismatch) {
+      if (change.included !== false) return;
+      const original = saved.data?.lineItems.find((entry): entry is ConfiguredEstimateLine =>
+        entry.source === "configuration" && entry.id === line.persistedId && entry.mainLineId === line.mainLineId && entry.roomId === line.roomId);
+      if (line.persistedId && !original) return;
+      setConfiguredLines(current => {
+        const removed = deselectConfiguredRecommendationSources(current, new Set([key]));
+        return original ? removed.map(entry => entry.key === key
+          ? { ...restoreConfiguredLine(original), roomMismatch: true, included: false, recommendationSourceMainLineIds: [] }
+          : entry) : removed.filter(entry => entry.key !== key);
+      });
+      return;
+    }
     if (change.included === true && (!line || !configuredLineCanInclude(line))) return;
     if (change.modeTier !== undefined && (!line || !line.included && !line.persistedId || line.sourceMissing || !catalogue.data ||
       catalogue.isError || catalogue.isFetching || saved.isFetching ||
@@ -1473,7 +1487,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         {configuredMode && catalogue.data && !catalogue.isError && !catalogue.data.items.length ? <p className="configured-estimate-chooser__state">No active Main Baskets are available in the estimator catalogue.</p> : null}
         {configuredMode && catalogue.data?.readyNonActiveSupported === false ? <p className="configured-estimate-chooser__note" role="status">This catalogue currently shows Active items only. Draft and Inactive items will become available when the catalogue service is updated.</p> : null}
         {configuredMode && catalogue.data?.ineligibleLineCount ? <p className="configured-estimate-chooser__note">{catalogue.data.ineligibleLineCount} configured {catalogue.data.ineligibleLineCount === 1 ? "item is" : "items are"} unavailable in the estimator catalogue. Availability depends on item completeness and a valid UOM.</p> : null}
-        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
+        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} roomTypeIds={rooms.map(room => room.typeId)} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
         {configuredMode && (catalogue.data?.items.length ?? 0) > 0 && basketSearchTerm && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
       </EstimateSetupBaskets>
       {(saved.data?.lineItems.length ?? 0) > 0 ? <button type="button" className="button button--secondary estimate-continue" disabled={save.isPending || navigationSaving} onClick={() => setTab("builder")}>Return to saved items</button> : null}

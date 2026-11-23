@@ -100,3 +100,11 @@
 @media (max-width: 767px), (pointer: coarse) {
   .estimate-recommendations-dialog .estimate-recommendations-popup button { min-height: 44px; }
 }
+
+.estimate-selection__sales-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+@media (max-width: 640px) {
+  .estimate-selection__sales-fields { grid-template-columns: minmax(0, 1fr); }
+}

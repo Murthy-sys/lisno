@@ -122,7 +122,8 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
           options={tierOptions} onChange={next => { setTier(next); setComponents([]); }} /> : null}
         type={included ? <div className="configured-estimate-line__readonly"><span>Type</span><strong>{classification === "special" ? "Special" : "Standard"}</strong></div> : null}
         pricing={included ? <EstimatePricingModeControl mode={mode} label={line.name} groupName={`preview-mode-${line.mainLineId}`}
-          editable={classification === "special"} onTogglePmc={() => changeMode(mode === "pmc" ? nonPmcMode.current : "pmc")} onChange={changeMode} /> : null}
+          editable variant={classification === "standard" ? "pmc-only" : "full"}
+          onTogglePmc={() => changeMode(mode === "pmc" ? nonPmcMode.current : "pmc")} onChange={changeMode} /> : null}
         fields={<>
           {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uom.name})</span><output aria-label={`Quantity for ${line.name} ${line.uom.name}`}>{measured?.quantity ?? "Pending"}</output></div>
             : <label className="configured-estimate-line__quantity"><span>Qty ({line.uom.name})</span><span className="configured-estimate-line__stepper">

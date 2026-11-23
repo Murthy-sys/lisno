@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom, isRoomCategoryId, type RoomCategoryId } from "../domain/estimate-room-options.js";
 import { readInHouseUsagePolicy, type InHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -43,6 +44,7 @@ export interface EstimatorCatalogueLine {
   clientVisible: boolean;
   /** Discovery metadata only; non-default sources remain available to explicit selection and saved estimates. */
   showByDefault: boolean;
+  applicableRoomCategories?: RoomCategoryId[];
   /** Current saved base presence across all four Configuration scopes; discovery only. */
   hasConfiguredBasePrice: boolean;
   /** Validated positive bases for each exact current Configuration scope and method. */
@@ -445,6 +447,22 @@ function withoutTargetType(rule: SavedRecommendationRule): Omit<RecommendationRu
   return projected;
 }
 
+export function applicableRowsForEstimateSubmission<T extends { mainLineId?: unknown; roomId?: unknown; included?: unknown }>(
+  rows: readonly T[],
+  rooms: unknown,
+  current: ReadonlyMap<string, ResolvedEstimatorCatalogueLine>
+): T[] {
+  const savedRooms: Array<{ id: string; typeId?: string }> = Array.isArray(rooms) ? rooms : [];
+  const roomTypes = new Map(savedRooms.map(room => [room.id, room.typeId]));
+  return rows.filter(line => {
+    const source = current.get(String(line.mainLineId));
+    if (!source || isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(String(line.roomId)))) return true;
+    if (line.included !== false) throw new ApiError(409, "ESTIMATE_ROOM_NOT_APPLICABLE",
+      "Remove Main Lines that no longer apply to their room before continuing.");
+    return false;
+  });
+}
+
 /** Resolve current Configuration values for Main Lines on reads and estimate saves. */
 export async function resolveEstimatorCatalogueLines(
   mainLineIds: readonly string[],
@@ -587,6 +605,7 @@ async function projectLines(
   const uomIdByRevision = new Map<string, string>();
   const clientVisibilityByRevision = new Map<string, boolean>();
   const showByDefaultByRevision = new Map<string, boolean>();
+  const roomCategoriesByRevision = new Map<string, RoomCategoryId[]>();
   const dimensionsMandatoryByRevision = new Map<string, boolean>();
   const applicableTiersByRevision = new Map<string, KnowledgeModeTier[]>();
   for (const overview of overviews) {
@@ -594,6 +613,11 @@ async function projectLines(
     const payload = overview.payload as Record<string, unknown> | null;
     if (String(revisionById.get(revisionId)?.mainLineId) !== String(overview.mainLineId) ||
         typeof payload?.uomId !== "string" || !payload.uomId) continue;
+    const categories = payload.applicableRoomCategories;
+    // Invalid stored restrictions cannot safely be projected as unrestricted.
+    if (categories !== undefined && (!Array.isArray(categories) || !categories.every(isRoomCategoryId) ||
+      new Set(categories).size !== categories.length)) continue;
+    roomCategoriesByRevision.set(revisionId, categories ?? []);
     uomIdByRevision.set(revisionId, payload.uomId);
     clientVisibilityByRevision.set(revisionId, payload.clientVisible !== false);
     showByDefaultByRevision.set(revisionId, payload.showByDefault === true);
@@ -676,6 +700,7 @@ async function projectLines(
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
       clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
+      applicableRoomCategories: roomCategoriesByRevision.get(revisionId),
       showByDefault: showByDefaultByRevision.get(revisionId) === true,
       basePriceAvailability,
       hasConfiguredBasePrice: Object.values(basePriceAvailability).some(methods => Object.values(methods).some(Boolean)),

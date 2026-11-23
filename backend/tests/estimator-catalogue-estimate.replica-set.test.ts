@@ -653,6 +653,47 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
   });
 });
 
+describe("room applicability in estimation", () => {
+  it("projects the current revision and treats a missing draft restriction as unrestricted", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableRoomCategories": ["bedroom", "living"] } });
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line.applicableRoomCategories).toEqual(["bedroom", "living"]);
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "rooms-draft", mainLineId: "line-a", status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "rooms-draft" } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "rooms-overview", mainLineId: "line-a",
+      revisionId: "rooms-draft", sectionKey: "overview", payload: { uomId: "uom-ea" } } as never);
+    const response = await request(app().server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const lines = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines));
+    expect(lines.find((line: any) => line.mainLineId === "line-a")).toMatchObject({ revisionId: "rooms-draft", applicableRoomCategories: [] });
+  });
+
+  it("rejects a restricted room assignment and preserves a saved snapshot through narrowing and removal", async () => {
+    const path = "/api/v1/leads/room-applicability/estimate";
+    const { server } = app();
+    await configureFixturePrices();
+    const restrict = (categories: string[]) => AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" },
+      { $set: { "payload.applicableRoomCategories": categories } });
+    const put = (line: Record<string, unknown>, typeId: string, version?: number) => request(server).put(path)
+      .set(bearer("estimator")).send({ ...estimateInput([line], ["basket-a"], version), rooms: [{ id: "room-one", label: "Living room", typeId }] });
+    await restrict(["bedroom", "living"]);
+    const initial = configuredLine();
+    const rejected = await put(initial, "kitchen").expect(400);
+    expect(rejected.body.error.code).toBe("ESTIMATE_ROOM_NOT_APPLICABLE");
+    const saved = (await put(initial, "living").expect(200)).body.data;
+    const prior = saved.lineItems[0];
+    await restrict(["kitchen"]);
+    const command = { ...initial, id: prior.id };
+    const reread = (await request(server).get(path).set(bearer("estimator")).expect(200)).body.data;
+    expect(reread.lineItems[0]).toMatchObject({ roomMismatch: true, amountPaise: prior.amountPaise });
+    const preserved = (await put(command, "living", saved.version).expect(200)).body.data;
+    expect(preserved.lineItems[0]).toMatchObject({ id: prior.id, roomMismatch: true, amountPaise: prior.amountPaise });
+    await expect(assertCurrentConfiguredPublication(preserved)).rejects.toMatchObject({ code: "ESTIMATE_ROOM_NOT_APPLICABLE" });
+    const removed = (await put({ ...command, included: false }, "living", preserved.version).expect(200)).body.data;
+    await expect(assertCurrentConfiguredPublication(removed)).resolves.toBeUndefined();
+    expect(removed.lineItems[0]).toMatchObject({ id: prior.id, included: false, amountPaise: 0 });
+    expect((await put(command, "living", removed.version).expect(400)).body.error.code).toBe("ESTIMATE_ROOM_NOT_APPLICABLE");
+  });
+});
+
 describe("estimator default-display metadata", { timeout: 30_000 }, () => {
   it("projects explicit booleans for all item kinds without filtering non-default or unpriced sources", async () => {
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.showByDefault": true } });

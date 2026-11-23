@@ -41,7 +41,7 @@ import { ProjectModel } from "../models/Project.js";
 import { LeadModel } from "../models/Lead.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
+import { applicableRowsForEstimateSubmission, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
 import type { EstimateClientReviewService } from "./estimate-client-review.service.js";
 import type {
@@ -722,8 +722,9 @@ export async function assertCurrentConfiguredPublication(
   const lines = estimate.lineItems.filter((line) => line.source === "configuration");
   if (lines.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(lines.map((line) => String(line.mainLineId)), session);
-  if (session) await fenceEstimateInHouseComponentReferences(lines, current, session);
-  for (const line of lines) {
+  const applicable = applicableRowsForEstimateSubmission(lines, estimate.rooms, current);
+  if (session) await fenceEstimateInHouseComponentReferences(applicable, current, session);
+  for (const line of applicable) {
     const source = current.get(String(line.mainLineId));
     if (!source) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
       "This Main Line has no current Configuration. Correct it before sending the estimate.");

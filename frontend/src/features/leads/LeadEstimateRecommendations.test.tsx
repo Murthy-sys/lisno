@@ -1,3 +1,4 @@
+import { selectPickerLine } from "./salesItemPicker.test-fixture";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
@@ -152,7 +153,7 @@ async function openBuilder(user: ReturnType<typeof userEvent.setup>, additionalB
 async function addItem(user: ReturnType<typeof userEvent.setup>, name: string) {
   const trigger = screen.getByRole("button", { name: "Add items" });
   if (trigger.getAttribute("aria-expanded") !== "true") await user.click(trigger);
-  await user.click(screen.getByRole("button", { name: `Add ${name}` }));
+  await user.click(await selectPickerLine(user, "POP / Gypsum", "False Ceiling", name));
   const closePicker = screen.queryByRole("button", { name: "Close item picker" });
   if (closePicker) await user.click(closePicker);
 }

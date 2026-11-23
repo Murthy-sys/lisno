@@ -39,7 +39,9 @@ export function EstimatorRecommendations({ roomName, contextKey, sourceCount, st
     ...unavailableDecisions.map(decision => ({ id: `unavailable:${decision.key}`, name: decision.name,
       sourceNames: [...new Set(decision.reasons.filter(reason => reason.requirement === "must").map(reason => reason.sourceName))],
       selected: false, disabled: true,
-      message: decision.unavailableReason === "price_not_configured"
+      message: decision.unavailableReason === "room_incompatible"
+        ? decision.kind === "main_line" ? "This required item is not configured for this room." : "Some required items in this Sub Basket are not configured for this room."
+        : decision.unavailableReason === "price_not_configured"
         ? "Configured price unavailable. Complete pricing before adding this recommendation."
         : decision.unavailableChildCount > 0
           ? `${decision.unavailableChildCount} required ${decision.unavailableChildCount === 1 ? "item needs" : "items need"} pricing or Configuration before adding.`

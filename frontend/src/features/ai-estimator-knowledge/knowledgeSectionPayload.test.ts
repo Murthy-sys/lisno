@@ -6,6 +6,13 @@ import {
 } from "./knowledgeSectionPayload";
 
 describe("knowledge section update payloads", () => {
+  it("preserves the other editor’s fields when closure priority and Overview share a revision", () => {
+    const latest = { closurePriority: "P2", uomId: "current", priorityId: "high" };
+    const local = { closurePriority: "P1", uomId: "new", priorityId: "stale" };
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["closurePriority"]))).toEqual({ ...latest, closurePriority: "P1" });
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["uomId"]))).toEqual({ ...latest, uomId: "new" });
+  });
+
   it.each([true, false])("rebases only the edited default-display value %s and preserves current Overview settings", showByDefault => {
     const latest = { showByDefault: !showByDefault, uomId: "new-unit", clientVisible: false, surfaceIds: ["new-surface"], applicableTiers: ["premium"] };
     const local = { showByDefault, uomId: "stale-unit", clientVisible: true, surfaceIds: [] };

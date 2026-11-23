@@ -1,3 +1,4 @@
+import { selectPickerLine } from "./salesItemPicker.test-fixture";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -97,26 +98,37 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
-  it("adds a non-default item from an unselected basket without losing the saved non-default row", async () => {
-    const fixture = setup("draft", true, { selectedMainBasketIds: ["pop"] });
+  it("adds a Balcony item from an unselected basket and restores its edited quantity after reopening", async () => {
+    const fixture = setup("draft", true, { selectedMainBasketIds: ["pop"], rooms: [
+      { id: "living", typeId: "living", label: "Living & Dining", sqft: 200, length: 20, width: 10 },
+      { id: "balcony", typeId: "balcony", label: "Balcony / Utility", sqft: 60, length: 10, width: 6 }
+    ] });
     fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
     delete fixture.catalogue.items[1]!.subBaskets[0]!.mainLines[0]!.showByDefault;
-    fixture.mount(); const user = userEvent.setup();
+    fixture.catalogue.items[1]!.subBaskets[0]!.mainLines[0]!.applicableRoomCategories = ["balcony"];
+    const view = fixture.mount(); const user = userEvent.setup();
     expect(await screen.findByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: /Wall paint/ })).not.toBeInTheDocument();
+    const balcony = () => within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Balcony/ });
+    await user.click(balcony());
     await user.click(screen.getByRole("button", { name: "Add items" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "paint");
-    await user.click(screen.getByRole("button", { name: "Add Wall paint" }));
+    await user.click(await selectPickerLine(user, "Painting", "Wall finishes", "Wall paint"));
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).toBeChecked();
-    expect(screen.getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(2);
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity.*Wall paint/ }), { target: { value: "7" } });
     expect(fixture.saves).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(fixture.saves[0]!.selectedMainBasketIds).toEqual(expect.arrayContaining(["pop", "paint"]));
     expect(fixture.saves[0]!.lineItems).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "saved-ceiling", mainLineId: "ceiling", quantity: 2, ratePaise: 9900, included: true }),
-      expect.objectContaining({ mainLineId: "paint-line", mainBasketId: "paint", roomId: "living", included: true })
+      expect.objectContaining({ mainLineId: "paint-line", mainBasketId: "paint", roomId: "balcony", quantity: 7, included: true })
     ]));
+    view.unmount();
+    fixture.mount();
+    expect(await screen.findByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(2);
+    await user.click(balcony());
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Wall paint/ })).toHaveValue(7);
+    expect(screen.getByRole("checkbox", { name: /Wall paint/ })).toBeChecked();
   });
 
   it.each(["changed", "missing", "unavailable"])("keeps approved aggregate prices visible when current Configuration is %s", async state => {

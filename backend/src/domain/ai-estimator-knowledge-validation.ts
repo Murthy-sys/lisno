@@ -1,3 +1,4 @@
+import { ROOM_CATEGORIES, isRoomCategoryId } from "./estimate-room-options.js";
 import { isDeepStrictEqual } from "node:util";
 import { type KnowledgeModeConfigurationScope, ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateDesignRules } from "./main-line-design-rules.js";
@@ -395,7 +396,7 @@ export function validateQualityParameter(
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
-  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"]),
+  overview: new Set(["description", "uomId", "priorityId", "closurePriority", "applicableRoomCategories", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"]),
   pricing: new Set(["tierConfigurations", "specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
@@ -919,12 +920,23 @@ function validateOverviewPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if ("applicableRoomCategories" in record) {
+    const categories = record.applicableRoomCategories;
+    if (!Array.isArray(categories) || categories.length > ROOM_CATEGORIES.length ||
+      !categories.every(isRoomCategoryId) || new Set(categories).size !== categories.length) {
+      issues.push({ path: "payload.applicableRoomCategories", code: "INVALID_ROOM_CATEGORIES",
+        message: "Select each applicable room or place from the list only once." });
+    }
+  }
   if ("applicableTiers" in record) {
     if (!Array.isArray(record.applicableTiers) || record.applicableTiers.length > 3 || record.applicableTiers.some(tier => !isKnowledgeModeTier(tier)) || new Set(record.applicableTiers).size !== record.applicableTiers.length) {
       issues.push({ path: "payload.applicableTiers", code: "INVALID_MODE_TIERS", message: "Select unique Signature, Premium or Functional tiers." });
     }
   }
   if ("dimensionsMandatory" in record) validateBoolean(record.dimensionsMandatory, "payload.dimensionsMandatory", issues);
+  if ("closurePriority" in record) {
+    validateClosedEnum(record.closurePriority, ["P1", "P2", "P3"], "payload.closurePriority", issues);
+  }
   if ("showByDefault" in record) validateBoolean(record.showByDefault, "payload.showByDefault", issues);
   if ("clientVisible" in record) {
     validateBoolean(record.clientVisible, "payload.clientVisible", issues);

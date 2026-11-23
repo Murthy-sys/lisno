@@ -1,3 +1,4 @@
+import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateModeTier, EstimatePricingMode } from "./types";
 export interface Pagination { offset: number; hasMore: boolean; }
@@ -34,6 +35,7 @@ export interface EstimationCatalogueMainLine {
   estimateNotes?: string[] | undefined;
   /** Current Configuration metadata; absent means not a default item. */
   showByDefault?: boolean | undefined;
+  applicableRoomCategories?: readonly RoomCategoryId[] | undefined;
   displayOrder: number;
   revisionId: string;
   applicableTiers?: EstimateModeTier[] | undefined;

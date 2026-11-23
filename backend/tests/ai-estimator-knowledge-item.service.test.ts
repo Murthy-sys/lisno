@@ -134,6 +134,54 @@ describe("AI estimator knowledge item service", () => {
     expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload.showByDefault).toBe(showByDefault);
   });
 
+  it("saves and clears room applicability with section concurrency protection", async () => {
+    const { service } = createService();
+    const line = await service.createMainLine(ACTOR, "basket-carpentry", { name: "POP Gypsum" });
+    const revision = line.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, line.id, revision, "overview");
+    const command = { expectedVersion: initial.version, expectedAggregateVersion: line.version,
+      payload: { ...initial.payload, closurePriority: "P1", applicableRoomCategories: ["bedroom", "living"] } };
+    const saved = await service.updateSection(ACTOR, line.id, revision, "overview", command);
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload).toMatchObject(command.payload);
+    await expect(service.updateSection(ACTOR, line.id, revision, "overview", command)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await service.updateSection(ACTOR, line.id, revision, "overview", { expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion, payload: { ...saved.payload, applicableRoomCategories: [] } });
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload).toMatchObject({
+      applicableRoomCategories: [], closurePriority: "P1" });
+  });
+
+  it("isolates closure priorities across copied lines and revisions", async () => {
+    const { service } = createService();
+    const line = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Closure source" });
+    const revision = line.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, line.id, revision, "overview");
+    expect(initial.payload).not.toHaveProperty("closurePriority");
+    const saved = await service.updateSection(ACTOR, line.id, revision, "overview", {
+      expectedVersion: initial.version, expectedAggregateVersion: line.version,
+      payload: { ...initial.payload, closurePriority: "P1", showByDefault: true }
+    });
+    const copy = await service.duplicate(ACTOR, line.id, { expectedVersion: saved.aggregateVersion, name: "Closure copy" });
+    const copied = await service.getSection(ACTOR, copy.id, copy.draftRevisionId!, "overview");
+    expect(copied.payload).toMatchObject({ closurePriority: "P1", showByDefault: true });
+    await service.updateSection(ACTOR, copy.id, copy.draftRevisionId!, "overview", {
+      expectedVersion: copied.version, expectedAggregateVersion: copy.version,
+      payload: { ...copied.payload, closurePriority: "P2" }
+    });
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: revision }, { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: line.id }, { $set: { status: "active", activeRevisionId: revision, draftRevisionId: null } });
+    const next = await service.createRevision(ACTOR, line.id, { expectedVersion: saved.aggregateVersion });
+    const draft = await service.getSection(ACTOR, line.id, next.draftRevisionId!, "overview");
+    expect(draft.payload.closurePriority).toBe("P1");
+    await service.updateSection(ACTOR, line.id, next.draftRevisionId!, "overview", {
+      expectedVersion: draft.version, expectedAggregateVersion: next.version,
+      payload: { ...draft.payload, closurePriority: "P3" }
+    });
+    expect((await service.getSection(ACTOR, line.id, next.draftRevisionId!, "overview")).payload)
+      .toMatchObject({ closurePriority: "P3", showByDefault: true });
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload.closurePriority).toBe("P1");
+    expect((await service.getSection(ACTOR, copy.id, copy.draftRevisionId!, "overview")).payload.closurePriority).toBe("P2");
+  });
+
   it("reads legacy Design defaults and lazily saves with section and aggregate CAS", async () => {
     const { service, appendAudit } = createService();
     const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Legacy Design fixture" });

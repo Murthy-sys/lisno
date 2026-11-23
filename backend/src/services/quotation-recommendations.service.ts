@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
 import type { ClientSession } from "mongoose";
 import { ApiError } from "../middleware/errors.js";
 import { readEstimatorCatalogueRecommendations, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
@@ -45,7 +46,7 @@ export async function quotationCandidateFor(estimate: Row, source: QuotationSour
   const pricingModeChoices = await quotationPricingModeChoices(choiceLine, source);
   const choices = pricingModeChoices.find(option => option.pricingMode === pricingMode)?.choices ?? await quotationTierChoices(choiceLine, source);
   if (!prior) modeTier = choices.find(choice => choice.available)?.modeTier ?? modeTier;
-  return { mainLineId: source.line.mainLineId, name: source.line.name, source: quotationSourceIdentity(source),
+  return { mainLineId: source.line.mainLineId, applicableRoomCategories: source.line.applicableRoomCategories ?? [], name: source.line.name, source: quotationSourceIdentity(source),
     ...quotationSourceGrouping(source), pricingMode, modeTier, classification, pricingModeChoices, dimensionsMandatory: source.line.dimensionsMandatory,
     dimensionRule: source.line.dimensionRule, uomName: source.line.uom.name, choices };
 }
@@ -106,7 +107,8 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
   if (estimate.version !== input.expectedVersion) {
     throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "The quotation changed. Refresh before continuing.");
   }
-  if (!(estimate.rooms ?? []).some((room: Row) => room.id === input.roomId)) {
+  const room = (estimate.rooms ?? []).find((entry: Row) => entry.id === input.roomId);
+  if (!room) {
     throw new ApiError(404, "QUOTATION_NOT_FOUND", "Quotation unavailable.");
   }
   const sourceIds = input.sources.map(source => source.mainLineId);
@@ -122,6 +124,9 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
     const source = sources.get(selection.mainLineId);
     if (!source || !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) {
       throw new ApiError(404, "QUOTATION_NOT_FOUND", "Quotation unavailable.");
+    }
+    if (!isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId)) {
+      throw new ApiError(400, "QUOTATION_RECOMMENDATION_SOURCE_INVALID", "Choose a current recommendation source in the same room.");
     }
     if (Object.entries(quotationSourceIdentity(source)).some(([key, value]) =>
       selection.source[key as keyof typeof selection.source] !== value)) unavailable();
@@ -147,7 +152,9 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
       targetSources.set(targetId, reasons);
     }
   }
-  const orderedTargetIds = [...targetSources.keys()].filter(id => candidateAvailable(id) || selectedIds.includes(id)).sort((left, right) =>
+  const roomAllows = (id: string) => isMainLineApplicableToRoom(sources.get(id)!.line.applicableRoomCategories, room.typeId);
+  const roomConflict = [...targetSources.keys()].some(id => !roomAllows(id));
+  const orderedTargetIds = [...targetSources.keys()].filter(id => roomAllows(id) && (candidateAvailable(id) || selectedIds.includes(id))).sort((left, right) =>
     sources.get(left)!.line.name.localeCompare(sources.get(right)!.line.name) || left.localeCompare(right));
   const items = [];
   for (const id of orderedTargetIds.slice(input.offset, input.offset + input.limit)) {
@@ -158,5 +165,5 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
   }
   return { projectId: String(estimate.projectId), estimateId: String(estimate._id), estimateVersion: Number(estimate.version),
     roomId: input.roomId, items, total: orderedTargetIds.length, limit: input.limit, offset: input.offset,
-    ...(requiresPriceReview ? { reviewMessage: "Some required items have no base price greater than zero. Ask your team to review them." } : {}) };
+    ...(roomConflict ? { reviewMessage: "Some required items do not apply to this room or place. Ask your team to review the recommendation." } : requiresPriceReview ? { reviewMessage: "Some required items have no base price greater than zero. Ask your team to review them." } : {}) };
 }

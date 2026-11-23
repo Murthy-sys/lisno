@@ -141,6 +141,15 @@ describe("AI estimator knowledge domain", () => {
     expect(half.percentage).toBe(50);
   });
 
+  it("keeps Overview completeness independent of closure priority", () => {
+    const evaluate = (payload: Record<string, unknown>) => deriveKnowledgeCompleteness({
+      identity: { basketId: "basket", mainLineId: "line", uomId: "unit" },
+      sections: [{ sectionKey: "overview", applicability: "configured", payload }]
+    });
+    expect(evaluate({ closurePriority: "P1" })).toEqual(evaluate({}));
+    expect(evaluate({ closurePriority: "P2", uomId: "unit" })).toEqual(evaluate({ uomId: "unit" }));
+  });
+
   it("keeps the backend tab mapping synchronized with the shared workspace registry", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS)
       .toEqual(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS);

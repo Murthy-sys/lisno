@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
 import { quotationGroupComparison, quotationGroupModeOptions, quotationModeOperations, quotationModeScopeKey, stageQuotationGroupMode, type QuotationModeSelection } from "./clientSubBasketModes";
 import { ProjectId } from "../../components/projects/ProjectId";
@@ -90,6 +91,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const candidateRoomId = query.data?.rooms.find(room => room.id === activeRoomId)?.id ?? query.data?.rooms[0]?.id;
   const candidates = useQuery({ queryKey: [...quotationKeys.items(projectId, itemSearch, itemOffset), query.data?.estimateVersion, candidateRoomId, itemBasketId, itemSubBasketId, sessionKey],
     queryFn: () => getQuotationCandidates(projectId, itemSearch, itemOffset, {
+      ...(candidateRoomId ? { roomId: candidateRoomId } : {}),
       ...(itemBasketId === "all" ? {} : { mainBasketId: itemBasketId }),
       ...(itemSubBasketId === "all" ? {} : { subBasketId: itemSubBasketId })
     }),
@@ -239,7 +241,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     return true;
   };
   const addCandidate = (candidate: QuotationCandidate, origins?: string[]) => {
-    if (!activeRoom || !canEdit || !quotationCandidateHasAvailableChoice(candidate, canChangePricingMode)) return false;
+    if (!activeRoom || !canEdit || !isMainLineApplicableToRoom(candidate.applicableRoomCategories, activeRoom.typeId) || !quotationCandidateHasAvailableChoice(candidate, canChangePricingMode)) return false;
     const existing = rows.find(line => line.roomId === currentRoomId && line.mainLineId === candidate.mainLineId);
     if (existing && included(existing)) return false;
     const pending = existing && draft?.items[existing.id];
@@ -498,7 +500,7 @@ function ClientQuotationRecommendations({ projectId, detail, roomId, roomName, r
   onRemove: (mainLineId: string) => boolean; canConfigure: boolean; onConfigure: () => boolean;
 }) {
   const [offset, setOffset] = useState(0);
-  const sources = [...new Map(rows.filter(line => line.roomId === roomId && line.source).map(line =>
+  const sources = [...new Map(rows.filter(line => line.roomId === roomId && line.source && !line.roomMismatch).map(line =>
     [line.mainLineId, { mainLineId: line.mainLineId, source: line.source! }] as const)).values()]
     .sort((a, b) => a.mainLineId.localeCompare(b.mainLineId));
   const sourceKey = JSON.stringify(sources);

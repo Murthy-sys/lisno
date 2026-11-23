@@ -46,6 +46,14 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it.each([{ editable: false }, { saving: true }])("locks the room picker and displays saved choices during %j", state => {
+    const props = renderPanel({ presentation: "configuration", overviewPayload: { applicableRoomCategories: ["tv_unit", "kitchen"] }, ...state });
+    const picker = screen.getByRole("button", { name: "Applicable rooms / places" });
+    expect(picker).toBeDisabled();
+    expect(picker).toHaveTextContent("Kitchen, TV Unit");
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
   it.each([[undefined, "No"], [true, "Yes"], [false, "No"], ["true", "No"], [1, "No"], [null, "No"]] as const)("shows default-display value %s as %s without mutating Overview", (showByDefault, expected) => {
     const props = renderPanel({ presentation: "configuration",
       overviewPayload: showByDefault === undefined ? overviewPayload : { ...overviewPayload, showByDefault } });

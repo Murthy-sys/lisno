@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
 import { presentEstimateInHouseResponse } from "../services/estimate-in-house-presentation.js";
 import { toEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { compareLeadEstimateTiers, estimateTierComparisonSchema, renderEstimateTierComparisonPdf } from "../services/estimate-tier-comparison.service.js";
@@ -39,7 +40,7 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
-import { estimatorCatalogueTierPricing, resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
+import { applicableRowsForEstimateSubmission, estimatorCatalogueTierPricing, resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
@@ -330,10 +331,15 @@ export function createEstimatesRouter(
       const latest = await resolveEstimatorCatalogueLines(savedLines.filter((line) =>
         line.source === "configuration" && typeof line.mainLineId === "string")
         .map((line) => String(line.mainLineId)));
+      const savedRooms: Array<{ id: string; typeId?: string }> = Array.isArray(estimate.rooms) ? estimate.rooms : [];
+      const roomTypes = new Map(savedRooms.map(room => [room.id, room.typeId]));
       const lineItems = savedLines.map((line) => {
         if (line.source !== "configuration") return line;
         const source = latest.get(String(line.mainLineId));
         if (!source) return { ...line, configurationSourceUnavailable: true };
+        if (!isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(String(line.roomId)))) {
+          return { ...line, roomMismatch: true };
+        }
         const modeTier = line.modeTier ?? "signature";
         const configurationTierUnavailable = estimatorCatalogueTierPricing(source.line, modeTier) === null;
         const configurationDimensionsChanged = (line.dimensionsMandatory === true) !== source.line.dimensionsMandatory ||
@@ -356,7 +362,7 @@ export function createEstimatesRouter(
       estimate = { ...estimate, lineItems,
         isIncomplete: estimate.isIncomplete === true || lineItems.some((line) =>
           line.source === "configuration" &&
-          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true ||
+          (line.roomMismatch === true && line.included === true || line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true ||
             line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !estimateComponentLineAmountIsValid(line))) };
     }
     const [clientReview, clientFeedback] = await Promise.all([
@@ -529,7 +535,11 @@ export function createEstimatesRouter(
       // Design obligations also apply to configured lines with a manual selling price.
       await fenceEstimateConfigurationDependencies(inputLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
-      const preservedExcludedLineIds = new Set<string>();
+      const commandRooms = req.body.rooms as Array<{ id: string; typeId?: string | null }>;
+      const roomTypes = new Map(commandRooms.map(room => [room.id, room.typeId]));
+      const previousRooms = (estimate?.rooms ?? []) as Array<{ id: string; typeId?: string | null }>;
+      const previousRoomTypes = new Map(previousRooms.map(room => [room.id, room.typeId]));
+      const preservedSnapshotIds = new Set<string>();
       const lineItems = await mapSequential(inputLines, async (line, index) => {
         if (line.source !== "configuration") {
           const candidates = previousLines.filter((prior) => line.id !== undefined && prior.id === line.id);
@@ -569,6 +579,28 @@ export function createEstimatesRouter(
         }
         if (prior) savedConfiguredSnapshot(prior);
         const snapshot = firstSave!;
+        const roomType = roomTypes.get(line.roomId);
+        const previousRoomType = previousRoomTypes.get(line.roomId);
+        if (snapshot.line.applicableRoomCategories?.length && previousRoomTypes.has(line.roomId) &&
+          (previousRoomType ?? null) !== (roomType ?? null)) {
+          throw new ApiError(400, "ESTIMATE_ROOM_TYPE_CHANGED", "Keep the saved room type or choose a new room.");
+        }
+        if (!isMainLineApplicableToRoom(snapshot.line.applicableRoomCategories, roomType)) {
+          if (!prior || prior.included !== true && line.included) {
+            throw new ApiError(400, "ESTIMATE_ROOM_NOT_APPLICABLE", "This Main Line is not configured for the selected room or place.");
+          }
+          // Retain the persisted financial snapshot until the estimator removes this assignment.
+          if (!unchangedSavedEstimatePrice({ ...line, roomName: prior.roomName }, prior, snapshot.line) ||
+            line.included && line.quantity !== prior.quantity) {
+            throw new ApiError(409, "ESTIMATE_ROOM_NOT_APPLICABLE", "Review or remove this saved Main Line before changing it in this room.");
+          }
+          const savedId = String(prior.id);
+          preservedSnapshotIds.add(savedId);
+          return { ...prior, id: savedId, source: "configuration" as const, roomName: line.roomName,
+            ratePaise: prior.ratePaise as number | null, included: line.included,
+            amountPaise: line.included ? prior.amountPaise as number | null : 0, amount: line.included ? prior.amount as number | null : 0,
+            recommendationSourceMainLineIds: line.included ? prior.recommendationSourceMainLineIds : [] };
+        }
         if (prior && snapshot.line.uom.id !== line.uomId) {
           throw new ApiError(409, "ESTIMATE_UOM_CHANGED",
             "The configured UOM changed. Review this line's quantity before saving.");
@@ -598,7 +630,7 @@ export function createEstimatesRouter(
           (pricingMode === "in_house" && tierPricing?.inHouseComponents !== undefined || (tierPricing?.modeBaseRatesPaise[pricingMode] ?? 0) > 0);
         const preserveSavedPrice = unchangedSavedPrice && (!line.included || rateSource !== "configuration" || prior?.ratePaise === 0 || !positiveCurrentPrice);
         const preserveExcludedPrice = preserveSavedPrice && !line.included;
-        if (preserveExcludedPrice) preservedExcludedLineIds.add(line.id!);
+        if (preserveExcludedPrice) preservedSnapshotIds.add(line.id!);
         if (!preserveSavedPrice && (rateSource !== "configuration" || line.rateSource !== "configuration" && !unchangedSavedPrice)) throw estimatePriceReadOnly();
         if (!tierPricing && !preserveSavedPrice) throw new ApiError(409, "ESTIMATE_MODE_TIER_UNAVAILABLE", "This tier is no longer applicable or configured for this Main Line. Refresh the catalogue and choose an available tier.");
         if (!preserveExcludedPrice && tierPricing && !estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
@@ -653,7 +685,7 @@ export function createEstimatesRouter(
           amountPaise, amount: amountPaise === null ? null : amountPaise / 100
         };
       });
-      await fenceEstimateInHouseComponentReferences(lineItems.filter(line => !preservedExcludedLineIds.has(line.id)), configured, session);
+      await fenceEstimateInHouseComponentReferences(lineItems.filter(line => !preservedSnapshotIds.has(line.id)), configured, session);
       const subtotalPaise = lineItems.reduce((sum, line) => {
         const next = sum + (line.amountPaise ?? 0);
         if (!Number.isSafeInteger(next)) throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
@@ -1007,7 +1039,7 @@ function currentConfiguredFields(source: {
 }
 
 async function assertEstimateCurrentConfiguration(
-  estimate: { lineItems?: unknown },
+  estimate: { lineItems?: unknown; rooms?: unknown },
   session?: mongoose.ClientSession
 ): Promise<void> {
   const saved = Array.isArray(estimate.lineItems)
@@ -1015,8 +1047,9 @@ async function assertEstimateCurrentConfiguration(
       line && typeof line === "object" && line.source === "configuration") : [];
   if (saved.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(saved.map((line) => String(line.mainLineId)), session);
-  if (session) await fenceEstimateInHouseComponentReferences(saved, current, session);
-  for (const line of saved) {
+  const currentRows = applicableRowsForEstimateSubmission(saved, estimate.rooms, current);
+  if (session) await fenceEstimateInHouseComponentReferences(currentRows, current, session);
+  for (const line of currentRows) {
     const source = current.get(String(line.mainLineId));
     if (!source) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
