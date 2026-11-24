@@ -387,7 +387,7 @@ describe("client estimate drawings", () => {
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const villa = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3
@@ -506,7 +506,7 @@ describe("client estimate drawings", () => {
     });
 
     const user = userEvent.setup();
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3
@@ -612,7 +612,7 @@ describe("client estimate drawings", () => {
     });
 
     const user = userEvent.setup();
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3
@@ -718,7 +718,7 @@ describe("client estimate drawings", () => {
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3
@@ -829,7 +829,7 @@ describe("client estimate drawings", () => {
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3
@@ -898,7 +898,7 @@ describe("client estimate drawings", () => {
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Aurora Villa",
       level: 3

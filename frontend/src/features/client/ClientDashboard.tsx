@@ -1,26 +1,18 @@
 import { ProjectId } from "../../components/projects/ProjectId";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
 import { ApiError } from "../../api/client";
 import { AsyncState } from "../../components/ui/AsyncState";
-import { Button } from "../../components/ui/Button";
 import "../../styles/client-dashboard.css";
-import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys } from "./clientApi";
+import { getClientProjectSummaries, clientKeys } from "./clientApi";
 import { ClientEstimateSummary } from "./ClientEstimateSummary";
-import { ClientWorkflowTaskSummary } from "./ClientWorkflowTaskSummary";
-import { ClientProjectQuickView } from "./ClientProjectQuickView";
 import { PageHeader } from "../../components/ui/PageHeader";
 
 export function ClientDashboard() {
   const [searchParams] = useSearchParams();
-  const [selectedProjectId, setSelectedProjectId] = useState<string>();
-  const projectHeadingRef = useRef<HTMLHeadingElement>(null);
   const projectsQuery = useQuery({ queryKey: clientKeys.projects, queryFn: getClientProjectSummaries });
-  const latestQuery = useQuery({ queryKey: clientKeys.latestVersions, queryFn: getClientLatestApprovedVersions });
   // A denial retires this snapshot, including when a later retry fails transiently.
   const [authorizedProjects, setAuthorizedProjects] = useState(() => projectsQuery.isSuccess ? projectsQuery.data : undefined);
   const canRetainProjects = projectsQuery.isError && isTransientReadError(projectsQuery.error) &&
@@ -29,88 +21,50 @@ export function ClientDashboard() {
   useEffect(() => {
     if (projectsQuery.isSuccess) setAuthorizedProjects(projectsQuery.data);
     else if (projectsQuery.isError && !isTransientReadError(projectsQuery.error)) setAuthorizedProjects(undefined);
-    if (projectsQuery.isError && !canRetainProjects) setSelectedProjectId(undefined);
-  }, [projectsQuery.isSuccess, projectsQuery.isError, projectsQuery.error, projectsQuery.data, canRetainProjects]);
+  }, [projectsQuery.isSuccess, projectsQuery.isError, projectsQuery.error, projectsQuery.data]);
 
   const projects = projectsQuery.isSuccess || canRetainProjects ? projectsQuery.data ?? [] : [];
-  const latestVersions = latestQuery.isSuccess ? latestQuery.data : [];
-  if (projectsQuery.isPending) return <AsyncState state="loading" message="Loading your project plans…" />;
-  if (projectsQuery.isError && !canRetainProjects) return <AsyncState state="error" message="We couldn't load your project plans." actionLabel="Try again" onAction={() => void projectsQuery.refetch()} />;
-  const approvedPlans = latestVersions.filter(
-    (version) => version.approvalStatus === "approved" && version.clientVisible
-  ).length;
-  const averageProgress = projects.length
-    ? Math.round(projects.reduce((total, project) => total + project.progress, 0) / projects.length)
-    : 0;
+  if (projectsQuery.isPending) return <AsyncState state="loading" message="Loading your projects…" />;
+  if (projectsQuery.isError && !canRetainProjects) return <AsyncState state="error" message="We couldn't load your projects." actionLabel="Try again" onAction={() => void projectsQuery.refetch()} />;
 
   return <section className="client-page client-dashboard" aria-labelledby="client-dashboard-title">
-    <PageHeader id="client-dashboard-title" title="Your design plans" />
+    <PageHeader id="client-dashboard-title" title="My projects" titleAction={<span className="client-dashboard__project-count">{projects.length} {projects.length === 1 ? "project" : "projects"}</span>} />
     {projectsQuery.isError ? <AsyncState state="error" message="Your project list could not be refreshed. Previously loaded projects are shown." actionLabel="Refresh projects" onAction={() => void projectsQuery.refetch()} /> : null}
-    <section className="client-dashboard__overview" aria-label="Client overview">
-      <dl>
-        <div><dt>Shared projects</dt><dd>{projects.length}</dd></div>
-        <div><dt>Average progress</dt><dd>{averageProgress}%</dd></div>
-        <div><dt>Approved plans</dt><dd aria-label={latestQuery.isError ? "Unavailable" : latestQuery.isPending ? "Loading" : undefined}>{latestQuery.isPending || latestQuery.isError ? "—" : approvedPlans}</dd></div>
-      </dl>
-      {latestQuery.isError ? <div className="client-dashboard__notice" role="status"><span>Approved plan information is unavailable.</span><Button variant="quiet" size="compact" disabled={latestQuery.isFetching} onClick={() => void latestQuery.refetch()}>Retry approved plans</Button></div> : null}
-    </section>
-    <section className="client-dashboard__estimates" aria-label="Estimate review">
+    {searchParams.has("estimate") ? <section className="client-dashboard__estimates" aria-label="Estimate review">
       <ClientEstimateSummary projects={projects} projectsFresh={projectsQuery.isSuccess && !projectsQuery.isFetching} selectedEstimateId={searchParams.get("estimate") ?? undefined} />
-    </section>
-    {/*
-      Nothing is rendered for an empty account: the "Shared projects" tile
-      above already reports 0, and the page shows a loading state while the
-      query is pending, so a project-less account is still distinguishable
-      from one whose plans are still being prepared.
-    */}
-    {projects.length ? <section className="client-dashboard__projects" aria-labelledby="client-projects-title">
-      <header className="client-dashboard__section-heading">
-        <div><p className="eyebrow">Project workspace</p><h2 ref={projectHeadingRef} tabIndex={-1} id="client-projects-title">Projects</h2></div>
-        <span>{projects.length} total</span>
-      </header>
-      <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestVersions, project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} onQuickView={() => setSelectedProjectId(project.id)} />)}</div>
     </section> : null}
-    {selectedProjectId ? <ClientProjectQuickView key={selectedProjectId} project={projects.find((project) => project.id === selectedProjectId)} stale={projectsQuery.isError} latest={latestForProject(latestVersions, selectedProjectId)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} onClose={() => setSelectedProjectId(undefined)} fallbackFocusRef={projectHeadingRef} /> : null}
+    {projects.length ? <div className="client-dashboard__table-scroll" role="region" aria-label="Projects table" tabIndex={0}>
+      <table className="client-dashboard__table">
+        <caption className="sr-only">Projects</caption>
+        <thead>
+          <tr>
+            <th scope="col">Project</th>
+            <th scope="col">Location</th>
+            <th scope="col">Status</th>
+            <th scope="col">Progress</th>
+            <th scope="col">Expected completion</th>
+            <th scope="col">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((project) => {
+            const projectPath = `/client/projects/${encodeURIComponent(project.id)}`;
+            return <tr key={project.id}>
+              <th scope="row" className="client-dashboard__project-identity">
+                <Link to={projectPath}>{project.name}</Link>
+                <ProjectId projectNumber={project.projectNumber} />
+              </th>
+              <td>{project.location}</td>
+              <td>{project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}</td>
+              <td className="client-dashboard__progress">{project.progress}%</td>
+              <td>{formatDate(project.plannedEndAt)}</td>
+              <td><Link className="client-dashboard__open-project" to={projectPath} aria-label={`Open project: ${project.name}`}>Open project</Link></td>
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div> : <AsyncState state="empty" message="No projects shared yet." />}
   </section>;
-}
-
-function ClientProjectCard({ project, latest, loading, failed, onRetry, onQuickView }: { project: ClientProjectSummary; latest: ClientDesignVersion | undefined; loading: boolean; failed: boolean; onRetry: () => void; onQuickView: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const detailsId = `client-project-${project.id}-details`;
-  const headingId = `client-project-${project.id}-heading`;
-  const floorLabel = `${project.floorCount} ${project.floorCount === 1 ? "floor" : "floors"}`;
-
-  return <article className="client-project-card">
-    <div className="client-project-card__header">
-      <div className="client-project-card__identity">
-        <span className="eyebrow">{project.location}</span>
-        <h2 id={headingId}>{project.name}</h2>
-        <ProjectId projectNumber={project.projectNumber} />
-        <span className={`client-project-card__status client-project-card__status--${project.status}`}>
-          {project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}
-        </span>
-      </div>
-      <button type="button" className="client-project-card__toggle" aria-labelledby={headingId} aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((current) => !current)}>
-        <span className="client-project-card__summary">
-          <strong>{project.progress}% complete</strong>
-          <span>{floorLabel}</span>
-          <ChevronDown aria-hidden="true" className={expanded ? "is-expanded" : undefined} />
-        </span>
-      </button>
-    </div>
-
-    <div className="client-project-card__actions"><Button variant="secondary" size="compact" aria-label={`Project details: ${project.name}`} onClick={onQuickView}>Project details</Button></div>
-    <ClientWorkflowTaskSummary projectId={project.id} projectName={project.name} />
-    {expanded ? <div id={detailsId} className="client-project-card__details">
-      <p>Expected completion: {formatDate(project.plannedEndAt)}</p>
-      <div className="client-project-card__update"><span>Latest approved update</span>{loading ? <strong>Loading approved plans…</strong> : failed ? <><strong>Latest approved update unavailable.</strong><button type="button" className="button button--secondary" onClick={onRetry}>Retry approved updates</button></> : latest ? <strong>{latest.originalFilename}</strong> : <strong>No approved plan available yet.</strong>}</div>
-      <Link className="button button--primary" to={`/client/projects/${encodeURIComponent(project.id)}`}>Open project</Link>
-    </div> : null}
-  </article>;
-}
-
-function latestForProject(versions: ClientDesignVersion[], projectId: string) {
-  return versions.find((version) => version.projectId === projectId && version.approvalStatus === "approved" && version.clientVisible);
 }
 
 function isTransientReadError(error: Error) {
@@ -120,4 +74,8 @@ function isTransientReadError(error: Error) {
 }
 
 const date = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
-function formatDate(value: string) { return date.format(new Date(value)); }
+function formatDate(value: string | null | undefined) {
+  if (!value) return "Not available";
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? "Not available" : date.format(parsedDate);
+}
