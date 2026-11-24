@@ -2054,7 +2054,7 @@
 
 .disclosure--floor {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(9rem, 0.36fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-4);

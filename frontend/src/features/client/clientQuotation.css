@@ -165,9 +165,18 @@
 .ui-app-shell[data-role] .client-quotation--submitted .client-quotation__review-footer {
   grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: var(--space-1);
 }
-.client-quotation--submitted .client-quotation__submitted-taxes { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: var(--text-sm); }
-.client-quotation--submitted .client-quotation__submitted-taxes > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
+.client-quotation--submitted .client-quotation__price-summary { display: grid; min-width: 0; gap: var(--space-2); padding-block: var(--space-1); }
+.client-quotation--submitted .client-quotation__price-summary h3 { margin: 0; font-size: var(--text-base); font-weight: 600; }
+.client-quotation--submitted .client-quotation__price-summary dt { overflow-wrap: anywhere; }
+.client-quotation--submitted .client-quotation__price-summary dd { margin: 0; text-align: start; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.client-quotation--submitted .client-quotation__payable > div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-4); }
+.client-quotation--submitted .client-quotation__payable dt { font-weight: 600; }
+.client-quotation--submitted .client-quotation__payable dd { font-size: var(--text-xl); }
 .client-quotation--submitted .client-commercial-decision__actions { padding-block: var(--space-2); }
+@media (max-width: 767px) {
+  .client-quotation.client-quotation--submitted.client-quotation--workspace .client-quotation__review-footer,
+  .ui-app-shell[data-role] .client-quotation.client-quotation--submitted.client-quotation--workspace .client-quotation__review-footer { position: static; }
+}
 /* Reserve a lane for support so it cannot obscure either decision button. */
 .ui-app-shell[data-role]:has(.client-quotation--submitted) .ask-lisno-launcher {
   width: 44px; min-width: 44px; height: 44px; min-height: 44px; padding: 0; justify-content: center;

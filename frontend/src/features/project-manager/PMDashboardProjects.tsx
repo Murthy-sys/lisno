@@ -2,7 +2,7 @@ import { ProjectId } from "../../components/projects/ProjectId";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import projectInterior from "../../assets/projects-living-room.webp";
-import { PMBadge, PMProgressBar, pmDate, pmMoney } from "./PMShared";
+import { PMBadge, pmDate, pmMoney } from "./PMShared";
 import { PMDashboardIcon } from "./PMDashboardIcon";
 import type { PMHealth, PMProject } from "./projectManagerTypes";
 
@@ -58,7 +58,6 @@ export function PMDashboardProjects({ projects, offset, view, projectHref }: PMD
             <div><dt>Health</dt><dd><PMBadge value={project.health} severity={healthSeverity(project.health)} /></dd></div>
             <div><dt>Target handover</dt><dd>{pmDate(project.plannedEndAt)}</dd></div>
           </dl>
-          <PMProgressBar value={project.progress.actual} label={`${project.name} execution progress`} />
           <OpenProject project={project} href={href} />
         </article></li>;
       })}
@@ -71,7 +70,6 @@ export function PMDashboardProjects({ projects, offset, view, projectHref }: PMD
           <th role="columnheader" scope="col" className="pm-dashboard__cell--location">Location</th>
           <th role="columnheader" scope="col" className="pm-dashboard__cell--status">Status</th>
           <th role="columnheader" scope="col" className="pm-dashboard__cell--health">Health</th>
-          <th role="columnheader" scope="col" className="pm-dashboard__cell--progress">Progress</th>
           <th role="columnheader" scope="col" className="pm-dashboard__cell--handover">Target handover</th>
           <th role="columnheader" scope="col" className="pm-dashboard__cell--open"><span className="sr-only">Open project</span></th>
         </tr></thead>
@@ -84,7 +82,6 @@ export function PMDashboardProjects({ projects, offset, view, projectHref }: PMD
             <td role="cell" className="pm-dashboard__cell--location" data-label="Location"><FieldLabel>Location</FieldLabel><span className="pm-dashboard__location"><PMDashboardIcon name="location" />{project.location || "Unavailable"}</span></td>
             <td role="cell" className="pm-dashboard__cell--status" data-label="Status"><FieldLabel>Status</FieldLabel><PMBadge value={project.status} /></td>
             <td role="cell" className="pm-dashboard__cell--health" data-label="Health"><FieldLabel>Health</FieldLabel><PMBadge value={project.health} severity={healthSeverity(project.health)} /></td>
-            <td role="cell" className="pm-dashboard__cell--progress" data-label="Progress"><FieldLabel>Progress</FieldLabel><PMProgressBar value={project.progress.actual} label={`${project.name} execution progress`} /></td>
             <td role="cell" className="pm-dashboard__cell--handover" data-label="Target handover"><FieldLabel>Target handover</FieldLabel><span>{pmDate(project.plannedEndAt)}</span></td>
             <td role="cell" className="pm-dashboard__cell--open"><OpenProject project={project} href={href} /></td>
           </tr>;

@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ManagerWorkMonitor } from "../site-manager/ManagerWorkMonitor";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -120,7 +121,7 @@ export function ExecutionDetailPanel({ assignmentId, vendor, onClose, renderLega
     const form = recommendedAction?.kind === "client_submission" ? clientForm.current : actionForm.current;
     form?.querySelector<HTMLElement>('input[type="radio"]:checked, select:not(:disabled), textarea:not(:disabled), input:not(:disabled)')?.focus();
   }
-  return <ContextPanel className={["execution-panel", compact && "site-execution-panel", vendor && "vendor-execution-panel"].filter(Boolean).join(" ")} title={work?.itemName ?? "Main Line assignment"} eyebrow="Execution detail" width="wide" dirty={Boolean(draft || uploadDirty || clientDirty || vendorDirty || managerDirty)} busy={mutation.isPending || uploadBusy || clientBusy || vendorBusy || managerBusy} onClose={onClose}>
+  return <ContextPanel className={["execution-panel", compact && "site-execution-panel", vendor && "vendor-execution-panel"].filter(Boolean).join(" ")} title={work?.itemName ?? "Main Line assignment"} eyebrow="Execution detail" headerActions={work?.id === assignmentId ? <ProjectStatusButton projectId={work.projectId} projectName={work.projectName} presentation="chip" /> : undefined} width="wide" dirty={Boolean(draft || uploadDirty || clientDirty || vendorDirty || managerDirty)} busy={mutation.isPending || uploadBusy || clientBusy || vendorBusy || managerBusy} onClose={onClose}>
     {query.isPending ? <PageState state="loading" message="Loading assignment…" /> : denied ? <PageState state="error" message="You no longer have access to this assignment." /> : !work ? <PageState state="error" message={procurementError(query.error,"Assignment could not be loaded.")} action={{ label: "Try again", onAction: () => void query.refetch() }} /> : <div className="execution__detail">
       {query.isError ? <InlineMessage tone="warning">Refresh failed. This assignment may be out of date.</InlineMessage> : null}
       <div><p className="execution__muted">{work.projectName} · {work.vendorName}</p><ProjectId projectNumber={work.projectNumber} /><p>{[work.mainBasketName,work.subBasketName,work.roomName].filter(Boolean).join(" · ")}</p></div>

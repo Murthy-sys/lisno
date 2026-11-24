@@ -18,16 +18,20 @@ export function clientEstimateTotalPaise(snapshot: { totalPaise: number | null; 
   return snapshot.pmcPaymentSummary === undefined ? snapshot.totalPaise : readEstimatePmcPaymentSummary(snapshot.pmcPaymentSummary)?.customerTotalPayablePaise ?? null;
 }
 
-export function PmcPaymentSummary({ value }: { value: unknown }) {
+export function PmcPaymentSummary({ value, formatMoney = clientEstimateMoney, taxInclusiveLabels = false }: {
+  value: unknown;
+  formatMoney?: (value: number | null) => string;
+  taxInclusiveLabels?: boolean;
+}) {
   if (value === undefined) return null;
   const summary = readEstimatePmcPaymentSummary(value);
   if (!summary) return <p role="status">Payment breakdown unavailable. Refresh the estimate before approving.</p>;
   return <dl className="client-commercial-totals" aria-label="PMC payment breakdown">
-    <div><dt>PMC payable to Lisno</dt><dd>{clientEstimateMoney(summary.lisnoPayablePaise / 100)}</dd></div>
-    <div><dt>PMC payable to vendors</dt><dd>{clientEstimateMoney(summary.vendorPayablePaise / 100)}</dd></div>
-    <div><dt>Total PMC estimated value including GST</dt><dd>{clientEstimateMoney(summary.pmcTotalPayablePaise / 100)}</dd></div>
-    {summary.otherWorkPayablePaise > 0 ? <div><dt>Other work including GST</dt><dd>{clientEstimateMoney(summary.otherWorkPayablePaise / 100)}</dd></div> : null}
-    {summary.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{summary.roundOffPaise < 0 ? "−" : "+"}{clientEstimateMoney(Math.abs(summary.roundOffPaise) / 100)}</dd></div> : null}
+    <div><dt>PMC payable to Lisno{taxInclusiveLabels ? " including GST" : ""}</dt><dd>{formatMoney(summary.lisnoPayablePaise / 100)}</dd></div>
+    <div><dt>PMC payable to vendors{taxInclusiveLabels ? " including GST" : ""}</dt><dd>{formatMoney(summary.vendorPayablePaise / 100)}</dd></div>
+    <div><dt>Total PMC estimated value including GST</dt><dd>{formatMoney(summary.pmcTotalPayablePaise / 100)}</dd></div>
+    {summary.otherWorkPayablePaise > 0 ? <div><dt>Other work including GST</dt><dd>{formatMoney(summary.otherWorkPayablePaise / 100)}</dd></div> : null}
+    {summary.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{summary.roundOffPaise < 0 ? "−" : "+"}{formatMoney(Math.abs(summary.roundOffPaise) / 100)}</dd></div> : null}
   </dl>;
 }
 

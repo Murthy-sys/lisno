@@ -269,9 +269,8 @@ describe("Finance project workflow control", () => {
     const approvalStage = screen.getByRole("heading", { name: "5. Design approved" }).closest("section")!;
     expect(approvalStage).toHaveTextContent("Approved by the Client, or by a Sales Manager with recorded proof.");
     const executionStage = screen.getByRole("heading", { name: "6. Execution queues" }).closest("section")!;
-    expect(await within(executionStage).findByRole("progressbar", {
-      name: "Overall project execution: 25% complete"
-    })).toHaveAttribute("aria-valuenow", "25");
+    await waitFor(() => expect(executionStage).toHaveTextContent("0 of 3 tasks complete"));
+    expect(within(executionStage).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(executionStage).toHaveTextContent("0 of 3 tasks complete");
 
     const taskAssignment = await screen.findByRole("button", { name: "Task assignment" });
@@ -374,7 +373,8 @@ describe("Collaborative project preparation snapshot", () => {
     server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: workflowTasks })));
     renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
       estimate: { ...project.estimate!, ...revisionCurrentApproval, version: 5, finalEstimateApproved: true, designApproved: true } }} />);
-    expect(await screen.findByRole("progressbar", { name: "Overall project execution: 25% complete" })).toBeVisible();
+    expect(await screen.findByText(/0 of 3 tasks complete/)).toBeVisible();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "6. Design approved" }).closest("section")).toHaveTextContent("Approved");
     expect(screen.queryByRole("heading", { name: "6. Final estimate approval" })).not.toBeInTheDocument();
   });
@@ -458,7 +458,8 @@ describe("Collaborative project preparation snapshot", () => {
     server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: workflowTasks })));
     renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 2,
       estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true } }} />);
-    expect(await screen.findByRole("progressbar", { name: "Overall project execution: 25% complete" })).toBeVisible();
+    expect(await screen.findByText(/0 of 3 tasks complete/)).toBeVisible();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText(/preparation tasks assigned/)).not.toBeInTheDocument();
   });
 });

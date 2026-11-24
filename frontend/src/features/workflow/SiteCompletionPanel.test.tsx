@@ -65,7 +65,9 @@ describe("Project Manager completion progress", () => {
 
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toMatchObject({ expectedVersion: 1, progress: 100, note: "" });
-    await waitFor(() => expect(screen.getByText("Saved progress").parentElement).toHaveTextContent("100%"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save progress" })).toBeDisabled());
+    expect(screen.getByRole("spinbutton", { name: "Project execution progress (%)" })).toHaveValue(100);
+    expect(screen.queryByText("Saved progress")).not.toBeInTheDocument();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-manager"] });
     invalidate.mockRestore();
     const send = screen.getByRole("button", { name: "Complete and send to Client" });

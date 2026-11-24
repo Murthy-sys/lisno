@@ -1,5 +1,6 @@
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useCallback, useState } from "react";
@@ -101,6 +102,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
           {item.location ? <p className="estimation-progress__location">{item.location}</p> : null}
         </div>
         <div className="estimation-progress__header-controls">
+          {item.projectId ? <div className="project-status-header-actions"><ProjectStatusButton projectId={item.projectId} presentation="chip" /></div> : null}
           {returnTo ? <p>{labels[item.stage]}</p> : stageControl}
           {item.projectId ? <div ref={summaryRef} className="estimation-progress__critical" /> : null}
         </div>
@@ -112,6 +114,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
           overviewLabel="Lead"
           summaryContainer={summaryContainer}
           presentation="estimate-progress"
+          showStatus={false}
         />
       ) : null}
       {stage.isError ? <p role="alert">The lead could not be updated. Try again.</p> : null}

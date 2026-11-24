@@ -9,6 +9,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
@@ -148,8 +149,8 @@ export function ClientResponseTaskDetailPage() {
         metadata={
           <StatusBadge tone={presentation.tone} label={presentation.label} />
         }
-        actions={
-          pendingDecision ? (
+        actions={<div className="project-status-header-actions">
+          {pendingDecision ? (
             <>
               <Button onClick={() => setSelected({ decision: "approve", task })}>
                 Approve
@@ -163,8 +164,9 @@ export function ClientResponseTaskDetailPage() {
                 Reject
               </Button>
             </>
-          ) : undefined
-        }
+          ) : null}
+          {task.project?.id ? <ProjectStatusButton projectId={task.project.id} presentation="chip" /> : null}
+        </div>}
         headingRef={headingRef}
         headingTabIndex={-1}
       />

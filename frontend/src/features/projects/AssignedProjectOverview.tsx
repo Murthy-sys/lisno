@@ -17,7 +17,6 @@ export function AssignedProjectOverview({ project }: { project: Project }) {
       <div><dt>Status</dt><dd>{statusLabels[project.status]}</dd></div>
       <div><dt>Planned start</dt><dd>{projectDate(project.plannedStartAt)}</dd></div>
       <div><dt>Planned completion</dt><dd>{projectDate(project.plannedEndAt)}</dd></div>
-      {typeof project.progress === "number" ? <div><dt>Project progress</dt><dd>{project.progress}%</dd></div> : null}
     </dl>
   </Surface>;
 }

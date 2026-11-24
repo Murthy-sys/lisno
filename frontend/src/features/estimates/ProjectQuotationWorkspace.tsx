@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ClientQuotation } from "../client/ClientQuotation";
 import { ClientEstimationWorkspace } from "../client/ClientEstimationWorkspace";
 import { getQuotation, quotationKeys } from "../client/quotationApi";
@@ -18,7 +19,7 @@ export function ProjectQuotationWorkspace() {
 function QuotationForProject({ projectId, client }: { projectId: string; client: boolean }) {
   return <section className="project-quotation-workspace" aria-labelledby="project-estimation-title">
     <PageHeader id="project-estimation-title" title="Estimation"
-      actions={!client ? <DesignerEstimateAction projectId={projectId} /> : undefined}
+      actions={<div className="project-status-header-actions">{!client ? <DesignerEstimateAction projectId={projectId} /> : null}<ProjectStatusButton projectId={projectId} presentation="chip" /></div>}
       breadcrumb={<Link to={client ? `/client/projects/${encodeURIComponent(projectId)}` : "/designer/design-plans"}>{client ? "Back to project" : "Back to design plans"}</Link>} />
     {client ? <ClientEstimationWorkspace projectId={projectId} workspace /> : <ClientQuotation projectId={projectId} workspace readOnly />}
   </section>;

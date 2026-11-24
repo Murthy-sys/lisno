@@ -155,8 +155,7 @@
 .super-admin-dashboard td small, .super-admin-dashboard th small { display: block; margin-top: 4px; color: var(--dashboard-muted); font-size: 10px; font-weight: 400; }
 .dashboard-project-table table, .dashboard-workforce-table table { min-width: 760px; }
 .dashboard-priority-table { min-width: 0; }
-.dashboard-priority-table table { min-width: 410px; }
-.dashboard-priority-progress { display: grid; gap: 5px; min-width: 65px; }
+.dashboard-priority-table table { min-width: 310px; }
 .super-admin-dashboard progress { max-width: 100%; width: 100%; height: 5px; accent-color: var(--dashboard-green); border: 0; background: #dfe8e1; }
 .super-admin-dashboard progress::-webkit-progress-bar { background: #dfe8e1; }
 .super-admin-dashboard progress::-webkit-progress-value { background: var(--dashboard-green); }
@@ -334,7 +333,7 @@
 .dashboard-chart-drilldown-actions button { border: 0; padding: 5px 0; background: none; color: var(--dashboard-green); cursor: pointer; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
 .dashboard-chart-selected-value { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 0; padding-top: 10px; border-top: 1px solid var(--dashboard-border); font-size: 11px; color: var(--dashboard-muted); }
 .dashboard-chart-selected-value strong { color: var(--dashboard-ink); }
-.dashboard-module-rings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; padding: 28px 0; }
+.dashboard-module-rings { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; align-items: start; padding: 28px 0; }
 .dashboard-module-ring { display: flex; flex-direction: column; align-items: center; gap: 9px; text-align: center; text-decoration: none; min-width: 0; }
 .dashboard-ring-graphic { position: relative; display: grid; place-items: center; width: 100%; max-width: 100px; aspect-ratio: 1; }
 .dashboard-ring-graphic svg { width: 100%; height: 100%; transform: rotate(-90deg); }

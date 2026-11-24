@@ -42,18 +42,20 @@ describe("Visual dashboard overview", () => {
     expect(within(metrics).getByRole("link", { name: /Approved net value.*₹1,00,000/ })).toBeVisible();
     expect(within(metrics).getByRole("link", { name: /Approved contract value.*₹1,18,000/ })).toBeVisible();
     expect(metrics).toHaveTextContent("72.00%");
-    for (const name of ["Project activity trend", "Projects by current stage", "Period activity comparison", "Financial overview", "Module progress", "Workforce summary", "Project activity heatmap", "Priority projects", "Operational actions"]) expect(screen.getByRole("heading", { name })).toBeVisible();
+    for (const name of ["Project activity trend", "Projects by current stage", "Period activity comparison", "Financial overview", "Module approvals", "Workforce summary", "Project activity heatmap", "Priority projects", "Operational actions"]) expect(screen.getByRole("heading", { name })).toBeVisible();
     expect(screen.queryByText("More portfolio context")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Procurement progress|Execution progress/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Priority projects ordered by risk" })).toBeVisible();
   });
 
   it("keeps native module and role drilldowns scoped by stable IDs, period and comparison setting", () => {
     renderOverview();
-    const modules = screen.getByRole("region", { name: "Module progress" });
-    const procurement = within(modules).getByRole("link", { name: /Procurement progress/ });
-    expect(procurement).toHaveAttribute("href", "/admin/dashboard?tab=procurement&periodDays=30&comparison=off");
-    expect(procurement).toHaveAttribute("id", "dashboard-module-procurement");
-    expect(procurement).toHaveAttribute("data-dashboard-origin", "dashboard-module-procurement");
+    const modules = screen.getByRole("region", { name: "Module approvals" });
+    const design = within(modules).getByRole("link", { name: /Design approval/ });
+    expect(design).toHaveAttribute("href", "/admin/dashboard?tab=design&periodDays=30&comparison=off");
+    expect(design).toHaveAttribute("id", "dashboard-module-design");
+    expect(design).toHaveAttribute("data-dashboard-origin", "dashboard-module-design");
     const role = screen.getByRole("link", { name: /Electrician/ });
     expect(role).toHaveAttribute("href", "/admin/dashboard?tab=workforce&periodDays=30&comparison=off&role=worker_electrician");
     expect(role).toHaveAttribute("id", "dashboard-workforce-worker_electrician");
@@ -109,7 +111,7 @@ describe("Visual dashboard overview", () => {
     expect(getDashboardPendingActions(data, { canReadClientResponses: false, showComparison: false }).find((row) => row.label === "Failed Client deliveries")).toMatchObject({ value: "Not available", status: "Unavailable", href: null });
   });
 
-  it("keeps zero progress and signed finance values while omitting null ratios and unavailable relationships", () => {
+  it("keeps signed finance values while omitting project progress, null ratios and unavailable relationships", () => {
     const data = structuredClone(superAdminDashboardOverviewFixture);
     data.finance.currentMarginBps = null;
     data.finance.remainingBudgetPaise = -12_500;
@@ -120,9 +122,10 @@ describe("Visual dashboard overview", () => {
     renderOverview({ data });
     expect(screen.queryByText("Current margin")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Financial overview" })).toHaveTextContent("Overspent-₹125.00");
-    const modules = screen.getByRole("region", { name: "Module progress" });
+    const modules = screen.getByRole("region", { name: "Module approvals" });
     expect(within(modules).queryByRole("link", { name: /Design approval/ })).not.toBeInTheDocument();
-    expect(within(modules).getByRole("link", { name: /Procurement progress/ })).toHaveTextContent("0.00%");
+    expect(within(modules).queryByRole("link", { name: /Procurement progress|Execution progress/ })).not.toBeInTheDocument();
+    expect(within(modules).getByRole("link", { name: /Estimation approvals/ })).toBeVisible();
     expect(screen.getByRole("region", { name: "Workforce summary" })).not.toHaveTextContent("Average calculated KPI");
     expect(screen.getByRole("region", { name: "Client accounts" })).not.toHaveTextContent("Linked to projects");
   });
@@ -157,7 +160,7 @@ describe("Visual dashboard overview", () => {
     data.dataQuality = { status: "partial", totalIssueCount: 12, unavailableMetricKeys: ["projects", "clients", "finance", "estimation", "design", "procurement", "execution", "workforce", "governance", "risk", "trends", "comparison"], issues: [] };
     renderOverview({ data });
     expect(screen.queryByRole("region", { name: "Organization headline metrics" })).not.toBeInTheDocument();
-    for (const name of ["Project activity trend", "Period activity comparison", "Financial overview", "Module progress", "Workforce summary", "Project activity heatmap", "Operational actions"]) expect(screen.queryByRole("heading", { name })).not.toBeInTheDocument();
+    for (const name of ["Project activity trend", "Period activity comparison", "Financial overview", "Module approvals", "Workforce summary", "Project activity heatmap", "Operational actions"]) expect(screen.queryByRole("heading", { name })).not.toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Priority projects ordered by risk" })).toBeVisible();
     expect(screen.getByText("North Residence")).toBeVisible();
   });

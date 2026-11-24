@@ -10,6 +10,7 @@ import { PageState } from "../../components/ui/PageState";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { formatBps, formatPaise } from "../finance/ProjectFinancePanel";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { procurementError } from "./procurementPresentation";
 import { purchaseOrderComponentKey, purchaseOrderComponentLabel } from "./purchaseOrderComponentPresentation";
 import {
@@ -209,7 +210,10 @@ export function SuperAdminProjectRequestReview() {
     {selected ? <form className="purchase-orders__detail purchase-orders__request-review" aria-label={`Review ${selected.projectName} purchase order request`} onSubmit={submit}>
       <div className="purchase-orders__detail-head"><div><p className="eyebrow">Revision {selected.revision} · Submitted {revision ? new Date(revision.submittedAt).toLocaleDateString() : "unavailable"}</p>
         <h3>{selected.projectName}</h3><p>{selected.requestNumber ?? "Project request"}{revision ? ` · Submitted by account ${revision.submittedById}` : " · Submitted revision missing"}</p></div>
-        <Button type="button" variant="quiet" onClick={closeReview}>Close review</Button></div>
+        <div className="project-status-header-actions">
+          {!requests.isError && selected.projectId?.trim() ? <ProjectStatusButton projectId={selected.projectId} projectName={selected.projectName} presentation="chip" /> : null}
+          <Button type="button" variant="quiet" onClick={closeReview}>Close review</Button>
+        </div></div>
       {!revision ? <InlineMessage tone="error">The submitted revision is unavailable. Refresh the queue before deciding.</InlineMessage> : <>
         <dl className="purchase-orders__totals" aria-label="Submitted project request total">
           <div><dt>Before GST</dt><dd>{formatPaise(revision.totals.netPaise)}</dd></div>

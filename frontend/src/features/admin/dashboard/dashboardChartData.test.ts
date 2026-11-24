@@ -7,6 +7,14 @@ const fixture = () => structuredClone(superAdminDashboardOverviewFixture) as Sup
 const unavailable = (data: SuperAdminDashboardOverview, key: string) => { data.dataQuality = { status: "partial", totalIssueCount: 1, unavailableMetricKeys: [key], issues: [{ code: "module_aggregate_unavailable", metricKey: key, message: `${key} unavailable.`, entityId: null, entityType: null }] }; };
 
 describe("shared dashboard chart datasets", () => {
+  it("omits the execution progress chart and report while retaining task charts", () => {
+    const data = fixture();
+    expect(getDashboardChartDatasets("execution", data).map((dataset) => dataset.id)).toEqual([
+      "dashboard-execution-completion-trend", "dashboard-execution-status", "dashboard-execution-roles"
+    ]);
+    expect(JSON.stringify(getDashboardChartTables("execution", data))).not.toMatch(/Weighted execution progress|fallback tasks|effort units/);
+  });
+
   it.each(DASHBOARD_TABS)("exports every %s plotted value using the same prepared rows", (tab) => {
     const data = fixture();
     const datasets = getDashboardChartDatasets(tab, data);

@@ -23,6 +23,7 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import {
   designerKeys,
   getAllProjects,
@@ -220,11 +221,11 @@ export function DesignerDashboard() {
 
       {selected ? (
         <ContextPanel key={selected.task.id} title={selected.task.projectName} eyebrow="Project quick review" description={selected.task.clientName} metadata={<ProjectId projectNumber={selected.task.projectNumber} />} onClose={() => setSelectedTaskId(null)}
+          headerActions={selected.task.projectId ? <ProjectStatusButton projectId={selected.task.projectId} projectName={selected.task.projectName} presentation="chip" /> : undefined}
           footer={<Link className="ui-button ui-button--primary" to={`/designer/design-plans?estimate=${encodeURIComponent(selected.task.estimateId)}`}>Open design workspace</Link>}>
           <dl className="designer-project-review">
             <div><dt>Design status</dt><dd><StatusBadge label={designStatusLabels[selected.task.status]} tone={designStatusTones[selected.task.status]} /></dd></div>
             <div><dt>Design plan</dt><dd>{selected.task.designPlanVersion > 0 ? `Version ${selected.task.designPlanVersion}` : "No design plan uploaded"}</dd></div>
-            <div><dt>Task completion</dt><dd>{selected.aggregate ? `${selected.aggregate.progress}%` : "Not available"}</dd></div>
             <div><dt>Delivery risk</dt><dd>{selected.aggregate ? `${selected.aggregate.riskCounts.red} red · ${selected.aggregate.riskCounts.yellow} yellow` : "Not available"}</dd></div>
           </dl>
         </ContextPanel>
@@ -304,12 +305,9 @@ function DesignProjectRow({
       <div className="designer-project-row__health" data-label="Health">
         <span className="sr-only">Health: </span>
         {aggregate ? (
-          <>
-            <span><b>{aggregate.progress}%</b> task completion</span>
-            <small>
-              {aggregate.riskCounts.red} red · {aggregate.riskCounts.yellow} yellow
-            </small>
-          </>
+          <span>
+            {aggregate.riskCounts.red} red · {aggregate.riskCounts.yellow} yellow
+          </span>
         ) : (
           <span><b>Not available</b></span>
         )}

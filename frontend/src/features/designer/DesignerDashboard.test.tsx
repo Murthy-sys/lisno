@@ -202,10 +202,13 @@ function installDashboardApi(options?: {
   missingProjectAggregates?: boolean;
   reverseDesignTasks?: boolean;
   unestimated?: boolean;
+  statusDenied?: boolean;
+  unlinkedTask?: boolean;
 }) {
   let projectRequests = 0;
   const mainKpiRequests: string[] = [];
   const taskFeedRequests: string[] = [];
+  const statusRequests: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return response(designer);
@@ -214,7 +217,31 @@ function installDashboardApi(options?: {
       const tasks = options?.reverseDesignTasks
         ? [...designPlanTasks].reverse()
         : designPlanTasks;
-      return response(options?.empty || options?.unestimated ? [] : tasks);
+      return response(options?.empty || options?.unestimated ? [] : options?.unlinkedTask ? [{ ...designPlanTasks[0], projectId: "" }] : tasks);
+    }
+    const statusMatch = url.match(/^\/api\/v1\/projects\/([^/]+)\/status$/);
+    if (statusMatch) {
+      const projectId = statusMatch[1];
+      statusRequests.push(projectId);
+      if (options?.statusDenied) {
+        return Response.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 });
+      }
+      const villa = projectId === "project-aurora-villa";
+      return response({
+        projectId,
+        projectName: villa ? "Aurora Villa" : "Aurora Studio",
+        projectStatus: "active",
+        serverNow: "2026-11-24T09:00:00Z",
+        state: "active",
+        issue: null,
+        currentStage: { key: "design_planning", label: "Design planning" },
+        pendingActions: [{
+          id: `plan-${projectId}`, stageKey: "design_planning", stageLabel: "Design planning",
+          action: "Prepare design", state: "pending", responsibleRole: "designer",
+          people: [{ id: `owner-${projectId}`, name: villa ? "Villa Designer" : "Studio Designer", role: "designer" }],
+          scheduledAt: null, deadlineAt: null, blocker: null
+        }]
+      });
     }
     if (url.startsWith("/api/v1/projects?")) {
       projectRequests += 1;
@@ -338,7 +365,8 @@ function installDashboardApi(options?: {
   });
   return {
     getMainKpiRequests: () => mainKpiRequests,
-    getTaskFeedRequests: () => taskFeedRequests
+    getTaskFeedRequests: () => taskFeedRequests,
+    getStatusRequests: () => statusRequests
   };
 }
 
@@ -403,6 +431,7 @@ describe("DesignerDashboard", () => {
     expect(within(projectRow).getByText("Design plan v1")).toBeVisible();
     expect(within(projectRow).getByText("Extraction in progress")).toBeVisible();
     expect(within(projectRow).getByText(/1 red · 0 yellow/)).toBeVisible();
+    expect(within(projectRow).queryByText(/task completion|\d+%/i)).not.toBeInTheDocument();
     expect(within(projectRow).getByText("High priority")).toBeVisible();
     const continueLink = within(projectRow).getByRole("link", {
       name: "Continue design for Aurora Villa"
@@ -419,7 +448,7 @@ describe("DesignerDashboard", () => {
 
   it("shows an assignment-owned empty state without project creation", async () => {
     tokenStorage.set("valid-token");
-    installDashboardApi({ empty: true });
+    const api = installDashboardApi({ empty: true });
     const user = userEvent.setup();
     renderApp(["/designer"]);
 
@@ -438,6 +467,8 @@ describe("DesignerDashboard", () => {
     const unavailable = screen.getByText("On-time delivery").closest("article")!;
     expect(within(unavailable).getByText("Not available")).toBeVisible();
     expect(within(unavailable).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(api.getStatusRequests()).toEqual([]);
   });
 
   it("does not report zero health when KPI project data is unavailable", async () => {
@@ -472,25 +503,53 @@ describe("DesignerDashboard", () => {
 
   it("reviews loaded project identity and restores its trigger without fetching project detail", async () => {
     tokenStorage.set("designer-token");
-    installDashboardApi();
+    const api = installDashboardApi();
     const user = userEvent.setup();
     renderApp(["/designer"]);
     const trigger = await screen.findByRole("button", { name: "Quick review Aurora Villa" });
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(api.getStatusRequests()).toEqual([]);
     await user.click(trigger);
     const panel = screen.getByRole("dialog", { name: "Aurora Villa" });
+    const chip = await within(panel).findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(chip).toHaveTextContent("Villa Designer");
+    expect(chip.closest(".ui-drawer__header-actions")).toBeInTheDocument();
     expect(within(panel).getByText("Project ID: Lisno000031")).toBeVisible();
     expect(within(panel).getByText("Priya Shah")).toBeVisible();
+    expect(within(panel).queryByText("Task completion")).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/\d+%/)).not.toBeInTheDocument();
+    expect(within(panel).getByText("1 red · 0 yellow")).toBeVisible();
     expect(within(panel).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-villa");
     await user.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Quick review Aurora Studio" }));
     const second = screen.getByRole("dialog", { name: "Aurora Studio" });
+    const secondChip = await within(second).findByRole("button", { name: "Project status for Aurora Studio" });
+    expect(secondChip).toHaveTextContent("Studio Designer");
+    expect(within(second).queryByText(/Villa Designer/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Project status for/ })).toHaveLength(1);
+    expect(within(second).getByText("Awaiting Client approval")).toBeVisible();
     expect(within(second).getByText("Project ID not assigned")).toBeVisible();
     expect(within(second).queryByText("Project ID: Lisno000031")).not.toBeInTheDocument();
     expect(within(second).getByText("Rhea Kapoor")).toBeVisible();
     expect(within(second).queryByText("Priya Shah")).not.toBeInTheDocument();
     expect(within(second).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-studio");
-    expect(vi.mocked(fetch).mock.calls.some(([input]) => /\/projects\/project-/.test(String(input)))).toBe(false);
+    expect(api.getStatusRequests()).toEqual(["project-aurora-villa", "project-aurora-studio"]);
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => /\/projects\/project-[^/]+$/.test(String(input)))).toBe(false);
+  });
+
+  it.each(["denied", "unlinked"] as const)("omits the quick-review chip when the selected project is %s", async state => {
+    tokenStorage.set("designer-token");
+    const api = installDashboardApi({ statusDenied: state === "denied", unlinkedTask: state === "unlinked" });
+    const user = userEvent.setup();
+    renderApp(["/designer"]);
+    await user.click(await screen.findByRole("button", { name: "Quick review Aurora Villa" }));
+    const panel = screen.getByRole("dialog", { name: "Aurora Villa" });
+    if (state === "denied") await waitFor(() => expect(api.getStatusRequests()).toEqual(["project-aurora-villa"]));
+    else expect(api.getStatusRequests()).toEqual([]);
+    expect(within(panel).queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(within(panel).getByText("Extraction in progress")).toBeVisible();
+    expect(within(panel).getByRole("link", { name: "Open design workspace" })).toBeVisible();
   });
 
   it("offers retry when dashboard data cannot be loaded", async () => {
@@ -529,7 +588,7 @@ describe("DesignerDashboard", () => {
       screen.getByText("10h completed of 50h · 80% remains")
     ).toBeVisible();
     const projectRow = screen.getByRole("article", { name: "Aurora Villa" });
-    expect(within(projectRow).getByText("5%", { exact: false })).toBeVisible();
+    expect(within(projectRow).queryByText(/task completion|\d+%/i)).not.toBeInTheDocument();
     expect(within(projectRow).getByText(/2 red · 0 yellow/)).toBeVisible();
     expect(
       within(screen.getByText("Open workload").closest("article")!)

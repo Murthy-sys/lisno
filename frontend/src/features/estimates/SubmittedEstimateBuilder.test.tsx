@@ -44,6 +44,7 @@ describe("SubmittedEstimateBuilder", () => {
     expect(within(item).getByText("₹202.50")).toBeVisible();
     expect(within(item).getByText("₹101.25")).toBeVisible();
     expect(within(item).getByText("Premium")).toBeVisible();
+    expect(screen.getByText("Submitted items are read-only. Item amounts, rates and section subtotals are before tax unless labelled otherwise. Total payable includes all taxes and all submitted scope.")).toBeVisible();
     expect(within(item).getByText("2 Unit")).toBeVisible();
     expect(within(item).getByText(/Dimensions: 2 × 1 × 0/)).toBeVisible();
     expect(within(item).getByText("Preserve the submitted finish")).toBeVisible();

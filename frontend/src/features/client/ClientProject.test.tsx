@@ -81,7 +81,7 @@ describe("ClientProject", () => {
     expect(timer).toHaveAttribute("dateTime", "2026-09-15T09:00:00.000Z");
     expect(screen.getAllByRole("timer")).toHaveLength(1);
     expect(screen.getByRole("form", { name: "Complete Client Kick off" })).not.toContainElement(timer);
-    expect(timer.compareDocumentPosition(screen.getByText("Floor progress")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(timer.compareDocumentPosition(screen.getByText("Floors")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Design reviews" })).not.toBeInTheDocument();
     const documentCard = screen.getByRole("region", { name: "Designer’s Internal Kick off document" });
     expect(documentCard.querySelector("img, iframe")).toBeNull();
@@ -191,12 +191,13 @@ describe("ClientProject", () => {
     expect(screen.getByText("Bengaluru")).toBeVisible();
     expect(screen.queryByText("Project complete")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Aurora Villa project overview" })).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Floor progress" })).not.toBeVisible();
-    await user.click(screen.getByText("Floor progress"));
+    expect(screen.getByRole("region", { name: "Floors" })).not.toBeVisible();
+    await user.click(screen.getByText("Floors"));
 
-    const floors = screen.getByRole("region", { name: "Floor progress" });
+    const floors = screen.getByRole("region", { name: "Floors" });
     expect(within(floors).getByText("Ground floor")).toBeVisible();
-    expect(within(floors).getByText("70% complete")).toBeVisible();
+    expect(within(floors).queryByText(/% complete/)).not.toBeInTheDocument();
+    expect(within(floors).queryByRole("progressbar")).not.toBeInTheDocument();
 
     const documentSummary = await screen.findByText("Approved documents");
     expect(documentSummary.closest("details")).not.toHaveAttribute("open");
@@ -205,7 +206,7 @@ describe("ClientProject", () => {
     const documents = await screen.findByRole("region", { name: "Approved documents" });
     expect(within(documents).getByText("Ground plan.pdf")).toBeVisible();
     expect(screen.getByText("First floor")).toBeVisible();
-    expect(screen.getByText("35% complete")).toBeVisible();
+    expect(screen.queryByText("35% complete")).not.toBeInTheDocument();
     expect(await screen.findByText("Ground plan.pdf")).toBeVisible();
     expect(screen.queryByText("Internal draft.pdf")).not.toBeInTheDocument();
     expect(screen.queryByText("Approved internal.pdf")).not.toBeInTheDocument();
@@ -244,7 +245,7 @@ describe("ClientProject", () => {
     renderApp(["/client/projects/project-villa"]);
     expect(await screen.findByRole("checkbox", { name: "I have reviewed the document submitted by the Designer" })).toBeVisible();
     expect(screen.getByRole("timer")).toBeVisible();
-    expect(screen.queryByText("Floor progress")).not.toBeInTheDocument();
+    expect(screen.queryByText("Floors")).not.toBeInTheDocument();
     expect(screen.queryByText("Approved documents")).not.toBeInTheDocument();
     expect(screen.queryByText("No plans ready for review")).not.toBeInTheDocument();
     expect(screen.queryByText("No design reviews are awaiting a response.")).not.toBeInTheDocument();

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { ApiError } from "../../api/client";
 import type { AdminProjectSummary, ProjectWorkflowTask } from "../../api/types";
 import { PageState } from "../../components/ui/PageState";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { WorkerAssignmentPanel } from "../admin/WorkerAssignmentPanel";
@@ -142,9 +141,6 @@ function WorkflowSnapshot({
   const tradeTasks = executionTasks.filter((task) => task.kind === "trade_execution");
   const completedTasks = executionTasks.filter((task) => task.status === "completed").length;
   const assignedTrades = tradeTasks.filter((task) => task.assignedWorker).length;
-  const progress = executionTasks.length
-    ? Math.round(executionTasks.reduce((total, task) => total + task.progress, 0) / executionTasks.length)
-    : 0;
   const executionComplete = executionTasks.length > 0 && completedTasks === executionTasks.length;
 
   return (
@@ -284,9 +280,6 @@ function WorkflowSnapshot({
               : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
         >
           {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start only after Super Admin confirms the initial payment.</p> : null}
-          {executionEnabled && !tasksLoading && !tasksError ? (
-            <ProgressBar value={progress} label={`Overall project execution: ${progress}% complete`} />
-          ) : null}
         </WorkflowStage>
       </div>
 

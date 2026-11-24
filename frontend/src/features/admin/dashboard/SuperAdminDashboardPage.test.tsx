@@ -250,7 +250,7 @@ describe("Super Admin dashboard page", () => {
       "Projects by current stage",
       "Period activity comparison",
       "Financial overview",
-      "Module progress",
+      "Module approvals",
       "Workforce summary",
       "Project activity heatmap",
       "Priority projects",
@@ -649,7 +649,7 @@ describe("Super Admin dashboard page", () => {
     expect(within(queue).queryByText("Red-risk projects")).not.toBeInTheDocument();
     expect(await screen.findByText("North Residence")).toBeVisible();
     expect(screen.getByRole("region", { name: "Priority projects" })).not.toHaveTextContent("risk.topProjects could not be verified.");
-    expect(screen.getByRole("heading", { name: "Module progress" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Module approvals" })).toBeVisible();
 
     overviewRender.unmount();
     renderDashboard("/admin/dashboard?tab=risk&periodDays=30");
@@ -677,7 +677,7 @@ describe("Super Admin dashboard page", () => {
     renderDashboard(undefined, queryClient);
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeVisible();
     expect(screen.getByText("Refreshing dashboard…")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Module progress" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Module approvals" })).toBeVisible();
   });
 
   it("keeps visual destinations on the selected period while showing the previous verified snapshot", async () => {

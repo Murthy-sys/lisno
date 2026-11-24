@@ -8,6 +8,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
+import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
 import type { DesignPlanTask } from "../../api/types";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -17,7 +18,7 @@ import type { EstimateQueueItem } from "./estimateWorkflowApi";
 import { ProjectQuotationWorkspace } from "./ProjectQuotationWorkspace";
 
 const actor = { user: { id: "client-one", role: "client" as "client" | "designer" }, reviewSession: { id: "session-one" } };
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => actor }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ ...actor, status: "authenticated", authorization: authorizationFor(actor.user.role) }) }));
 
 beforeEach(() => {
   actor.user = { id: "client-one", role: "client" };
@@ -58,6 +59,11 @@ function setup(designerTasks: DesignPlanTask[] = [], customize?: (details: Quota
   let queryClient!: QueryClient;
   const writes: string[] = [];
   server.use(
+    http.get("/api/v1/projects/:projectId/status", ({ params }) => HttpResponse.json({ data: {
+      projectId: params.projectId, projectName: `Status home ${params.projectId}`, projectStatus: "active", serverNow: "2026-11-24T09:00:00Z", state: "active", issue: null,
+      currentStage: { key: "estimate_approval", label: "Estimate approval" },
+      pendingActions: [{ id: `approve-${params.projectId}`, stageKey: "estimate_approval", stageLabel: "Estimate approval", action: "Review quotation", responsibleRole: "client", state: "pending", people: [{ id: `owner-${params.projectId}`, name: params.projectId === "project-one" ? "Quotation owner one" : "Quotation owner two", role: "client" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+    } })),
     http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: designerTasks })),
     http.get("/api/v1/projects/:projectId/quotation", ({ params }) => HttpResponse.json({ data: details.find(detail => detail.projectId === params.projectId) })),
     http.get("/api/v1/projects/:projectId/quotation/revision", ({ params }) => {
@@ -86,6 +92,10 @@ describe("ProjectQuotationWorkspace", () => {
     const user = userEvent.setup();
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
     expect(quantity).toHaveValue(2);
+    const chip = await screen.findByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Quotation owner one");
+    expect(chip.closest("header")).toContainElement(screen.getByRole("heading", { name: "Estimation" }));
+    expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(1);
     expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
     expect(await screen.findByRole("button", { name: "Review quotation" })).toBeEnabled();
     expect(screen.getByRole("link", { name: "Back to project" })).toHaveAttribute("href", "/client/projects/project-one");
@@ -102,6 +112,7 @@ describe("ProjectQuotationWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review quotation" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Review quotation" }));
     expect(await screen.findByRole("heading", { name: "Pre-design quotation review" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Project status" })).toBe(chip);
     expect(screen.getAllByText("Project ID: Lisno000031")).toHaveLength(1);
     expect(writes).toEqual([]);
   });
@@ -115,6 +126,9 @@ describe("ProjectQuotationWorkspace", () => {
     await user.click(screen.getByRole("link", { name: "Open second project" }));
     expect(await screen.findByRole("spinbutton", { name: "Quantity for Storage in Bedroom Unit" })).toHaveValue(7);
     expect(screen.getByText("Project ID: Lisno000084")).toBeVisible();
+    const chip = await screen.findByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Quotation owner two");
+    expect(screen.queryByText(/Quotation owner one/)).not.toBeInTheDocument();
     expect(screen.queryByText("Project ID: Lisno000031")).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: /Kitchen/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();

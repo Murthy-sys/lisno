@@ -1,11 +1,32 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardProjectDrilldown } from "./DashboardProjectDrilldown";
 import { superAdminDashboardProjectsPageFixture } from "./dashboardFixtures";
 
+afterEach(cleanup);
+
 describe("Dashboard project drilldown identity", () => {
+  it.each(["procurement", "execution"] as const)("keeps %s operational details and filters without progress in either layout", async (tab) => {
+    const page = structuredClone(superAdminDashboardProjectsPageFixture);
+    const onFiltersChange = vi.fn();
+    render(<MemoryRouter><DashboardProjectDrilldown tab={tab} filters={{ module: tab }} page={page}
+      refreshing={false} onFiltersChange={onFiltersChange} onPageChange={vi.fn()} /></MemoryRouter>);
+    const desktop = within(screen.getByRole("table")).getAllByRole("row", { name: /North Residence/ })[0];
+    const mobile = within(screen.getByRole("list")).getAllByRole("listitem")[0];
+    for (const row of [desktop, mobile]) {
+      expect(row).not.toHaveTextContent(/%|weighted progress/i);
+      expect(within(row).queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(row).toHaveTextContent(tab === "procurement" ? "posted of" : `${page.items[0].execution.taskCount} tasks`);
+      expect(row).toHaveTextContent(tab === "procurement" ? "approved" : `${page.items[0].execution.overdueTaskCount} overdue`);
+      expect(within(row).getByRole("link", { name: "North Residence" })).toHaveAttribute("href", "/admin/projects/project-risk");
+    }
+    await userEvent.setup().selectOptions(screen.getByRole("combobox", { name: "Project status" }), "completed");
+    expect(onFiltersChange).toHaveBeenCalledWith({ module: tab, projectStatus: "completed", offset: 0 });
+  });
+
   it("keeps desktop and mobile rows tied to internal routes for same-named and unnumbered projects", () => {
     const page = structuredClone(superAdminDashboardProjectsPageFixture);
     page.items = [

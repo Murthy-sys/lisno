@@ -10,7 +10,8 @@ import { RouteFocusManager } from "../../components/layout/RouteFocusManager";
 import { ProjectManagerDashboard, ProjectManagerProjectPage, projectManagerReturnPath } from "./ProjectManagerWorkspace";
 import type { PMPanel, PMPortfolio, PMProgress, PMProject } from "./projectManagerTypes";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-a", role: "site_manager", name: "Project Manager A" }, authorization: { role: "site_manager", permissions: ["pm.workspace.read", "pm.performance.read"] } }) }));
+const statusAccess = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-a", role: "site_manager", name: "Project Manager A" }, authorization: { role: "site_manager", permissions: ["pm.workspace.read", "pm.performance.read", ...(statusAccess.enabled ? ["projects.status.read"] : [])] } }) }));
 const connection = vi.hoisted(() => ({ state: "live" }));
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => connection.state }));
 vi.mock("../execution/ExecutionWorkspace", () => ({ ProjectExecutionPage: ({ projectId }: { projectId: string }) => <p>Full execution detail for {projectId}</p> }));
@@ -30,7 +31,7 @@ const portfolio: PMPortfolio = { items: [project], total: 1, counts: { active: 7
 const site: PMPanel = { tab: "site", availability: "available", calculatedAt: portfolio.calculatedAt, total: 1, issues: [], sources: [], people: [], actions: [], items: [{ id: "room-a", kind: "room", title: "Living room", status: "execution", severity: "neutral", version: 0, sourceToken: null, facts: [], actions: [], children: [{ id: "work-a", assignmentId: "work-a", kind: "execution", title: "Custom joinery", status: "in_progress", severity: "warning", version: 2, sourceToken: null, ownerName: "Workshop A", progress: 50, description: "Finish sample pending", facts: [{ label: "Vendor", value: "Workshop A" }, { label: "Site verified", value: "Pending" }, { label: "Client acceptance", value: "Pending" }], actions: [] }] }] };
 
 beforeEach(() => {
-  connection.state = "live";
+  connection.state = "live"; statusAccess.enabled = false;
   server.use(http.get("/api/v1/project-manager/projects", () => HttpResponse.json({ data: portfolio })),
     http.get("/api/v1/projects/project-a/pm/overview", () => HttpResponse.json({ data: { project, capabilities: ["execution_detail"], calculatedAt: portfolio.calculatedAt } })),
     http.get("/api/v1/projects/project-a/pm/site", () => HttpResponse.json({ data: site })));
@@ -53,6 +54,25 @@ function expectFact(label: string, value: string) {
 }
 
 describe("Project Manager workspace", () => {
+  it("keeps one current-project status chip in the outer header across tabs and full detail", async () => {
+    statusAccess.enabled = true;
+    server.use(http.get("/api/v1/projects/project-a/status", () => HttpResponse.json({ data: {
+      projectId: "project-a", projectName: project.name, projectStatus: "active", serverNow: portfolio.calculatedAt,
+      state: "active", currentStage: { key: "site", label: "Site measurement" }, issue: null,
+      pendingActions: [{ id: "measure-a", stageKey: "site", stageLabel: "Site measurement", action: "Measure the site", responsibleRole: "designer", people: [{ id: "designer-a", name: "Maya Designer", role: "designer" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
+    } })));
+    renderWorkspace("/projects/project-a/execution?tab=site");
+    const chip = await screen.findByRole("button", { name: "Project status for Cedar residence" });
+    expect(chip).toHaveClass("project-status-chip");
+    expect(chip).toHaveTextContent("Maya Designer");
+    expect(chip.closest("header")).toContainElement(screen.getByRole("heading", { name: project.name, level: 1 }));
+    await userEvent.click(screen.getByRole("link", { name: "Procurement" }));
+    expect(screen.getAllByRole("button", { name: "Project status for Cedar residence" })).toEqual([chip]);
+    await userEvent.click(screen.getByRole("button", { name: "Open full detail" }));
+    expect(await screen.findByText("Full execution detail for project-a")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Project status for Cedar residence" })).toEqual([chip]);
+  });
+
   it.each(["list", "grid"])("distinguishes same-name project IDs in %s view without changing routes", async view => {
     const items = [
       { ...project, projectNumber: "Lisno000011" },
@@ -108,15 +128,15 @@ describe("Project Manager workspace", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("shows complete backend counts and one source-backed progress bar per project", async () => {
+  it("shows complete backend counts without project progress", async () => {
     renderWorkspace();
     expect(await screen.findByRole("link", { name: "Open project Cedar residence" })).toBeVisible();
     const summary = screen.getByRole("region", { name: "Project summary" });
     expect(within(summary).getByRole("button", { name: /Active projects 7/ })).toBeVisible();
     expect(within(summary).getByRole("button", { name: /At risk 2 1 critical/ })).toBeVisible();
     expect(screen.getByRole("button", { name: "1 with incomplete source data" })).toBeVisible();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "37.5");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Progress" })).not.toBeInTheDocument();
     expect(screen.getByText("Approved net value: ₹1,25,000")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Project Dashboard" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Priority alert items" })).toHaveAttribute("tabindex", "0");
@@ -134,7 +154,7 @@ describe("Project Manager workspace", () => {
     renderWorkspace(`/execution${query}`);
     await screen.findByRole("link", { name: "Open project Cedar residence" });
     expect(screen.getByRole("button", { name: selected })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     if (selected === "Grid view") expect(screen.queryByRole("table")).not.toBeInTheDocument();
     else expect(screen.getByRole("table", { name: "Projects" })).toBeVisible();
   });
@@ -198,7 +218,7 @@ describe("Project Manager workspace", () => {
     expect(screen.getByText("Not scheduled")).toBeVisible();
     expect(screen.getByText("Details need review")).toBeVisible();
     expect(screen.queryByText("Approved scope is unavailable.")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar").map(bar => bar.getAttribute("aria-valuenow"))).toEqual(["37.5", "0"]);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     const summary = screen.getByRole("region", { name: "Project summary" });
     expect(within(summary).getByRole("button", { name: /Active projects 7/ })).toBeVisible();
     expect(screen.getAllByRole("link", { name: /^Open project / })).toHaveLength(3);
@@ -363,7 +383,7 @@ describe("Project Manager workspace", () => {
     expect(target.searchParams.get("returnTo")).toBe("/execution?q=Cedar&status=all&view=grid&offset=20");
   });
 
-  it("shows unknown progress and money without fabricating a zero or healthy status", async () => {
+  it("shows unavailable money and preserves incomplete health without project progress", async () => {
     server.use(http.get("/api/v1/project-manager/projects", () => HttpResponse.json({ data: { ...portfolio, items: [{ ...project, health: "incomplete", approvedNetPaise: null, progress: { ...progress, actual: null, planned: null, availability: "source_unavailable" }, issues: ["Approved scope is unavailable."] }] } })));
     renderWorkspace();
     expect(await screen.findByRole("link", { name: "Open project Cedar residence" })).toBeVisible();

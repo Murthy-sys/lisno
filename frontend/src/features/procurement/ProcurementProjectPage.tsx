@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { VendorAccessPanel } from "../execution/VendorAccessPanel";
@@ -50,13 +51,14 @@ export function ProcurementProjectPage() {
       <PageHeader
         id="procurement-project-page-title"
         eyebrow="Project procurement"
+        actions={canRead && (details.project || visibleProject) ? <ProjectStatusButton projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} presentation="chip" /> : undefined}
         title={canRead ? details.project?.name ?? visibleProject?.projectName ?? "Project procurement" : "Project procurement"}
         description="Plan each main basket, compare vendor BOQs and issue approved work orders."
         breadcrumb={<Link to="/procurement">Back to projects</Link>}
         metadata={canRead && (details.project || visibleProject) ? <ProjectId projectNumber={details.project ? details.project.projectNumber : visibleProject!.projectNumber} /> : undefined}
       />
 
-      {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" /> : null}
+      {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" showStatus={false} /> : null}
       {details.project ? <><AssignedProjectOverview project={details.project} />
         {hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel projectId={projectId} showInitialPayment={false} /> : null}
       </> : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />

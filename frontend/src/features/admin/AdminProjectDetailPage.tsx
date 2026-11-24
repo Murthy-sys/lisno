@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { VendorWorkProgressPanel } from "../workflow/VendorWorkProgressPanel";
@@ -158,16 +159,17 @@ export function AdminProjectDetailPage() {
           <span className="admin-project-reference__identifier">System ID: {project.id}</span>
           <span>Created <time dateTime={project.createdAt}>{createdLabel}</time></span>
         </>}
-        actions={<>
+        actions={<div className="project-status-header-actions">
           {canDecideCompletion && project.status === "active" ? <ProjectCompletionControl key={project.id}
             projectId={project.id} projectName={project.name} projectStatus={project.status}
             triggerLabel="Close project" onCompleted={() => void projectQuery.refetch()} /> : null}
           <a className="button button--secondary" href="#project-people-assignments" onClick={() => setAssignmentArea(canAssignWorkers ? "procurement" : "designer")}>Manage people</a>
           {assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? <a className="button button--primary" href="#design-assignment-title" onClick={() => setAssignmentArea("designer")}>Assign Designer</a> : null}
-        </>}
+          <ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" />
+        </div>}
       />
       </div>
-      <ProjectChatNavigation projectId={projectId} overviewTo={`/admin/projects/${projectId}`} />
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/admin/projects/${projectId}`} showStatus={false} />
       <div className="admin-project-reference__layout">
       <div className="admin-project-reference__main">
       <section className="admin-project-reference__facts" aria-label="Project summary">

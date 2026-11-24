@@ -13,6 +13,7 @@ import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { formatPaise } from "../finance/ProjectFinancePanel";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { procurementError } from "./procurementPresentation";
 import { SuperAdminProjectRequestReview } from "./SuperAdminProjectRequestReview";
 import { decidePurchaseOrder, getPendingPurchaseOrders, getPurchaseOrderCommitments, purchaseOrderKeys, type PurchaseOrder } from "./purchaseOrderApi";
@@ -109,7 +110,10 @@ export function SuperAdminPurchaseOrdersPage() {
         })}</ul>
       </> : <PageState state="empty" message="No purchase orders are waiting for approval." />}
       {selected ? <form className="purchase-orders__detail" onSubmit={submit} aria-label={`Review ${selected.orderNumber}`}>
-        <div className="purchase-orders__detail-head"><div><p className="eyebrow">Revision {selected.revision}</p><h3>{selected.orderNumber}</h3><p>{selected.vendor.name}</p></div><Button type="button" variant="quiet" onClick={closeReview}>Close</Button></div>
+        <div className="purchase-orders__detail-head"><div><p className="eyebrow">Revision {selected.revision}</p><h3>{selected.orderNumber}</h3><p>{selected.vendor.name}</p></div><div className="project-status-header-actions">
+          {!orders.isError && selected.projectId?.trim() ? <ProjectStatusButton projectId={selected.projectId} presentation="chip" /> : null}
+          <Button type="button" variant="quiet" onClick={closeReview}>Close</Button>
+        </div></div>
         <WorkOrderReadiness readiness={selected.issueReadiness} />
         {submitted ? <dl className="purchase-orders__totals"><div><dt>Before GST</dt><dd>{formatPaise(submitted.totals.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(submitted.totals.gstPaise)}</dd></div><div><dt>Order total</dt><dd>{formatPaise(submitted.totals.totalPaise)}</dd></div></dl> : null}
         {!submitted ? <InlineMessage tone="error">The submitted revision is unavailable. Refresh this request before deciding.</InlineMessage> : null}

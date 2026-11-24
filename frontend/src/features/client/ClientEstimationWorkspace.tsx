@@ -1,16 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
+import { ClientEstimateQueryProvider, useClientEstimates } from "../estimates/clientEstimateQuery";
 import { useAuth } from "../../auth/AuthProvider";
 import { ClientEstimateDesignReview } from "../estimates/ClientEstimateDesignReview";
-import { estimateWorkflowKeys, getClientEstimates } from "../estimates/estimateWorkflowApi";
 import { ClientQuotation } from "./ClientQuotation";
 
 export function ClientEstimationWorkspace({ projectId, workspace = false }: { projectId: string; workspace?: boolean }) {
   const { user, reviewSession } = useAuth();
-  return <WorkspaceForProject key={`${projectId}:${reviewSession?.id ?? user?.id}`} projectId={projectId} workspace={workspace} />;
+  return <ClientEstimateQueryProvider><WorkspaceForProject key={`${projectId}:${reviewSession?.id ?? user?.id}`} projectId={projectId} workspace={workspace} /></ClientEstimateQueryProvider>;
 }
 
 function WorkspaceForProject({ projectId, workspace }: { projectId: string; workspace: boolean }) {
-  const reviews = useQuery({ queryKey: estimateWorkflowKeys.client, queryFn: getClientEstimates, retry: false });
+  const reviews = useClientEstimates();
   const matching = reviews.isError ? [] : reviews.data?.filter(estimate => estimate.projectId === projectId) ?? [];
   const estimate = matching.length === 1 ? matching[0]! : null;
   return <div id="estimate-review-title" className="client-estimation-workspace" tabIndex={-1}>

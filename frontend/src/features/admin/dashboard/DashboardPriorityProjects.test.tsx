@@ -29,33 +29,31 @@ describe("Dashboard priority projects", () => {
     expect(screen.queryByRole("link", { name: "Shared home" })).not.toBeInTheDocument();
   });
 
-  it("keeps stable project identities, backend progress, manager and UTC deadline", () => {
+  it("keeps stable project identities, manager and UTC deadline without progress summaries", () => {
     renderPriority();
     const table = screen.getByRole("table", { name: "Priority projects ordered by risk" });
     const first = within(table).getByRole("row", { name: /North Residence/ });
     const second = within(table).getByRole("row", { name: /Lake Apartment/ });
     expect(within(first).getByRole("link", { name: "North Residence" })).toHaveAttribute("href", "/admin/projects/project-risk");
-    expect(within(first).getByRole("progressbar")).toHaveAttribute("value", "5000");
-    expect(first).toHaveTextContent("50.00%");
+    expect(within(table).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Project", "Manager", "Due date"]);
+    expect(table).not.toHaveTextContent(/%/);
     expect(first).toHaveTextContent("Mira Shah");
     expect(first).toHaveTextContent("22 Aug 2026");
-    expect(second).toHaveTextContent("100.00%");
     expect(second).toHaveTextContent("Unassigned");
     expect(screen.getByRole("link", { name: "View all projects" })).toHaveAttribute("href", "/admin/dashboard?tab=projects&periodDays=7&comparison=off");
   });
 
-  it("keeps zero progress distinct from missing eligible progress and respects project link permissions", () => {
+  it("omits zero and missing progress while respecting project link permissions and risk state", () => {
     const data = structuredClone(superAdminDashboardProjectsPageFixture);
     data.items[0].execution.progress = { numerator: 0, denominator: 9, rateBps: 0, fallbackTaskCount: 0 };
     data.items[1].execution.progress = { numerator: 0, denominator: 0, rateBps: null, fallbackTaskCount: 0 };
     data.items[1].risk.level = "gray";
     renderPriority({ data }, false);
     expect(screen.queryByRole("link", { name: "North Residence" })).not.toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "North Residence execution progress" })).toHaveAttribute("value", "0");
-    expect(screen.queryByRole("progressbar", { name: "Lake Apartment execution progress" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     const second = screen.getByRole("row", { name: /Lake Apartment/ });
-    expect(second).toHaveTextContent("Not available");
-    expect(second).toHaveTextContent("No eligible execution progress denominator");
+    expect(second).not.toHaveTextContent(/progress|%/i);
     expect(second).toHaveTextContent("Not tracked");
   });
 
@@ -92,6 +90,6 @@ describe("Dashboard priority projects", () => {
     renderPriority({ data: { ...superAdminDashboardProjectsPageFixture, dataQuality: { status: "partial", totalIssueCount: 2, issues: [], unavailableMetricKeys: ["execution.weightedProgress", "risk.projectDistribution"] } } });
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Red risk")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Not available")).toHaveLength(4);
+    expect(screen.getAllByText("Not available")).toHaveLength(2);
   });
 });

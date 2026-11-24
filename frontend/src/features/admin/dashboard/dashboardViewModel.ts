@@ -64,7 +64,6 @@ const metricKeyOverrides: Record<string, string> = {
   "procurement.Open": "procurement.open",
   "procurement.In progress": "procurement.inProgress",
   "procurement.Completed": "procurement.completed",
-  "procurement.Average persisted progress": "procurement.averageProgress",
   "procurement.Approved procurement amount": "procurement.approvedAmountPaise",
   "procurement.Posted procurement spend": "procurement.postedSpendPaise",
   "procurement.Variance": "procurement.variancePaise",
@@ -86,7 +85,6 @@ const metricKeyOverrides: Record<string, string> = {
   "execution.Overdue incomplete": "execution.overdue",
   "execution.Unassigned": "execution.unassigned",
   "execution.Unassigned overdue": "execution.overdueUnassigned",
-  "execution.Weighted progress": "execution.weightedProgress",
   "workforce.Active workers": "workforce.activeWorkers",
   "workforce.Workers with assignments": "workforce.assignedWorkers",
   "workforce.Unassigned workers": "workforce.unassignedWorkers",
@@ -153,7 +151,6 @@ function moduleMetrics(tab: Exclude<DashboardTab, "overview">, data: SuperAdminD
     cards = [
       { label: "Not started", value: data.procurement.notStarted }, { label: "Open", value: data.procurement.open },
       { label: "In progress", value: data.procurement.inProgress }, { label: "Completed", value: data.procurement.completed },
-      { label: "Average persisted progress", value: formatDashboardRatio(data.procurement.averageProgress), unavailable: data.procurement.averageProgress.rateBps === null, detail: `Average across ${data.procurement.averageProgress.denominator} tracked ${data.procurement.averageProgress.denominator === 1 ? "task" : "tasks"}` },
       { label: "Approved procurement amount", value: formatNullablePaise(data.procurement.plannedAmountPaise), unavailable: data.procurement.plannedAmountPaise === null },
       { label: "Posted procurement spend", value: formatPaise(data.procurement.postedSpendPaise) },
       { label: "Variance", value: formatNullablePaise(data.procurement.variancePaise), unavailable: data.procurement.variancePaise === null }
@@ -172,7 +169,6 @@ function moduleMetrics(tab: Exclude<DashboardTab, "overview">, data: SuperAdminD
     { label: "In progress", value: data.execution.inProgress }, { label: "Completed", value: data.execution.completed },
     { label: "Completed in period", value: data.execution.completedInPeriod }, { label: "Overdue incomplete", value: data.execution.overdue },
     { label: "Unassigned", value: data.execution.unassigned }, { label: "Unassigned overdue", value: data.execution.overdueUnassigned },
-    { label: "Weighted progress", value: formatDashboardRatio(data.execution.weightedProgress), unavailable: data.execution.weightedProgress.rateBps === null, detail: `${ratioDetail(data.execution.weightedProgress, "effort units")} · ${data.execution.weightedProgress.fallbackTaskCount} fallback tasks` }
   ];
   if (tab === "workforce") cards = [
     { label: "Active workers", value: data.workforce.activeWorkers }, { label: "Workers with assignments", value: data.workforce.assignedWorkers },
@@ -201,7 +197,7 @@ const primaryLabels: Record<Exclude<DashboardTab, "overview">, string[]> = {
   design: ["Approved", "In progress", "Ready for Client", "Changes requested"],
   procurement: ["In progress", "Completed", "Approved procurement amount", "Posted procurement spend"],
   finance: ["Approved net revenue, excluding GST", "Recorded expenses", "Current profit (live)", "Current margin"],
-  execution: ["All execution tasks", "In progress", "Overdue incomplete", "Weighted progress"],
+  execution: ["All execution tasks", "In progress", "Overdue incomplete"],
   workforce: ["Active workers", "Workers with assignments", "Unassigned workers", "Average calculated KPI"],
   risk: ["Red-risk projects", "Yellow-risk projects", "Clear projects", "Not tracked"]
 };
@@ -250,10 +246,8 @@ export function getDashboardMetrics(tab: DashboardTab, data: SuperAdminDashboard
       metric("Design approval rate", "design.approvalRate", formatDashboardRatio(data.design.approvalRate), ratioDetail(data.design.approvalRate, "eligible plans"), data.design.approvalRate.rateBps !== null),
       metric("Design plans approved", "design.approved", data.design.approved, "Current plan state"),
       metric("Design changes requested", "design.changesRequested", data.design.changesRequested, "Current plan state"),
-      metric("Procurement progress", "procurement.averageProgress", formatDashboardRatio(data.procurement.averageProgress), `Average across ${data.procurement.averageProgress.denominator} tracked ${data.procurement.averageProgress.denominator === 1 ? "task" : "tasks"}`, data.procurement.averageProgress.rateBps !== null),
       metric("Procurement in progress", "procurement.inProgress", data.procurement.inProgress, "Current task state"),
       metric("Procurement completed", "procurement.completed", data.procurement.completed, "Current task state"),
-      metric("Execution progress", "execution.weightedProgress", formatDashboardRatio(data.execution.weightedProgress), `${ratioDetail(data.execution.weightedProgress, "effort units")} · ${data.execution.weightedProgress.fallbackTaskCount} fallback tasks`, data.execution.weightedProgress.rateBps !== null),
       metric("Unassigned execution", "execution.unassigned", data.execution.unassigned, "Current execution tasks"),
       metric("Active workers", "workforce.activeWorkers", data.workforce.activeWorkers, "Current workforce"),
       metric("Average calculated KPI", "workforce.averageKpi", formatDashboardRatio(data.workforce.averageKpi), `Based on ${data.workforce.averageKpi.denominator} eligible ${data.workforce.averageKpi.denominator === 1 ? "worker" : "workers"}`, data.workforce.averageKpi.rateBps !== null),

@@ -61,12 +61,11 @@
   line-height: 1.4;
 }
 
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(1) { inline-size: 26%; }
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(2) { inline-size: 17%; }
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(3) { inline-size: 14%; }
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(4) { inline-size: 9%; }
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(5) { inline-size: 20%; }
-.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(6) { inline-size: 14%; }
+.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(1) { inline-size: 29%; }
+.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(2) { inline-size: 18%; }
+.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(3) { inline-size: 16%; }
+.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(4) { inline-size: 22%; }
+.ui-app-shell[data-role="client"] .client-dashboard__table thead th:nth-child(5) { inline-size: 15%; }
 
 .ui-app-shell[data-role="client"] .client-dashboard__table tbody tr + tr > * {
   border-block-start: 1px solid var(--client-line);
@@ -84,8 +83,28 @@
   font-weight: 400;
 }
 
-.ui-app-shell[data-role="client"] .client-dashboard__progress {
-  font-variant-numeric: tabular-nums;
+.ui-app-shell[data-role="client"] .client-dashboard__status {
+  display: grid;
+  gap: 0.15rem;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role="client"] .client-dashboard__status-notice {
+  color: var(--client-muted);
+  font-size: 0.75rem;
+}
+
+.ui-app-shell[data-role="client"] .client-dashboard__status-retry {
+  justify-self: start;
+  min-block-size: 2.75rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #294d32;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
 }
 
 .ui-app-shell[data-role="client"] .client-dashboard__table a {
@@ -104,6 +123,7 @@
 }
 
 .ui-app-shell[data-role="client"] .client-dashboard__table-scroll:focus-visible,
+.ui-app-shell[data-role="client"] .client-dashboard__status-retry:focus-visible,
 .ui-app-shell[data-role="client"] .client-dashboard__table a:focus-visible {
   outline: 2px solid #294d32;
   outline-offset: -2px;

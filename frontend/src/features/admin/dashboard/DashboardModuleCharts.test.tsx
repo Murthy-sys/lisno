@@ -31,6 +31,15 @@ const unavailable = (data: SuperAdminDashboardOverview, metricKey: string, messa
 
 describe("dashboard conventional analytical charts", () => {
   beforeEach(() => capturedCharts.clear());
+  it("keeps execution task analysis with no progress chart or empty secondary grid slot", async () => {
+    const view = render(<DashboardModuleCharts tab="execution" data={fixture()} />);
+    await userEvent.setup().click(screen.getByText("More analysis"));
+    expect(screen.getByRole("heading", { name: "Execution tasks by trade" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Weighted execution progress" })).not.toBeInTheDocument();
+    expect(capturedCharts.has("dashboard-execution-progress")).toBe(false);
+    expect(view.container.querySelector(".dashboard-secondary-charts .dashboard-chart-grid")).toHaveClass("dashboard-chart-grid--single");
+  });
+
   it.each(tabs)("renders %s as two primary charts with accessible supplementary analysis", (tab) => {
     const view = render(<DashboardModuleCharts tab={tab} data={fixture()} />);
     expect(within(view.container.querySelector(".dashboard-reference-chart-row") as HTMLElement).getAllByRole("img")).toHaveLength(2);

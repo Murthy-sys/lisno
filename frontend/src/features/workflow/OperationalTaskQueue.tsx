@@ -331,6 +331,7 @@ function ProgressUpdateDialog({
       eyebrow={ROLE_LABELS[task.assigneeRole]}
       description={`Current progress ${task.progress}%. Completing the task requires 100%.`}
       metadata={<span>{task.projectName} · Version {task.version}</span>}
+      headerActions={<ProjectStatusButton projectId={task.projectId} projectName={task.projectName} presentation="chip" />}
       width="narrow"
       dirty={progress !== String(task.progress)}
       onClose={onClose}

@@ -13,10 +13,12 @@ import { authorizationFor } from "../../test/authFixtures";
 import { projectWorkflowKeys, type DesignWorkflowView } from "../workflow/projectWorkflowApi";
 import { DesignerDesignPlanTasksPage } from "./DesignerDesignPlanTasksPage";
 
+const statusAccess = vi.hoisted(() => ({ enabled: false }));
+
 vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({
-    user: { id: "designer-1", role: "designer", name: "Design team" },
-    authorization: authorizationFor("designer", ["projects.design_workflow.read", "design.plan_response_tasks.read"])
+    user: { id: "designer-1", role: "designer", name: "Design team" }, status: "authenticated",
+    authorization: authorizationFor("designer", ["projects.design_workflow.read", "design.plan_response_tasks.read", ...(statusAccess.enabled ? ["projects.status.read" as const] : [])])
   })
 }));
 
@@ -57,6 +59,7 @@ const secondTask: DesignPlanTask = {
 };
 
 beforeEach(() => {
+  statusAccess.enabled = false;
   server.use(
     http.get("/api/v1/estimates/:estimateId/design-plan-documents", () => HttpResponse.json({ data: { manifestHash: "a".repeat(64), readyForSubmission: true, documents: [], reviewRoundId: null } })),
     http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => HttpResponse.json({ data: uploadWorkflow(String(params.projectId)) })),
@@ -928,10 +931,22 @@ describe("DesignerDesignPlanTasksPage", () => {
     ]));
   });
 
-  it("switches the active project without mounting every extraction workspace", async () => {
+  it("switches the active project and its header owner without mounting every extraction workspace", async () => {
+    statusAccess.enabled = true;
+    const statusRequests: string[] = [];
     const workspaceRequests: string[] = [];
     const workflowRequests: string[] = [];
     server.use(
+      http.get("/api/v1/projects/:projectId/status", ({ params }) => {
+        const projectId = String(params.projectId);
+        statusRequests.push(projectId);
+        return HttpResponse.json({ data: {
+          projectId, projectName: projectId === "project-1" ? assignedTask.projectName : secondTask.projectName,
+          projectStatus: "active", serverNow: "2026-11-24T09:00:00Z", state: "active", issue: null,
+          currentStage: { key: "design_planning", label: "Design planning" },
+          pendingActions: [{ id: `plan-${projectId}`, stageKey: "design_planning", stageLabel: "Design planning", action: "Prepare design", state: "pending", responsibleRole: "designer", people: [{ id: `owner-${projectId}`, name: projectId === "project-1" ? "Aurora Designer" : "Coastal Designer", role: "designer" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+        } });
+      }),
       http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => {
         const projectId = String(params.projectId);
         workflowRequests.push(projectId);
@@ -960,6 +975,11 @@ describe("DesignerDesignPlanTasksPage", () => {
     const queue = await screen.findByRole("region", { name: "Assigned projects" });
     await screen.findByRole("heading", { name: "Upload design" });
     await waitFor(() => expect(workspaceRequests).toEqual(["/api/v1/estimates/estimate-1/design-uploads"]));
+    const chip = await screen.findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(chip).toHaveTextContent("Aurora Designer");
+    expect(chip.closest(".designer-plan-project__heading")).toContainElement(screen.getByRole("heading", { name: "Aurora Villa" }));
+    expect(within(queue).queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(statusRequests).toEqual(["project-1"]);
 
     await user.click(
       within(queue).getByRole("button", { name: /Coastal Apartment.*Extraction in progress/i })
@@ -976,6 +996,33 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(await screen.findByText("Coastal Lighting Plan")).toBeVisible();
     expect(await screen.findByRole("button", { name: "Designer Uploading Space planning with Tentative look and Feel — In progress" })).toBeVisible();
     expect(workflowRequests).toEqual(["project-1", "project-2"]);
+    const secondChip = await screen.findByRole("button", { name: "Project status for Coastal Apartment" });
+    expect(secondChip).toHaveTextContent("Coastal Designer");
+    expect(screen.queryByText(/Aurora Designer/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Project status for/ })).toHaveLength(1);
+    expect(statusRequests).toEqual(["project-1", "project-2"]);
+  });
+
+  it.each(["empty", "denied", "unlinked", "tasks_denied"] as const)("does not disclose a project-owner chip for %s selected-project evidence", async state => {
+    statusAccess.enabled = true;
+    const statusReads: string[] = [];
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => state === "tasks_denied"
+        ? HttpResponse.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 })
+        : HttpResponse.json({ data: state === "empty" ? [] : [{ ...assignedTask, projectId: state === "unlinked" ? "" : assignedTask.projectId }] })),
+      http.get("/api/v1/estimates/:estimateId/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() })),
+      http.get("/api/v1/projects/:projectId/status", ({ params }) => {
+        statusReads.push(String(params.projectId));
+        return HttpResponse.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 });
+      })
+    );
+    renderPage();
+    if (state === "empty") await screen.findByText("No approved estimates are assigned to you for design planning.");
+    else if (state === "tasks_denied") await screen.findByText("We couldn't load your design-plan tasks.");
+    else await screen.findByRole("heading", { name: "Aurora Villa" });
+    if (state === "denied") await waitFor(() => expect(statusReads).toEqual(["project-1"]));
+    else expect(statusReads).toEqual([]);
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
   });
 
   it("keeps submitted extracted images visible and read-only", async () => {

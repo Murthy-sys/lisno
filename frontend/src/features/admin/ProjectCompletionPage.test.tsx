@@ -2,11 +2,24 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { ProjectCompletionPage } from "./ProjectCompletionPage";
+import type { ProjectStatusSummary } from "../../api/types";
+import { authorizationFor } from "../../test/authFixtures";
+import * as statusApi from "../project-status/projectStatusApi";
+
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "admin-viewer", role: "super_admin" }, status: "authenticated", authorization: authorizationFor("super_admin") }) }));
+
+beforeEach(() => {
+  vi.spyOn(statusApi, "getProjectStatus").mockImplementation(async projectId => ({
+    projectId, projectName: projectId === "project-a" ? "Jayan Villa" : "Garden home", projectStatus: "active", state: "active", serverNow: "2026-11-24T10:00:00Z", issue: null,
+    currentStage: { key: "final_completion", label: "Final project completion" },
+    pendingActions: [{ id: `completion-${projectId}`, stageKey: "final_completion", stageLabel: "Final project completion", action: "Review completion", state: "pending", responsibleRole: "super_admin", people: [{ id: `owner-${projectId}`, name: projectId === "project-a" ? "First owner" : "Second owner", role: "super_admin" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+  } satisfies ProjectStatusSummary));
+});
 
 const summary = (ready: boolean) => ({
   projectId: "project-a", projectName: "Jayan Villa", projectStatus: "active", completionAuthorityVersion: 4,
@@ -17,6 +30,29 @@ const summary = (ready: boolean) => ({
 });
 
 describe("ProjectCompletionPage", () => {
+  it("loads one chip for the selected final task and replaces its project identity when selection changes", async () => {
+    server.use(http.get("/api/v1/admin/project-completion-tasks", () => HttpResponse.json({ data: { items: [summary(true), { ...summary(false), projectId: "project-b", projectName: "Garden home" }], total: 2, limit: 100, offset: 0 } })));
+    renderWithQuery(<MemoryRouter><ProjectCompletionPage /></MemoryRouter>);
+    const first = await screen.findByRole("button", { name: /Jayan Villa/ });
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(statusApi.getProjectStatus).not.toHaveBeenCalled();
+    await userEvent.click(first);
+    const firstChip = await screen.findByRole("button", { name: "Project status for Jayan Villa" });
+    expect(firstChip.closest(".project-completion-page__detail-head")).not.toBeNull();
+    expect(firstChip).toHaveTextContent("First owner");
+    expect(screen.queryByText("Site progress")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Project status/ })).toHaveLength(1);
+    expect(statusApi.getProjectStatus).toHaveBeenCalledWith("project-a", expect.any(AbortSignal));
+    await userEvent.click(screen.getByRole("button", { name: /Garden home Pending with/ }));
+    const secondChip = await screen.findByRole("button", { name: "Project status for Garden home" });
+    expect(secondChip).toHaveTextContent("Second owner");
+    expect(screen.queryByText(/First owner/)).not.toBeInTheDocument();
+    expect(statusApi.getProjectStatus).toHaveBeenCalledWith("project-b", expect.any(AbortSignal));
+    expect(screen.getAllByRole("button", { name: /Project status/ })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Open project" })).toHaveAttribute("href", "/admin/projects/project-b");
+    expect(screen.getByRole("button", { name: "Mark project completed" })).toBeDisabled();
+  });
+
   it("loads projects beyond the first hundred final tasks", async () => {
     server.use(http.get("/api/v1/admin/project-completion-tasks", ({ request }) => {
       const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");

@@ -30,7 +30,7 @@ export function OrganizationTree({ managers }: { managers: OrganizationManager[]
                 <div className="management-designer-list">{manager.designers.map((designer) => (
                   <div key={designer.id} className="organization-designer">
                     <DesignerRecord designer={{ user: designer, ...designer.summary }} base="/head" onReview={() => setSelectedId(designer.id)} />
-                    {designer.summary.projects.length ? <ul className="management-team__projects" aria-label={`${designer.name} projects`}>{designer.summary.projects.map((project) => <li key={project.id}><Link to={`/head/projects/${encodeURIComponent(project.id)}`}>{project.name}{project.progress === undefined ? "" : ` · ${project.progress}%`}</Link></li>)}</ul> : <p className="inline-empty">No assigned projects.</p>}
+                    {designer.summary.projects.length ? <ul className="management-team__projects" aria-label={`${designer.name} projects`}>{designer.summary.projects.map((project) => <li key={project.id}><Link to={`/head/projects/${encodeURIComponent(project.id)}`}>{project.name}</Link></li>)}</ul> : <p className="inline-empty">No assigned projects.</p>}
                   </div>
                 ))}</div>
                 <section className="management-evaluation" aria-label={`${manager.name} evaluation history`}>

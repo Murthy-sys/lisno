@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -389,6 +390,7 @@ export function ClientResponseInboxPage() {
         <ContextPanel
           key={summaryId}
           title="Client response summary"
+          headerActions={summary?.project?.id ? <ProjectStatusButton projectId={summary.project.id} projectName={summary.project.name} presentation="chip" /> : undefined}
           eyebrow="Estimate review"
           className="administration-context-panel"
           onClose={() => setSummaryId(null)}

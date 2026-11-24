@@ -26,7 +26,6 @@ export function BudgetConsumptionPath({ data }: { data: SuperAdminDashboardOverv
 export function MarginPath({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="finance" index={4} />; }
 export function ExecutionStateChart({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="execution" index={1} />; }
 export function ExecutionRoleChart({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="execution" index={2} />; }
-export function ExecutionProgressPath({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="execution" index={3} />; }
 export function WorkerRoleChart({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="workforce" index={0} />; }
 export function WorkforceAssignmentChart({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="workforce" index={1} />; }
 export function GovernanceQueueChart({ data }: { data: SuperAdminDashboardOverview }) { return <DatasetChart data={data} tab="workforce" index={2} />; }

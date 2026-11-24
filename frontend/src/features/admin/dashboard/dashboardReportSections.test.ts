@@ -3,15 +3,23 @@ import { superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePag
 import { projectReportTable, reportSection, workforceReportTable } from "./dashboardReportSections";
 
 describe("dashboard report section alignment", () => {
-  it("keeps priority progress and risk labels identical to the screen", () => {
+  it("keeps priority identities and risk labels aligned without a progress report column", () => {
     const page = structuredClone(superAdminDashboardProjectsPageFixture);
     page.items[0].execution.progress = { numerator: 0, denominator: 0, rateBps: 0, fallbackTaskCount: 0 };
     page.items[0].risk.level = "gray";
     page.items[1].risk.level = "green";
-    const rows = projectReportTable("overview", page).rows;
-    expect(rows[0][1]).toBe("Not available");
-    expect(rows[0][4]).toBe("Not tracked");
-    expect(rows[1][4]).toBe("Clear");
+    const table = projectReportTable("overview", page);
+    expect(table.columns).toEqual(["Project", "Manager", "Due date", "Risk"]);
+    expect(table.rows[0][1]).toBe("Mira Shah");
+    expect(table.rows[0][3]).toBe("Not tracked");
+    expect(table.rows[1][3]).toBe("Clear");
+    expect(JSON.stringify(table)).not.toMatch(/progress|%/i);
+  });
+  it.each(["procurement", "execution"] as const)("keeps %s report status and amounts or task counts without project progress", (tab) => {
+    const table = projectReportTable(tab, superAdminDashboardProjectsPageFixture);
+    expect(JSON.stringify(table)).not.toMatch(/weighted progress|%/i);
+    expect(table.rows[0][3]).toContain(tab === "procurement" ? "posted of" : "tasks");
+    expect(table.rows[0][3]).toContain(tab === "procurement" ? "approved" : "overdue");
   });
   it("omits unverified identity rows and suppresses module amounts", () => {
     const page = structuredClone(superAdminDashboardProjectsPageFixture);

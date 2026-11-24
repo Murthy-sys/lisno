@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { Link } from "react-router-dom";
 
@@ -23,6 +24,7 @@ export function AdminProjectQuickView({ project, canOpenWorkspace, onClose }: {
       eyebrow="Project summary"
       className="administration-context-panel"
       onClose={onClose}
+      headerActions={project ? <ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" /> : undefined}
       metadata={project ? <><ProjectId projectNumber={project.projectNumber} /><StatusBadge label={adminProjectStatusLabel(project)} tone="info" /></> : undefined}
       footer={project && canOpenWorkspace ? (
         <Link className="ui-button ui-button--primary" to={`/admin/projects/${encodeURIComponent(project.id)}`}>

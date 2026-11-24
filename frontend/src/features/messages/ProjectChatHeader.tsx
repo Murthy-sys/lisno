@@ -9,8 +9,9 @@ import "./projectChat.css";
 
 export const projectMessagesPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/messages`;
 
-export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "Overview", summaryContainer, presentation = "default" }: {
+export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "Overview", summaryContainer, presentation = "default", showStatus = true }: {
   projectId: string;
+  showStatus?: boolean;
   overviewTo?: string;
   overviewLabel?: string;
   /** Undefined keeps the summary inline; null waits for a portal destination to mount. */
@@ -28,7 +29,7 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
   const clientProject = presentation === "client-project";
   const compact = estimateProgress || clientProject;
   const navigationClass = `project-chat-navigation${presentation === "default" ? "" : ` project-chat-navigation--${presentation}`}`;
-  if (!chat?.enabled || chat.denied.has(projectId)) return compact
+  if (!chat?.enabled || chat.denied.has(projectId)) return !showStatus ? null : compact
     ? <div className={navigationClass}><ProjectStatusButton projectId={projectId} /></div>
     : <ProjectStatusButton projectId={projectId} />;
   const path = projectMessagesPath(projectId);
@@ -45,7 +46,7 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
         {summary.data && summary.data.counts.unreadMentions > 0 ? <span aria-label={`${summary.data.counts.unreadMentions} unread mentions`}>@ {summary.data.counts.unreadMentions}</span> : null}
       </Link>
     </nav>
-    <ProjectStatusButton projectId={projectId} participant={summary.data && !summary.isError ? true : undefined} />
+    {showStatus ? <ProjectStatusButton projectId={projectId} participant={summary.data && !summary.isError ? true : undefined} /> : null}
     {summaryContainer === undefined ? criticalSummary : summaryContainer ? createPortal(criticalSummary, summaryContainer) : null}
   </div>;
 }

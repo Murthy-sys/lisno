@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
@@ -172,7 +173,8 @@ export function ProjectManagerProjectPage({ projectId: suppliedId }: { projectId
             <div><dt>Target handover</dt><dd>{pmDate(data.project.plannedEndAt)}</dd></div>
           </dl>
         </div>
-        <div className="pm-actions pm-project-detail__actions">
+        <div className="pm-actions pm-project-detail__actions project-status-header-actions">
+          {data.project.id === projectId ? <ProjectStatusButton projectId={data.project.id} projectName={data.project.name} presentation="chip" /> : null}
           <Link className="pm-link-button" to={`/projects/${encodeURIComponent(projectId)}/estimations?${new URLSearchParams({ returnTo: `/projects/${encodeURIComponent(projectId)}/execution?${params}` })}`}
             onClick={event => {
               if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || (event.currentTarget.target && event.currentTarget.target !== "_self")) return;

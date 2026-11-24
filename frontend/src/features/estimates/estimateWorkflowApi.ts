@@ -42,7 +42,8 @@ export interface EstimateDesigner {
 export const estimateWorkflowKeys = {
   reviewQueue: ["estimates", "review-queue"] as const,
   designers: ["estimates", "designers"] as const,
-  client: ["client", "estimates"] as const
+  client: ["client", "estimates"] as const,
+  clientSession: (identity: string) => ["client", "estimates", identity] as const
 };
 
 export const getEstimateReviewQueue = () =>
@@ -59,8 +60,8 @@ export const decideEstimateAsDesigner = (
   `/estimates/${encodeURIComponent(estimateId)}/designer-decision`,
   { decision, note }
 );
-export const getClientEstimates = () =>
-  apiClient.get<EstimateQueueItem[]>("/client/estimates");
+export const getClientEstimates = (signal?: AbortSignal) =>
+  apiClient.get<EstimateQueueItem[]>("/client/estimates", { signal, showGlobalLoader: false });
 export const decideEstimateAsClient = (
   estimateId: string,
   decision: "approve" | "request_changes",

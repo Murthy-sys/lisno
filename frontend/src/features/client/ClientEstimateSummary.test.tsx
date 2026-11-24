@@ -11,7 +11,7 @@ import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils"
 import { estimateWorkflowKeys, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
 import { ClientEstimateSummary } from "./ClientEstimateSummary";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "client-one", role: "client" } }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "client-one", role: "client" } }) }));
 
 const projects = [{ id: "project-one", name: "Cedar Home" }, { id: "project-two", name: "Lakeside Studio" }];
 

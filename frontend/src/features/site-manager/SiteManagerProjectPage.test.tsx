@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "../../components/feedback/FeedbackProvider";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
@@ -12,7 +12,9 @@ import { executionFixture, executionPageFixture } from "../execution/executionTe
 import { SiteManagerProjectPage } from "./SiteManagerProjectPage";
 import { siteWorkStatus } from "./siteManagerPresentation";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "site-one", role: "site_manager" }, authorization: { role: "site_manager", permissions: ["procurement.site_completion.manage"] } }) }));
+const statusAccess = vi.hoisted(() => ({ enabled: false }));
+beforeEach(() => { statusAccess.enabled = false; });
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "site-one", role: "site_manager" }, authorization: { role: "site_manager", permissions: ["procurement.site_completion.manage", ...(statusAccess.enabled ? ["projects.status.read"] : [])] } }) }));
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => "live" }));
 const proposal: ExecutionWork = { ...executionFixture, status: "awaiting_schedule", progress: 0, latestNote: "Staff internal note", schedule: null, latestVendorReport: null, latestReportAt: null,
   proposedSchedule: { startDate: "2026-10-09", finishDate: "2026-10-13", reason: "Site ready" }, allowedActions: ["hold", "confirm_schedule"] };
@@ -23,6 +25,27 @@ function setup(items: ExecutionWork[] = [proposal]) {
 }
 
 describe("selected Project Manager project", () => {
+  it.each([false, true])("owns a project-header chip only when embedded is %s", async embedded => {
+    statusAccess.enabled = true; setup([]); let statusReads = 0;
+    server.use(http.get("/api/v1/projects/project-one/status", () => { statusReads++; return HttpResponse.json({ data: {
+      projectId: "project-one", projectName: "Oak residence", projectStatus: "active", serverNow: "2026-11-24T09:00:00Z",
+      state: "active", currentStage: { key: "site", label: "Site measurement" }, issue: null,
+      pendingActions: [{ id: "measure-a", stageKey: "site", stageLabel: "Site measurement", action: "Measure the site", responsibleRole: "designer", people: [{ id: "designer-a", name: "Maya Designer", role: "designer" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
+    } }); }));
+    renderWithQuery(<MemoryRouter><SiteManagerProjectPage projectId="project-one" embedded={embedded} /></MemoryRouter>);
+    await screen.findByText("No issued vendor work for this project yet.");
+    if (embedded) {
+      expect(screen.queryByRole("button", { name: "Project status for Oak residence" })).not.toBeInTheDocument();
+      expect(statusReads).toBe(0);
+    } else {
+      const chip = await screen.findByRole("button", { name: "Project status for Oak residence" });
+      expect(chip).toHaveClass("project-status-chip");
+      expect(chip.closest("header")).toContainElement(screen.getByRole("heading", { name: "Oak residence", level: 1 }));
+      expect(screen.getAllByRole("button", { name: "Project status for Oak residence" })).toHaveLength(1);
+      expect(chip.closest("details")).toBeNull();
+    }
+  });
+
   it("exposes proposed schedule confirmation in a compact detail without eagerly loading history", async () => {
     setup(); let historyReads = 0; const writes: unknown[] = [];
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");

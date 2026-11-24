@@ -18,6 +18,7 @@ export interface DrawerProps {
   eyebrow?: string;
   description?: string;
   metadata?: ReactNode;
+  headerActions?: ReactNode;
   footer?: ReactNode;
   className?: string;
   contentInert?: boolean;
@@ -40,6 +41,7 @@ export function Drawer({
   eyebrow,
   description,
   metadata,
+  headerActions,
   footer,
   className,
   contentInert = false,
@@ -118,6 +120,7 @@ export function Drawer({
                 {description ? <p id={descriptionId} className="ui-drawer__description">{description}</p> : null}
                 {metadata ? <div className="ui-drawer__metadata">{metadata}</div> : null}
               </div>
+              {headerActions ? <div className="ui-drawer__header-actions">{headerActions}</div> : null}
               {closeButton}
             </div>
           ) : (

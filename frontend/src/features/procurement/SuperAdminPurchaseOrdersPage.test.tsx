@@ -8,9 +8,12 @@ import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { SuperAdminPurchaseOrdersPage } from "./SuperAdminPurchaseOrdersPage";
 import type { PurchaseOrder, PurchaseOrderRequestModeSnapshot } from "./purchaseOrderApi";
+import type { ProjectStatusSummary } from "../../api/types";
+import { authorizationFor } from "../../test/authFixtures";
+import * as statusApi from "../project-status/projectStatusApi";
 
 vi.mock("../../auth/AuthProvider", () => ({
-  useAuth: () => ({ authorization: { role: "super_admin", permissions: ["procurement.purchase_orders.approve"] } })
+  useAuth: () => ({ user: { id: "admin-viewer", role: "super_admin" }, status: "authenticated", authorization: authorizationFor("super_admin", ["procurement.purchase_orders.approve", "projects.status.read"]) })
 }));
 
 const order: PurchaseOrder = {
@@ -114,6 +117,11 @@ const capturedRequest = { ...projectRequest, revisions: projectRequest.revisions
 })) };
 
 beforeEach(() => {
+  vi.spyOn(statusApi, "getProjectStatus").mockImplementation(async projectId => ({
+    projectId, projectName: projectId, projectStatus: "active", state: "active", serverNow: "2026-11-24T10:00:00Z", issue: null,
+    currentStage: { key: "procurement", label: "Procurement review" },
+    pendingActions: [{ id: `review-${projectId}`, stageKey: "procurement", stageLabel: "Procurement review", action: "Review request", state: "pending", responsibleRole: "super_admin", people: [{ id: `owner-${projectId}`, name: projectId === "project-one" ? "Maya" : "Ravi", role: "super_admin" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+  } satisfies ProjectStatusSummary));
   vi.stubGlobal("crypto", { randomUUID: () => "key-12345678" });
   server.use(
     http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } })),
@@ -123,6 +131,31 @@ beforeEach(() => {
 });
 
 describe("Super Admin purchase order approval", () => {
+  it.each(["order", "project request"])("keeps status scoped to the selected %s review", async kind => {
+    const orders = [order, { ...order, id: "order-two", orderNumber: "PO-TWO", projectId: "project-two" }];
+    const requests = [projectRequest, { ...projectRequest, id: "request-two", projectId: "project-two", projectName: "Garden Home" }];
+    server.use(
+      http.get("/api/v1/admin/purchase-orders/pending", () => HttpResponse.json({ data: { items: kind === "order" ? orders : [], total: kind === "order" ? 2 : 0, limit: 50, offset: 0 } })),
+      http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: kind === "project request" ? requests : [], total: kind === "project request" ? 2 : 0, limit: 50, offset: 0 } })),
+      http.get("/api/v1/procurement/projects/project-two/purchase-order-commitments", () => HttpResponse.json({ data: { approvedEstimatePaise: 1900000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 1900000 } }))
+    );
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    const first = await screen.findByRole("button", { name: kind === "order" ? /PO-ONE/ : /Aurora Villa/ });
+    expect(statusApi.getProjectStatus).not.toHaveBeenCalled();
+    await userEvent.click(first);
+    const chip = await screen.findByRole("button", { name: /Project status/ });
+    expect(chip).toHaveTextContent("Maya");
+    expect(chip.closest(".purchase-orders__detail-head")).not.toBeNull();
+    expect(chip).toHaveAttribute("type", "button");
+    await userEvent.click(screen.getByRole("button", { name: kind === "order" ? /PO-TWO/ : /Garden Home/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Project status/ })).toHaveTextContent("Ravi"));
+    expect(screen.queryByText(/Owner: Maya/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Project status/ })).toHaveLength(1);
+    expect(statusApi.getProjectStatus).toHaveBeenCalledWith("project-two", expect.any(AbortSignal));
+    await userEvent.click(screen.getByRole("button", { name: kind === "order" ? "Close" : "Close review" }));
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+  });
+
   it("distinguishes repeated In-house labor and material scopes in the saved request", async () => {
     const source = modeSnapshot.mode.preview!;
     const scopes = ["component-private-one", "component-private-two"].flatMap((componentId, index) => (["in_house_labor", "in_house_material"] as const).map(scope => ({

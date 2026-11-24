@@ -96,6 +96,34 @@ function installAdmin(
 }
 
 describe("ClientResponseTaskDetailPage", () => {
+  it.each([true, false])("uses only an explicitly linked response project for the header chip (linked: %s)", async linked => {
+    installAdmin(["identity.self.read", "identity.authorization.read", "estimation.client_response_tasks.read", "estimation.client_response_tasks.decide", "projects.status.read"]);
+    const statusReads: string[] = [];
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks/round-1", () => HttpResponse.json({ data: { ...pendingDetail, project: linked ? pendingDetail.project : null } })),
+      http.get("/api/v1/projects/:projectId/status", ({ params }) => {
+        statusReads.push(String(params.projectId));
+        return HttpResponse.json({ data: { projectId: params.projectId, projectName: "Aurora Villa", projectStatus: "active", serverNow: "2026-11-24T09:00:00Z", state: "active", issue: null,
+          currentStage: { key: "estimate_approval", label: "Estimate approval" },
+          pendingActions: [{ id: "review-project-1", stageKey: "estimate_approval", stageLabel: "Estimate approval", action: "Review estimate", state: "pending", responsibleRole: "client", people: [{ id: "client-1", name: "Current client owner", role: "client" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+        } });
+      })
+    );
+    renderApp(["/admin/client-responses/round-1"]);
+    const heading = await screen.findByRole("heading", { name: "Priya Shah response" });
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    if (linked) {
+      const chip = await screen.findByRole("button", { name: "Project status" });
+      expect(chip).toHaveTextContent("Current client owner");
+      expect(chip.closest("header")).toContainElement(heading);
+      expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(1);
+      expect(statusReads).toEqual(["project-1"]);
+    } else {
+      expect(screen.queryByRole("button", { name: "Project status" })).not.toBeInTheDocument();
+      expect(statusReads).toEqual([]);
+    }
+  });
+
   it.each([
     {
       deliveryStatus: "queued" as const,
