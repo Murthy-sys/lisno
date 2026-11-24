@@ -1,3 +1,4 @@
+import { calculateEstimatePmcPayable, type EstimatePmcPricing } from "../../../../shared/estimation/estimatePmcPayable";
 import { estimateAggregatePricingMatchesLine, toEstimateAggregatePricing, type EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { estimateDimensionRulesEqual, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { estimateComponentPricingMatchesLine, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
@@ -13,6 +14,8 @@ export interface ConfiguredEstimateRoom {
 export interface ConfiguredLineDraft {
   key: string;
   persistedId?: string | undefined;
+  pmcPricing?: EstimatePmcPricing | undefined;
+  savedPmc?: { vendorPayable: boolean; amountPaise: number | null; margin: ConfiguredEstimateLine["pmcMarginSnapshot"] } | undefined;
   roomId: string;
   roomName: string;
   catalogueId: string;
@@ -73,7 +76,12 @@ export const estimatePricingModeLabels: Record<EstimatePricingMode, string> = {
   pmc: "PMC", sub_vendor: "Sub-Vendor", in_house: "In-house"
 };
 
-export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBaseRatesPaise">, mode: EstimatePricingMode): number | null {
+export function nativePmcPricing(line: ConfiguredLineDraft) {
+  return calculateEstimatePmcPayable(line.pmcPricing, line.quantity, line.uomDecimalScale);
+}
+
+export function configuredModeBaseRate(line: ConfiguredLineDraft, mode: EstimatePricingMode): number | null {
+  if (mode === "pmc") return nativePmcPricing(line)?.revisedUnitRatePaise ?? null;
   const rate = line.modeBaseRatesPaise?.[mode];
   return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
 }
@@ -103,7 +111,8 @@ export function updateConfiguredLinePricing(
   const mode = change.classification === "standard" && classification === "special"
     ? "sub_vendor"
     : change.pricingMode !== undefined && change.pricingMode !== line.pricingMode ? change.pricingMode : undefined;
-  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(line, mode)) };
+  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", savedPmc: undefined, rateInput: formatRateInput(configuredModeBaseRate(next, mode)) };
+  if (next.pricingMode === "pmc") return { ...next, savedPmc: undefined, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(next, "pmc")) };
   if (change.rateInput !== undefined) return { ...next, rateSource: "manual" };
   return next;
 }
@@ -161,6 +170,7 @@ export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | n
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
   if (line.uomNeedsQuantityReview) return null;
+  if (line.pricingMode === "pmc") return line.savedPmc ? line.savedPmc.amountPaise : nativePmcPricing(line)?.finalVendorChargesPaise ?? null;
   if (line.aggregatePricing !== undefined) {
     return estimateAggregatePricingMatchesLine({ ...line, source: "configuration" }) ? line.aggregatePricing.totalPaise : null;
   }
@@ -198,6 +208,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     itemType: line.itemType ?? "main_line",
     classification: line.classification ?? "standard",
     pricingMode: line.pricingMode,
+    savedPmc: line.pricingMode === "pmc" ? { amountPaise: line.amountPaise, vendorPayable: line.pmcVendorPayable === true, margin: line.pmcMarginSnapshot } : undefined,
     modeTier: line.modeTier,
     dimensionsMandatory: line.dimensionsMandatory,
     dimensions: line.dimensions ? { ...line.dimensions } : undefined,
@@ -309,12 +320,13 @@ function newLine(
     uomDecimalScale: mainLine.uom.decimalScale,
     inHouseBaseRatePaise,
     modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
+    pmcPricing: mainLine.pmcPricing,
     inHouseComponents: mainLine.inHouseComponents,
     ...currentInHousePolicy(mainLine, modeTier),
     pricingMode: "sub_vendor",
     rateSource: "configuration",
     quantity: 1,
-    rateInput: formatRateInput(configuredModeBaseRate(mainLine, "sub_vendor")),
+    rateInput: formatRateInput(mainLine.modeBaseRatesPaise?.sub_vendor ?? null),
     included: false,
     sourceMissing: false
   };
@@ -391,9 +403,9 @@ export function buildConfiguredLines(
         dimensionRule: saved.dimensions ? saved.dimensionRule : fresh.dimensionRule,
         nativeDimensionsNeedReview: saved.nativeDimensionsNeedReview,
         selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
-        rateSource: saved.rateSource ?? "manual",
-        rateInput: saved.rateSource === "configuration" && saved.pricingMode
-          ? formatRateInput(configuredModeBaseRate(fresh, saved.pricingMode)) : saved.rateInput,
+        rateSource: saved.pricingMode === "pmc" ? "configuration" : saved.rateSource ?? "manual",
+        rateInput: (saved.rateSource === "configuration" || saved.pricingMode === "pmc") && saved.pricingMode
+          ? formatRateInput(configuredModeBaseRate({ ...fresh, quantity: saved.quantity }, saved.pricingMode)) : saved.rateInput,
         included: saved.included,
         recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
         classification: saved.classification,
@@ -411,7 +423,7 @@ export function buildConfiguredLines(
   for (const line of previous) {
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
       line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
-      next.push({ ...applyCurrentInHouseVisibility(line), sourceMissing: true, modeBaseRatesPaise: undefined,
+      next.push({ ...applyCurrentInHouseVisibility(line), sourceMissing: true, pmcPricing: undefined, modeBaseRatesPaise: undefined,
         rateInput: !preservePersisted && !hasNativeReadOnlyDimensionQuantity(line) && !hasNativeReadOnlyTierPricing(line) && !hasNativeReadOnlyInHousePricing(line) && line.rateSource === "configuration" ? "" : line.rateInput });
     }
   }

@@ -46,5 +46,14 @@ export const getEstimateRevision = (estimateId: string, revisionId: string, sign
 export const downloadEstimateRevisionPdf = (estimateId: string, revisionId: string, signal?: AbortSignal) =>
   apiClient.getBlob(`${revisionPath(estimateId)}/${encodeURIComponent(revisionId)}/pdf`, { signal, showGlobalLoader: false });
 
+export const downloadSavedSalesQuotationPdf = (estimateId: string, expectedVersion: number, signal: AbortSignal, stage?: "internal-review") => {
+  const query = new URLSearchParams({ audience: "client", expectedVersion: String(expectedVersion) });
+  if (stage) query.set("stage", stage);
+  return apiClient.getBlob(`/estimates/${encodeURIComponent(estimateId)}/pdf?${query}`, { signal, showGlobalLoader: false });
+};
+
+export const downloadCustomerRevisionPdf = (estimateId: string, revisionId: string, signal: AbortSignal) =>
+  apiClient.getBlob(`${revisionPath(estimateId)}/${encodeURIComponent(revisionId)}/pdf?audience=client`, { signal, showGlobalLoader: false });
+
 export const estimateRevisionLabel = (revision: Pick<EstimateRevisionSummary, "phase" | "sendGeneration">) =>
   `${revision.phase === "pre" ? "Pre-estimate" : "Estimate"} · R${revision.sendGeneration}`;

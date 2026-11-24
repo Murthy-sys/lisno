@@ -1,3 +1,4 @@
+import { pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,16 +11,15 @@ import { componentPricingFixture } from "./estimateComponentPricing.testFixtures
 
 const room = { id: "living", typeId: "living", label: "Living room", sqft: 100 };
 const baskets = new Set(["finishes"]);
-// Estimation receives final selling prices from the server, without margin fields.
 const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [{
   id: "finishes", name: "Finishes", displayOrder: 1, subBaskets: [{
     id: "walls", basketId: "finishes", name: "Walls", displayOrder: 1, mainLines: [{
       id: "paint", mainLineId: "paint", basketId: "finishes", subBasketId: "walls", name: "Wall painting",
       displayOrder: 1, revisionId: "paint-current", applicableTiers: ["signature", "premium"],
-      modeBaseRatesPaise: { pmc: 18_000, sub_vendor: 25_000, in_house: 27_500 },
+      pmcPricing: pmcPricingFixture(18_000), modeBaseRatesPaise: { pmc: 18_000, sub_vendor: 25_000, in_house: 27_500 },
       tierPricing: {
-        signature: { modeBaseRatesPaise: { pmc: 18_000, sub_vendor: 25_000, in_house: 27_500 } },
-        premium: { modeBaseRatesPaise: { pmc: 24_000, sub_vendor: 30_000, in_house: 35_000 } }
+        signature: { pmcPricing: pmcPricingFixture(18_000), modeBaseRatesPaise: { pmc: 18_000, sub_vendor: 25_000, in_house: 27_500 } },
+        premium: { pmcPricing: pmcPricingFixture(24_000), modeBaseRatesPaise: { pmc: 24_000, sub_vendor: 30_000, in_house: 35_000 } }
       },
       uom: { id: "sqft", code: "SQFT", name: "sq ft", decimalScale: 2 }
     }, {
@@ -76,7 +76,7 @@ describe("configured estimate selling prices", () => {
     const current = structuredClone(catalogue);
     const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
     source.itemVersion = 2; source.revisionVersion = 3;
-    source.tierPricing!.signature = { modeBaseRatesPaise: { pmc: 18000, sub_vendor: 25000, in_house: null }, inHouseUsage: "estimator", inHousePricingState: "ready" };
+    source.tierPricing!.signature = { pmcPricing: pmcPricingFixture(18000), modeBaseRatesPaise: { pmc: 18000, sub_vendor: 25000, in_house: null }, inHouseUsage: "estimator", inHousePricingState: "ready" };
     const evidence = { ...componentPricingFixture("paint", 3, 78334), revisionId: "paint-current", uom: source.uom };
     const line: ConfiguredLineDraft = { ...createConfiguredLine(current, room, { mainLineId: "paint", basketId: "finishes", subBasketId: "walls" })!,
       included: true, classification: "special", pricingMode: "in_house", quantity: 3, pricingBasis: "in_house_components_v1",
@@ -162,6 +162,6 @@ describe("configured estimate selling prices", () => {
     expect(rate).toHaveValue("283.2");
     expect(paint.queryByText(/Configured price|Base price/)).not.toBeInTheDocument();
     expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹849.6");
-    expect(paint.queryByText(/base price|margin|profit/i)).not.toBeInTheDocument();
+    expect(paint.getByText(/Maximum Lisno margin/)).toHaveTextContent("20% · ₹180");
   });
 });

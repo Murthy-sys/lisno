@@ -147,6 +147,8 @@ function ruleBody(source: string, selector: string) {
 }
 
 describe("EstimateReviewPanel client disclosures", () => {
+  // Explicit estimate links retain this review view; ordinary Client home is the project table.
+  // An empty selection lets these tests exercise the existing collapsed review state.
   it("keeps version-3 design tools in the project workspace after quotation approval", async () => {
     const quotation = withPublishedReview({ ...clientEstimates[0]!, status: "client_approved", workflowVersion: 3, designPlanVersion: 0 });
     quotation.publishedReview.workflowVersion = 3;
@@ -164,7 +166,7 @@ describe("EstimateReviewPanel client disclosures", () => {
   it("loads final stage approval only beside the expanded approved estimate", async () => {
     tokenStorage.set("client-token");
     installClientApi();
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const user = userEvent.setup();
     const villa = await screen.findByRole("button", { name: /Aurora Villa/ });
     const workflowCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/design-workflow"));
@@ -271,7 +273,7 @@ describe("EstimateReviewPanel client disclosures", () => {
   it("renders exactly one page-level Ask Lisno launcher outside estimate cards", async () => {
     tokenStorage.set("client-token");
     installClientApi();
-    await userEvent.click((renderApp(["/client"]), await screen.findByRole("button", { name: /Aurora Villa/i })));
+    await userEvent.click((renderApp(["/client?estimate="]), await screen.findByRole("button", { name: /Aurora Villa/i })));
 
     await screen.findByRole("complementary", { name: "Design tools" });
     const launchers = screen.getAllByRole("button", { name: "Ask Lisno" });
@@ -284,7 +286,7 @@ describe("EstimateReviewPanel client disclosures", () => {
   it("keeps drawings closed while Sales revises a commercial change request", async () => {
     tokenStorage.set("client-token");
     installClientApi();
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
     expect(await screen.findByText("Sales is revising your estimate")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open uploaded plan client-design.pdf" })).not.toBeInTheDocument();
@@ -319,7 +321,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     tokenStorage.set("client-token");
     installClientApi();
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
 
@@ -332,7 +334,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     installClientApi();
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
 
     const villaHeading = await screen.findByRole("heading", { name: "Aurora Villa", level: 3 });
     const loftHeading = screen.getByRole("heading", { name: "Cedar Loft", level: 3 });
@@ -348,8 +350,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(within(loftCard).queryByText("Mysuru")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
     expect(within(loftCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
-    expect(within(villaCard).queryByText("1 items · GST included")).not.toBeInTheDocument();
-    expect(within(loftCard).queryByText("0 items · GST included")).not.toBeInTheDocument();
+    expect(within(villaCard).queryByText("1 item shown · GST included")).not.toBeInTheDocument();
+    expect(within(loftCard).queryByText("GST included")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
     expect(within(loftCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
     expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
@@ -372,7 +374,9 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "false");
     expect(within(villaPanel).getByText("Aurora Homes · Bengaluru")).toBeVisible();
-    expect(within(villaPanel).getByText("1 items · GST included")).toBeVisible();
+    expect(within(villaPanel).getByText("1 item shown · GST included")).toBeVisible();
+    expect(within(villaPanel).getByRole("button", { name: "View quotation PDF" })).toBeVisible();
+    expect(within(loftCard).queryByRole("button", { name: "View quotation PDF" })).not.toBeInTheDocument();
     expect(within(villaPanel).getByText("False Ceiling")).toBeVisible();
     expect(within(villaPanel).queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(within(villaPanel).getByRole("button", { name: "Approve estimate" })).toBeVisible();
@@ -418,13 +422,13 @@ describe("EstimateReviewPanel client disclosures", () => {
         return Response.json({ data: emptyDrawingWorkspace });
       }
       if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready")) {
-        return new Response(new Blob(["pdf"], { type: "application/pdf" }));
+        return new Response("%PDF-1.5", { headers: { "content-type": "application/pdf" } });
       }
       throw new Error(`Unhandled request: ${url}`);
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
 
     const villaHeading = await screen.findByRole("heading", {
       name: "Aurora Villa",
@@ -452,6 +456,12 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect((pdfRequest?.[1]?.headers as Headers).get("Authorization")).toBe(
       "Bearer client-token"
     );
+    await user.click(within(villaCard).getByRole("button", { name: "View quotation PDF" }));
+    const preview = await screen.findByRole("dialog", { name: /Submitted quotation · Version/ });
+    expect(await within(preview).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    expect(within(preview).getByTitle(/Submitted quotation · Version/)).toHaveAttribute("src", "blob:client-estimate");
+    await user.keyboard("{Escape}");
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/pdf?roundId=round-estimate-ready"))).toHaveLength(2);
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(document.getElementById("client-estimate-estimate-ready-details")).toBeInTheDocument();
   });
@@ -478,7 +488,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     });
     const user = userEvent.setup();
 
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
 
     const villaCard = (await screen.findByRole("heading", {
       name: "Aurora Villa",

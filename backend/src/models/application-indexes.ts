@@ -44,6 +44,7 @@ import { UserModel } from "./User.js";
 import { UserInvitationModel } from "./UserInvitation.js";
 import { PasswordResetRequestModel } from "./PasswordResetRequest.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "./AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeMarginOperationModel } from "./AiEstimatorKnowledgeMarginOperation.js";
 import { AiEstimatorKnowledgeBasketModel } from "./AiEstimatorKnowledgeBasket.js";
 import { VendorBasketRequestModel } from "./VendorBasketRequest.js";
 import { AiEstimatorKnowledgeMainLineModel } from "./AiEstimatorKnowledgeMainLine.js";
@@ -102,6 +103,7 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await VendorBasketProposalResourceModel.init();
   await VendorBasketRequestNotificationModel.init();
   await AiEstimatorKnowledgeSubBasketModel.init();
+  await AiEstimatorKnowledgeMarginOperationModel.init();
   await AiEstimatorKnowledgeMainLineModel.init();
   await AiEstimatorKnowledgeRevisionModel.init();
   await AiEstimatorKnowledgeSectionModel.init();

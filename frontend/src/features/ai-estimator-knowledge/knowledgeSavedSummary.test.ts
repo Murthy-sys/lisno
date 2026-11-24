@@ -40,6 +40,21 @@ function settings(baseRatePaise: number, impactBps: number, minimumMarkupBps: nu
 }
 
 describe("projectKnowledgeSavedSummary", () => {
+  it.each([[true, "Yes"], [false, "No"]] as const)("summarizes saved default display %s without a legacy warning", (showByDefault, expected) => {
+    const payload = { showByDefault };
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: payload } })).overview;
+    const saved = { key: "show-by-default", label: "Show by default", value: expected };
+    expect(result.details).toContainEqual(saved);
+    expect(result.preview).toContainEqual(saved);
+    expect(values(result)).not.toContain("needs review");
+    expect(payload).toEqual({ showByDefault });
+  });
+
+  it("flags malformed default display without interpreting it as Yes", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { showByDefault: "true" } } })).overview;
+    expect(result.details).toContainEqual({ key: "show-by-default", label: "Show by default", value: "Saved configuration needs review" });
+  });
+
   it.each([[true, "Yes · Length × Width"], [false, "No"]] as const)("summarizes dimensions mandatory %s", (dimensionsMandatory, expected) => {
     const result = projectKnowledgeSavedSummary(input({ sections: { overview: { dimensionsMandatory } } })).overview;
     expect(result.details).toContainEqual({ key: "dimensions-mandatory", label: "Dimensions mandatory", value: expected });

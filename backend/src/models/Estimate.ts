@@ -1,3 +1,4 @@
+import { readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -31,6 +32,12 @@ const estimateLineSchema = new Schema({
   rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
   pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined },
   componentPricing: { type: Schema.Types.Mixed, default: undefined, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
+  pmcVendorPayable: { type: Boolean, cast: false, validate: (value: unknown) => value === true, default: undefined },
+  pmcPaymentSplit: { type: Schema.Types.Mixed, default: undefined, validate: (value: unknown) => value === undefined || readEstimatePmcPaymentSplit(value) !== null },
+  pmcMarginSnapshot: { type: new Schema({
+    pmcMarginBps: { type: Number, required: true, min: 1000, max: 2000, validate: Number.isSafeInteger },
+    pmcMarginAmountPaise: { type: Number, required: true, min: 0, validate: Number.isSafeInteger }
+  }, { _id: false }), default: undefined, select: false },
   selectedInHouseComponentIds: { type: [String], default: undefined, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },
@@ -102,6 +109,7 @@ const estimateSchema = new Schema({
   subtotalPaise: { type: Number }, gstPaise: { type: Number }, totalPaise: { type: Number },
   roundOffPaise: { type: Number, default: undefined, cast: false, min: -50, max: 49,
     validate: (value: unknown) => value === undefined || Number.isSafeInteger(value) },
+  pmcPaymentSummary: { type: Schema.Types.Mixed, default: undefined, validate: (value: unknown) => value === undefined || readEstimatePmcPaymentSummary(value) !== null },
   isIncomplete: { type: Boolean, default: false },
   approvalRequired: { type: Boolean, required: true, default: false },
   assignedManagerId: { type: String, ref: "User", default: null },

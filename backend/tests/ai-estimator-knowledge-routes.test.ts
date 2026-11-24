@@ -79,6 +79,9 @@ function services() {
   } as unknown as AiEstimatorKnowledgeReferenceService;
   const item = {
     getSubBasketMargins: vi.fn(async () => ({ basketId: "basket-1", subBasketId: "child-1", versionToken: "a".repeat(64) })),
+    getMarginMatrix: vi.fn(async () => ({ baselineVersion: 1 })),
+    previewMarginDecision: vi.fn(async () => ({ reviewToken: "b".repeat(64) })),
+    commitMarginDecision: vi.fn(async () => ({ alreadyApplied: false })),
     applySubBasketMargins: vi.fn(async () => ({ updatedMainLineIds: ["line-2"], summary: {} })),
     listMainLines: vi.fn(async () => ({ items: [], total: 0 })),
     createMainLine: vi.fn(async () => ({ id: "line-1" })),
@@ -148,6 +151,28 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("validates the default-display Overview flag and preserves Configuration write authorization", async () => {
+    const testServices = services();
+    const server = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/overview";
+    const headers = { Authorization: "Bearer super-admin-token" };
+    const input = (showByDefault: unknown) => ({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { showByDefault } });
+    for (const flag of [true, false]) {
+      await request(server).put(path).set(headers).send(input(flag)).expect(200);
+      expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "overview", input(flag));
+    }
+    for (const value of [null, "true", "false", 0, 1, [], {}]) {
+      const result = await request(server).put(path).set(headers).send(input(value)).expect(400);
+      expect(result.body.error.fields).toMatchObject({ "payload.showByDefault": expect.any(String) });
+    }
+    await request(server).put(path.replace("/overview", "/advanced")).set(headers).send(input(true)).expect(400);
+    for (const role of ["estimator_sales", "procurement", "client"] as const) {
+      await request(appFor(testServices, { ...superAdmin, role })).put(path).set(headers).send(input(true)).expect(403);
+    }
+    await request(server).put(path).send(input(true)).expect(401);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
+  });
+
   it("initializes tier descriptions only through a versioned authorized command without client text", async () => {
     const testServices = services();
     const app = appFor(testServices);
@@ -199,7 +224,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1/margins";
     const headers = { Authorization: "Bearer super-admin-token" };
     await request(app).get(path).set(headers).expect(200);
-    expect(testServices.item.getSubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", undefined);
+    expect(testServices.item.getSubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", undefined, undefined);
     const command = { mode: "pmc", versionToken: "a".repeat(64) };
     await request(app).post(`${path}/apply`).set(headers).send(command).expect(200);
     expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", command);
@@ -215,6 +240,76 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       await request(denied).post(`${path}/apply`).set(headers).send(command).expect(403);
     }
     expect(testServices.item.applySubBasketMargins).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds preview, direct edit and exception approval to their own authorized request shapes", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/b1/sub-baskets/s1/margins";
+    const auth = { Authorization: "Bearer super-admin-token" };
+    const scope = { tier: "premium", mode: "sub_vendor" };
+    const change = { ...scope, ranges: [{ key: "margin", minimumBps: 2000, maximumBps: 3500 }] };
+    const edit = { kind: "edit", changes: [change] };
+    const approve = { kind: "approve", candidate: { ...scope, mainLineId: "main-3" } };
+    const preview = { versionToken: "a".repeat(64), decision: approve };
+    const commit = { ...preview, reviewToken: "b".repeat(64), operationId: "operation-one" };
+
+    await request(app).get(path + "/matrix").set(auth).expect(200);
+    await request(app).post(path + "/preview").set(auth).send(preview).expect(200);
+    await request(app).post(path + "/approve").set(auth).send(commit).expect(200);
+    expect(testServices.item.commitMarginDecision).toHaveBeenLastCalledWith(superAdmin, "b1", "s1", commit);
+    await request(app).post(path + "/defaults").set(auth).send({ ...commit, decision: edit }).expect(200);
+    await request(app).post(path + "/approve").set(auth).send({ ...commit, decision: edit }).expect(400);
+    await request(app).post(path + "/defaults").set(auth).send(commit).expect(400);
+    for (const decision of [
+      { ...approve, candidate: { ...approve.candidate, ranges: change.ranges } },
+      { ...edit, changes: [change, change] },
+      { ...edit, changes: [{ ...change, tier: "default" }] },
+      { ...edit, changes: [{ ...change, mode: "in_house" }] },
+      { ...edit, changes: [{ ...change, ranges: [{ key: "margin", minimumBps: 2100, maximumBps: 3500 }] }] }
+    ]) await request(app).post(path + "/preview").set(auth).send({ ...preview, decision }).expect(400);
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+      const denied = appFor(testServices, { ...superAdmin, role });
+      await request(denied).get(path + "/matrix").set(auth).expect(403);
+      for (const action of ["preview", "approve", "defaults"]) {
+        await request(denied).post(path + "/" + action).set(auth).send({}).expect(403);
+      }
+    }
+    await request(app).post(path + "/approve").send(commit).expect(401);
+    expect(testServices.item.commitMarginDecision).toHaveBeenCalledTimes(2);
+    expect(testServices.item.previewMarginDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires an explicit shared scope for In-house defaults and an originating component for approval", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/b1/sub-baskets/s1/margins";
+    const auth = { Authorization: "Bearer super-admin-token" };
+    const shared = { inHouseScope: "sub_basket" };
+    const tokens = { versionToken: "a".repeat(64), reviewToken: "b".repeat(64), operationId: "shared-operation" };
+    const scope = { tier: "signature", mode: "in_house" };
+    const component = { basketId: "b1", subBasketId: "other" };
+    const ranges = [{ key: "labor", minimumBps: 1500, maximumBps: 2000 }, { key: "material", minimumBps: 1000, maximumBps: 2000 }];
+    const edit = (changes: object[]) => ({ kind: "edit", changes });
+    const sharedEdit = edit([{ ...scope, ranges }]);
+    const previousEdit = edit([{ ...scope, component, ranges }]);
+    const approve = (origin: object) => ({ kind: "approve", candidate: { ...scope, mainLineId: "line", ...origin } });
+    await request(app).get(path + "/matrix").query(shared).set(auth).expect(200);
+    expect(testServices.item.getMarginMatrix).toHaveBeenLastCalledWith(superAdmin, "b1", "s1", "sub_basket");
+    await request(app).get(path).query({ ...shared, modeTier: "signature" }).set(auth).expect(200);
+    expect(testServices.item.getSubBasketMargins).toHaveBeenLastCalledWith(superAdmin, "b1", "s1", "signature", "sub_basket");
+    await request(app).get(path + "/matrix").query({ inHouseScope: "all" }).set(auth).expect(400);
+    await request(app).post(path + "/preview").set(auth).send({ ...shared, versionToken: tokens.versionToken, decision: sharedEdit }).expect(200);
+    await request(app).post(path + "/defaults").set(auth).send({ ...shared, ...tokens, decision: sharedEdit }).expect(200);
+    await request(app).post(path + "/approve").set(auth).send({ ...shared, ...tokens, decision: approve({ component }) }).expect(200);
+    await request(app).post(path + "/approve").set(auth).send({ ...shared, ...tokens, decision: approve({}) }).expect(400);
+    // Legacy bodies must still reach the service for authenticated receipt replay.
+    await request(app).post(path + "/defaults").set(auth).send({ ...tokens, decision: previousEdit }).expect(200);
+    for (const input of [
+      { ...tokens, decision: sharedEdit }, { ...tokens, ...shared, decision: previousEdit },
+      { ...tokens, ...shared, decision: edit([{ ...scope, ranges: [ranges[0]] }]) }
+    ]) await request(app).post(path + "/defaults").set(auth).send(input).expect(400);
+    expect(testServices.item.commitMarginDecision).toHaveBeenCalledTimes(3);
   });
 
   it("validates the full vendor profile and exposes detail only to Super Admin and Procurement", async () => {
@@ -1327,6 +1422,29 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const { in_house_material: _material, ...partial } = modeCalculations;
     expect((await send({ ...partial, in_house: settings })).status).toBe(400);
     expect((await send({ pmc: settings, execution: settings })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts explicit margin field edits only for a matching tier Mode save", async () => {
+    const testServices = services();
+    const server = appFor(testServices);
+    const send = (marginEdits: unknown, modeTier = "premium", sectionKey = "advanced") =>
+      request(server).put(`/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/${sectionKey}`)
+        .set("Authorization", "Bearer super-admin-token")
+        .send({ expectedVersion: 3, modeTier, payload: {}, marginEdits });
+    const margin = { mode: "sub_vendor", key: "margin", bound: "maximumBps" };
+    const labor = { mode: "in_house", key: "labor", bound: "minimumBps", component: { basketId: "b", subBasketId: "s" } };
+    expect((await send([margin, labor])).status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+      expectedVersion: 3, modeTier: "premium", payload: {}, marginEdits: [margin, labor]
+    });
+    expect((await send([])).status).toBe(200);
+    for (const invalid of [[margin, margin], [{ ...margin, key: "labor" }], [{ ...labor, component: undefined }],
+      [{ ...margin, component: labor.component }], [{ ...labor, bound: "baseRatePaise" }]]) {
+      expect((await send(invalid)).status).toBe(400);
+    }
+    expect((await send([margin], "default")).status).toBe(400);
+    expect((await send([margin], "signature", "pricing")).status).toBe(400);
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
   });
 

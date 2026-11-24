@@ -86,6 +86,13 @@ async function readPdf(bytes: Buffer) {
   };
 }
 
+it("identifies the saved draft and version inside the customer-facing PDF", async () => {
+  const result = await createEstimatePdfService().generate({ ...fixture, status: "draft", version: 12 }, { profile: "compact_client_delivery" });
+  const { text } = await readPdf(result.bytes);
+  expect(text).toMatch(/Draft/u);
+  expect(text).toMatch(/estimate-pdf-1\s*\/\s*v12/u);
+});
+
 async function generateWithTextTrace(
   profile: EstimatePdfProfile
 ): Promise<{
@@ -170,13 +177,28 @@ describe("estimate PDF service", () => {
       if (roundOffPaise) {
         expect(pdf.text).toContain("Round off");
         expect(pdf.text).toContain(`${roundOffPaise < 0 ? "-" : "+"}INR ${(Math.abs(roundOffPaise) / 100).toFixed(2)}`);
-        expect(pdf.text.indexOf("Round off")).toBeGreaterThan(pdf.text.indexOf("GST @ 18%"));
-        expect(pdf.text.indexOf("Round off")).toBeLessThan(pdf.text.indexOf("Final total"));
+        expect(pdf.text.indexOf("Round off")).toBeLessThan(pdf.text.indexOf("Total payable"));
       } else expect(pdf.text).not.toContain("Round off");
-      expect(pdf.text).toContain(`INR ${gstPaise / 100}`);
+      expect(pdf.text).not.toContain("GST @");
       expect(pdf.text).toContain(`INR ${totalPaise / 100}`);
       await expect(service.generate({ ...input, roundOffPaise: roundOffPaise + 1 })).rejects.toThrow("totals do not reconcile");
     });
+
+  it("labels new PMC vendor figures and keeps historical quotations on the saved payable", async () => {
+    const service = createEstimatePdfService({ logoSvg: backendLogo });
+    const row = { ...fixture.lineItems[0], pricingMode: "pmc" as const, pmcVendorPayable: true as const,
+      quantity: 10, rate: 100, ratePaise: 10000, amount: 1000, amountPaise: 100000 };
+    const input = { ...fixture, lineItems: [row], subtotal: 1000, gst: 180, total: 1180, subtotalPaise: 100000, gstPaise: 18000, totalPaise: 118000 };
+    const current = await readPdf((await service.generate(input)).bytes);
+    expect(current.text).toContain("Payable to vendor");
+    expect(current.text).toContain("INR 118");
+    expect(current.text).toContain("INR 1,180");
+    expect(current.text).not.toMatch(/GST @|Subtotal|margin/i);
+    const historical = await readPdf((await service.generate({ ...input, lineItems: [{ ...row, pmcVendorPayable: undefined }] })).bytes);
+    expect(historical.text).toContain("Total payable");
+    expect(historical.text).toContain("INR 1,180");
+    expect(historical.text).not.toContain("Payable to vendor");
+  });
 
   it("keeps screen-hidden configured lines and their amounts in both quotation PDF profiles", async () => {
     const service = createEstimatePdfService({ logoSvg: backendLogo });
@@ -198,9 +220,9 @@ describe("estimate PDF service", () => {
       expect(result.text).toContain("Tier: Premium");
       expect(result.text).toContain("Tier: Functional");
       expect(result.text).toContain("mounting accessories");
-      expect(result.text).toContain("INR 121.25");
-      expect(result.text).toContain("INR 191.28");
-      expect(result.text).toContain("INR 34.43");
+      expect(result.text).toContain("INR 143.08");
+      expect(result.text).toContain("INR 82.63");
+      expect(result.text).not.toContain("GST @");
       expect(result.text).toContain("INR 225.71");
     }
     expect(quoted.lineItems).toHaveLength(2);
@@ -282,8 +304,8 @@ describe("estimate PDF service", () => {
     expect(compactPdf.pageDimensions).toEqual([{ width: 595.28, height: 841.89 }]);
     expect(compactPdf.pageTexts).toEqual(standardPdf.pageTexts);
     expect(compactPdf.text).toContain("False ceiling - main area");
-    expect(compactPdf.text).toContain("INR 9,500");
-    expect(compactPdf.text).toContain("Final total");
+    expect(compactPdf.text).toContain("INR 112.10");
+    expect(compactPdf.text).toContain("Total payable");
     expect(compactPdf.text).toContain("INR 11,210");
     expect(compact.textLines).toEqual(standard.textLines);
     expect(compact.imageCalls).toEqual(standard.imageCalls);
@@ -320,15 +342,15 @@ describe("estimate PDF service", () => {
     expect(pdf.text).toContain("29 Jul 2026");
     expect(pdf.text).toContain("False ceiling - main area");
     expect(pdf.text).toContain("Living room");
-    expect(pdf.text).toContain("INR 95");
-    expect(pdf.text).toContain("INR 9,500");
-    expect(pdf.text).toContain("Subtotal");
-    expect(pdf.text).toContain("GST @ 18%");
-    expect(pdf.text).toContain("Final total");
+    expect(pdf.text).toContain("INR 112.1");
+    expect(pdf.text).toContain("INR 11,210");
+    expect(pdf.text).not.toContain("Subtotal");
+    expect(pdf.text).not.toContain("GST @");
+    expect(pdf.text).toContain("Total payable");
     expect(pdf.text).toContain("Valid for 30 days");
     expect(pdf.text).toContain("Rates are subject to material market changes");
     expect(pdf.text).toContain("Final scope depends on site measurement");
-    expect(pdf.text).toContain("GST is applied as shown");
+    expect(pdf.text).toContain("Unit rates and amounts include all taxes");
     expect(pdf.text).toContain("Lisno Interiors");
     expect(pdf.text).toContain("Page 1 of");
     expect(pdf.text).not.toContain("Floor finish");
@@ -375,7 +397,7 @@ describe("estimate PDF service", () => {
           unit: "square feet measured on finished floor area",
           rate: 123_456_789_012,
           quantity: 12_345.67,
-          amount: 1_000_000_000_000_000_000_000_000
+          amount: 10_000_000_000_000
         }
       ]
     });
@@ -384,8 +406,8 @@ describe("estimate PDF service", () => {
     const compactText = pdf.text.replaceAll(" ", "");
 
     expect(compactText).toContain("squarefeetmeasuredonfinishedfloorarea");
-    expect(compactText).toContain("INR1,23,45,67,89,012");
-    expect(compactText).toContain("INR10,00,00,00,00,00,00,00,00,00,00,000");
+    expect(compactText).toContain("INR1,45,67,90,11,034.16");
+    expect(compactText).toContain("INR1,18,00,00,00,00,000");
   });
 
   it("bounds long overview fields before drawing the line-item table", async () => {
@@ -421,7 +443,7 @@ describe("estimate PDF service", () => {
     expect(pdf.pageTexts[0]).toContain("Interior Estimate");
     expect(pdf.pageTexts[0]).toContain("Description");
     expect(pdf.pageTexts[0]).toContain("False ceiling - main area");
-    expect(pdf.pageTexts[0]).toContain("Final total");
+    expect(pdf.pageTexts[0]).toContain("Total payable");
     expect(pdf.pageTexts[0]).toContain("Page 1 of 1");
   });
 

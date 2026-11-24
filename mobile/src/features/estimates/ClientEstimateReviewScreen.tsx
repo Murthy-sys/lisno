@@ -17,7 +17,7 @@ import { projectDetailTheme } from "../projects/projectDetailTheme";
 import { ClientEstimateAction } from "./ClientEstimateAction";
 import { clientEstimateListKey, getClientEstimates, type ClientEstimateDecisionResult } from "./clientReviewApi";
 import { clientEstimateMoney, clientEstimateStatus, type ClientEstimate } from "./clientReviewModel";
-import { ClientPreEstimateComparison, PublishedEstimateItems } from "./ClientPublishedEstimateDetails";
+import { ClientPreEstimateComparison, PublishedEstimateItems, PublishedPmcPayments } from "./ClientPublishedEstimateDetails";
 
 function nonempty(value: string | undefined | null): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -114,10 +114,11 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
           <View style={styles.meta}>
             <Text style={styles.metaText}>Estimate ID: {estimate.id}</Text>
             {clientName ? <Text style={styles.metaText}>Client: {clientName}</Text> : null}
-            {estimate.subtotal !== null ? <Text style={styles.metaText}>Subtotal: {clientEstimateMoney(estimate.subtotal)}</Text> : null}
-            {estimate.gst !== null ? <Text style={styles.metaText}>GST: {clientEstimateMoney(estimate.gst)}</Text> : null}
+            {!review?.snapshot.pmcPaymentSummary && estimate.subtotal !== null ? <Text style={styles.metaText}>Subtotal: {clientEstimateMoney(estimate.subtotal)}</Text> : null}
+            {!review?.snapshot.pmcPaymentSummary && estimate.gst !== null ? <Text style={styles.metaText}>GST: {clientEstimateMoney(estimate.gst)}</Text> : null}
           </View>
           {review ? <>
+            <PublishedPmcPayments snapshot={review.snapshot} />
             <Text style={styles.metaText}>{review.phase === "post" ? "Final post-estimate" : review.phase === "pre" ? "Pre-estimate" : "Published estimate"} · Version {review.estimateVersion} · Submission {review.sendGeneration}</Text>
             <Text style={styles.metaText}>Submitted {Number.isFinite(Date.parse(review.submittedAt)) ? new Date(review.submittedAt).toLocaleDateString("en-GB") : "Date unavailable"}</Text>
             {review.status === "superseded" ? <Text style={styles.designState}>This submitted review was withdrawn. Your team is revising the estimate; review the next submission when it is ready.</Text> : null}

@@ -345,3 +345,26 @@ describe("ClientEstimateReviewScreen", () => {
     expect(screen.queryByText("Lakeside Villa")).toBeNull();
   });
 });
+
+it("shows the frozen PMC recipients and confirms the same combined customer amount", async () => {
+  const row = estimate("estimate-one", null, 413);
+  const snapshot = { ...row.publishedReview.snapshot, subtotal: 350, gst: 63,
+    subtotalPaise: 35000, gstPaise: 6300, totalPaise: 41300,
+    pmcPaymentSummary: { version: 1, vendorPayablePaise: 11800, lisnoPayablePaise: 2950, pmcTotalPayablePaise: 14750,
+      otherWorkPayablePaise: 29500, roundOffPaise: 0, customerTotalPayablePaise: 44250, nonPmcMilestoneBasisPaise: 29500 },
+    lineItems: [{ id: "pmc-line", roomName: "Kitchen", mainLineName: "PMC cabinets", quantity: 1, rate: 100, amount: 100,
+      ratePaise: 10000, amountPaise: 10000, included: true, pricingMode: "pmc", pmcVendorPayable: true,
+      pmcPaymentSplit: { version: 1, marginBps: 2000, vendorAmountPaise: 10000, lisnoAmountPaise: 2500, estimatedValuePaise: 12500,
+        vendorPayablePaise: 11800, lisnoPayablePaise: 2950, totalPayablePaise: 14750, taxBasis: { subtotalPaise: 35000, gstPaise: 6300 } } }]
+  };
+  const { post } = setup([{ ...row, publishedReview: { ...row.publishedReview, snapshot } }]);
+  await mount(<ClientEstimateReviewScreen estimateId="estimate-one" session={session()} />);
+  await waitFor(() => expect(screen.getByTestId("estimate-total").props.children).toBe("₹442.50"));
+  expect(screen.getByText("PMC payable to Lisno: ₹29.50")).toBeTruthy();
+  expect(screen.getByText("PMC payable to vendors: ₹118")).toBeTruthy();
+  expect(screen.getByText("Other work including GST: ₹295")).toBeTruthy();
+  expect(screen.getByText("Payable to Lisno · 20% of estimated value before tax: ₹29.50")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Approve estimate" }));
+  expect(screen.getByText("Total including GST: ₹442.50")).toBeTruthy();
+  expect(post).not.toHaveBeenCalled();
+});

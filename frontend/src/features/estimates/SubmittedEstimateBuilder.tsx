@@ -1,3 +1,5 @@
+import { readEstimatePmcPaymentSplit } from "../../../../shared/estimation/estimatePmcPaymentSplit";
+import { PmcPaymentLine } from "./estimatePmcPaymentPresentation";
 import { useState } from "react";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -24,10 +26,15 @@ function paise(value: number | null | undefined, legacyRupees: number | null): n
   return Number.isSafeInteger(converted) ? converted : null;
 }
 
+function submittedLineAmount(line: SnapshotLine): number | null {
+  if (line.pmcPaymentSplit !== undefined) return readEstimatePmcPaymentSplit(line.pmcPaymentSplit)?.estimatedValuePaise ?? null;
+  return paise(line.amountPaise, line.amount);
+}
+
 function visibleSubtotal(lines: readonly SnapshotLine[]) {
   let total = 0n;
   for (const line of lines) {
-    const amount = paise(line.amountPaise, line.amount);
+    const amount = submittedLineAmount(line);
     if (amount === null) return "Submitted visible subtotal unavailable";
     total += BigInt(amount);
   }
@@ -96,13 +103,14 @@ export function SubmittedEstimateBuilder({ snapshot, workspace = false, onRefres
     const components = !governed && line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.pricingMode === "in_house" &&
       line.rateSource === "configuration" && evidence?.totalPaise === line.amountPaise ? evidence : null;
     return <article className="submitted-estimate-line" aria-label={`${name} in ${line.roomName}`}>
-      <div className="submitted-estimate-line__heading"><h4>{name}</h4><strong>{money(paise(line.amountPaise, line.amount))}</strong></div>
+      <div className="submitted-estimate-line__heading"><h4>{name}</h4><strong>{money(submittedLineAmount(line))}</strong></div>
       <p className="submitted-estimate-line__context">{line.roomName}{line.itemType === "temporary" ? " · Temporary item" : ""}</p>
       <dl className="submitted-estimate-line__values">
         <div><dt>Quantity</dt><dd>{line.quantity} {line.uomName ?? line.unit}</dd></div>
-        <div><dt>{governed ? "Price including margin" : "Rate"}</dt><dd>{governed ? money(aggregate?.totalPaise ?? null) : components ? "Calculated from saved components" : money(paise(line.ratePaise, line.rate))}</dd></div>
+        <div><dt>{governed ? "Price including margin" : line.pmcPaymentSplit !== undefined ? "Vendor rate before GST" : "Rate"}</dt><dd>{governed ? money(aggregate?.totalPaise ?? null) : components ? "Calculated from saved components" : money(paise(line.ratePaise, line.rate))}</dd></div>
         {line.modeTier ? <div><dt>Configured option</dt><dd>{KNOWLEDGE_MODE_TIER_LABELS[line.modeTier]}</dd></div> : null}
       </dl>
+      <PmcPaymentLine value={line.pmcPaymentSplit} />
       {line.dimensions ? <p>Dimensions: {line.dimensions.length} × {line.dimensions.width} × {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""} (L × W × H){line.dimensionsMandatory ? " · Quantity = L × W" : ""}</p> : null}
       {line.specification ? <p>{line.specification}</p> : null}
       {line.estimateNotes?.map((note, index) => <p key={index}>{note}</p>)}

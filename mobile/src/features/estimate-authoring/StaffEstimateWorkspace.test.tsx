@@ -17,13 +17,13 @@ jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.f
 jest.mock("expo-router/react-navigation", () => ({ useNavigation: () => ({ dispatch: jest.fn() }), usePreventRemove: jest.fn() }));
 jest.mock("../documents/ProtectedDocumentViewer", () => ({ ProtectedDocumentViewer: () => null }));
 const runtimeMock = jest.mocked(useConfiguredRuntime);
-function setup(initial: EstimateDraft | null = estimateFixture()) {
+function setup(initial: EstimateDraft | null = estimateFixture(), catalogue = catalogueFixture) {
  let current = initial;
  const get = jest.fn(async (path: string): Promise<unknown> => {
   if (path === "/leads/lead-one") return leadFixture;
   if (path === "/leads/lead-one/estimate") return current;
   if (path.startsWith("/estimation/catalogue/recommendations")) return { sources: [] };
-  if (path.startsWith("/estimation/catalogue?")) return { ...catalogueFixture, pagination: { offset: 0, hasMore: false } };
+  if (path.startsWith("/estimation/catalogue?")) return { ...catalogue, pagination: { offset: 0, hasMore: false } };
   if (path === "/estimates/review-queue") return current ? [{ ...current, leadId: "lead-one", lead: leadFixture }] : [];
   if (path === "/estimates/designers") return [{ id: "designer-one", name: "Designer One", email: "designer@example.invalid", title: null }];
   throw new Error(`Unexpected GET ${path}`);
@@ -140,6 +140,35 @@ it("keeps other pricing modes editable while hiding unsupported native component
  await fireEvent.press(mode);
  expect(screen.getByRole("radio", { name: "PMC" })).toBeOnTheScreen();
  expect(screen.queryByRole("radio", { name: "In-house" })).toBeNull();
+});
+
+it("shows the maximum Lisno margin separately from the tax-inclusive vendor payable and saves its Configuration rate", async () => {
+ const catalogue = structuredClone(catalogueFixture);
+ catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.pmcPricing = { baseRatePaise: 10000, lowQuantityLimit: "5", impactBps: 1000, pmcMarginBps: 2000 };
+ const api = setup(estimateFixture(), catalogue);
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await fireEvent.press(await screen.findByRole("radio", { name: "3 Estimate items" }));
+ await fireEvent.press(await screen.findByRole("combobox", { name: "Oak cabinet pricing mode" }));
+ await fireEvent.press(screen.getByRole("radio", { name: "PMC" }));
+ await fireEvent.changeText(screen.getByLabelText("Oak cabinet quantity (Square feet)"), "10");
+ expect(await screen.findByText("Maximum Lisno margin before tax: 20% · ₹250.00")).toBeTruthy();
+ expect(screen.getByText("Vendor rate per Square feet including all taxes: ₹118.00")).toBeTruthy();
+ expect(screen.getByText("Vendor payable including all taxes: ₹1,180.00")).toBeTruthy();
+ await fireEvent.press(screen.getByRole("button", { name: "Save draft" }));
+ await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+ expect(api.put.mock.calls[0]![1].lineItems[0]).toMatchObject({ quantity: 10, ratePaise: 10000, rateSource: "configuration" });
+});
+
+it("displays the frozen vendor charges and Lisno margin on an approved PMC item", async () => {
+ const line = { ...lineFixture, pricingMode: "pmc" as const, rateSource: "configuration" as const, ratePaise: 10000, amountPaise: 25000, pmcVendorPayable: true as const, pmcMarginSnapshot: { pmcMarginBps: 1000, pmcMarginAmountPaise: 2778 } };
+ setup(estimateFixture({ status: "client_approved", lineItems: [line], subtotalPaise: 25000, gstPaise: 4500, totalPaise: 29500 }));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByText(/current estimate is read-only/);
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ expect(await screen.findByText("Vendor rate per Square feet including all taxes: ₹118.00")).toBeTruthy();
+ expect(screen.getByText("Vendor payable including all taxes: ₹295.00")).toBeTruthy();
+ expect(screen.getByText("Maximum Lisno margin before tax: 10% · ₹27.78")).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
 });
 
 it("authors a new configured estimate through rooms, scope, items and generation using stable source IDs", async () => {

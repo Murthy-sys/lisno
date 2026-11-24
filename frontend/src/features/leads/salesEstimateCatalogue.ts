@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { configuredTierUnavailableReason, createConfiguredLine, type ConfiguredEstimateRoom, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue, EstimationCatalogueMainLine, EstimationCatalogueTemporaryItem } from "./estimationCatalogueApi";
 import type { RecommendedLineTarget } from "./roomRecommendations";
@@ -56,6 +57,7 @@ export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBaske
 
   return candidates.flatMap(({ target, item, itemType, valid }): SalesEstimateCatalogueRow[] => {
     if (!valid || basketCounts.get(target.basketId) !== 1 || sourceCounts.get(target.mainLineId) !== 1) return [];
+    if (!isMainLineApplicableToRoom(item.applicableRoomCategories, room.typeId)) return [];
     const existing = roomDrafts.get(target.mainLineId);
     if (existing) {
       const line = existing[0]!;
@@ -66,7 +68,7 @@ export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBaske
       if (!line.included && !browseMainBasketIds.has(target.basketId)) return [];
       return [{ line, target, isPreview: false }];
     }
-    if (!browseMainBasketIds.has(target.basketId) || !isEstimationLinePriceVisible(item)) return [];
+    if (!browseMainBasketIds.has(target.basketId) || item.showByDefault !== true || !isEstimationLinePriceVisible(item)) return [];
     const line = createConfiguredLine(catalogue, room, target);
     return line ? [{ line, target, isPreview: true }] : [];
   });

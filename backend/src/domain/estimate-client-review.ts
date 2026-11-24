@@ -1,3 +1,4 @@
+import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "./estimate-pmc-payment-split.js";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "./estimate-component-pricing.js";
 import type { EstimateDimensions, EstimateDimensionRule } from "./estimate-dimensions.js";
 import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
@@ -63,6 +64,7 @@ export function configuredEstimateParentIsValid(line: {
 }
 
 export interface EstimateClientReviewSnapshot {
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   proposal?: import("./estimate-proposal.js").EstimateProposalMetadata;
   rooms?: readonly Record<string, unknown>[];
   bedroomCount?: number | null;
@@ -83,6 +85,8 @@ export interface EstimateClientReviewSnapshot {
     dimensions?: EstimateDimensions;
     dimensionRule?: EstimateDimensionRule | null;
     pricingMode?: EstimatePricingMode;
+    pmcVendorPayable?: true;
+    pmcPaymentSplit?: EstimatePmcPaymentSplit;
     rateSource?: EstimateRateSource;
     selectedInHouseComponentIds?: string[];
     pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;

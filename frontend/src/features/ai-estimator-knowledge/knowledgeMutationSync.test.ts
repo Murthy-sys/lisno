@@ -13,7 +13,8 @@ import {
   syncKnowledgeMainLineDeletion,
   syncKnowledgeLifecycleMutation,
   syncKnowledgeMasterMutation,
-  syncKnowledgeSectionMutation
+  syncKnowledgeSectionMutation,
+  syncKnowledgeSubBasketMargins
 } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
@@ -42,8 +43,13 @@ it("invalidates aggregate pricing and operational detail after saved In-house po
   const keys = [["estimate-in-house-pricing", "lead-a"], ["leads", "lead-a", "estimate"], ["estimate-tiers", "project-a"],
     ["estimates", "revisions", "actor-a", "estimate-a", "detail", "revision-a"],
     ["quotation", "project-a", "detail"], ["procurement", "purchase-order-preparation", "project-a"],
-    ["procurement", "purchase-order-requests", "project-b"],
+    ["procurement", "purchase-order-requests", "project-b"], knowledgeQueryKeys.subBasketMarginMatrix("basket-1", "sub-1"),
     ...marginScopes.flatMap((tier) => [knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1", tier), knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2", tier)])];
+  const parentList = [...knowledgeQueryKeys.subBasketLists("basket-1"), "index-catalog"];
+  const otherList = [...knowledgeQueryKeys.subBasketLists("basket-2"), "index-catalog"];
+  keys.push(parentList);
+  client.setQueryData(otherList, { version: 1 });
+  client.setQueryData(knowledgeQueryKeys.item("line-a"), { mainLineId: "line-a", basketId: "basket-1" });
   const artifactKey = ["issued-artifact", "immutable-round"];
   for (const key of [...keys, artifactKey]) client.setQueryData(key, { version: 1 });
   await syncKnowledgeSectionMutation(client, { id: "section-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced",
@@ -51,6 +57,7 @@ it("invalidates aggregate pricing and operational detail after saved In-house po
     createdById: "admin", updatedById: "admin", createdAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z" });
   for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
   expect(client.getQueryState(artifactKey)?.isInvalidated).toBe(false);
+  expect(client.getQueryState(otherList)?.isInvalidated).toBe(false);
   client.clear();
 });
 
@@ -60,6 +67,31 @@ const actor = {
   createdAt: "2026-08-28T10:00:00.000Z",
   updatedAt: "2026-08-28T10:00:00.000Z"
 } as const;
+
+it("refreshes an observed estimation catalogue after saving either Overview default-display value", async () => {
+  const client = queryClient();
+  let showByDefault = false;
+  const options = { queryKey: estimationCatalogueKeys.ready, staleTime: Infinity,
+    queryFn: vi.fn(async () => ({ mainLineId: "line-1", showByDefault })) };
+  await client.fetchQuery(options);
+  const stop = new QueryObserver(client, options).subscribe(() => undefined);
+  const historyKey = ["issued-artifact", "approved-estimate"];
+  client.setQueryData(historyKey, { included: true, amountPaise: 31_500 });
+  try {
+    for (const value of [true, false]) {
+      showByDefault = value;
+      await syncKnowledgeSectionMutation(client, { ...actor, id: "overview-1", mainLineId: "line-1",
+        revisionId: "revision-1", sectionKey: "overview", applicability: "configured", version: value ? 2 : 3,
+        aggregateVersion: value ? 5 : 6, payload: { showByDefault: value } });
+      expect(client.getQueryData(options.queryKey)).toEqual({ mainLineId: "line-1", showByDefault: value });
+      expect(client.getQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "overview")))
+        .toMatchObject({ payload: { showByDefault: value } });
+      expect(client.getQueryState(historyKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryData(historyKey)).toEqual({ included: true, amountPaise: 31_500 });
+    }
+    expect(options.queryFn).toHaveBeenCalledTimes(3);
+  } finally { stop(); client.clear(); }
+});
 
 function queryClient() {
   return new QueryClient({
@@ -988,4 +1020,21 @@ describe("knowledge mutation cache synchronization", () => {
       .toEqual([returnedSurface]);
     expect(invalidate).toHaveBeenCalledTimes(3);
   });
+});
+
+it("refreshes current estimate and purchase preparation after bulk margin changes", async () => {
+  const client = queryClient();
+  const estimate = ["leads", "lead", "estimate"];
+  const procurement = ["procurement", "purchase-order-preparation", "project"];
+  const item = knowledgeQueryKeys.item("changed");
+  const unchanged = knowledgeQueryKeys.item("other");
+  const parentList = [...knowledgeQueryKeys.subBasketLists("basket"), "index-catalog"];
+  const deletion = knowledgeQueryKeys.subBasketDeletionImpact("basket", "sub");
+  const elsewhere = [...knowledgeQueryKeys.subBasketLists("another"), "index-catalog"];
+  for (const key of [estimate, procurement, item, unchanged, parentList, deletion, elsewhere]) client.setQueryData(key, { version: 1 });
+  expect(await syncKnowledgeSubBasketMargins(client, ["changed"], "basket")).toBe(true);
+  for (const key of [estimate, procurement, item, parentList, deletion]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(unchanged)?.isInvalidated).toBe(false);
+  expect(client.getQueryState(elsewhere)?.isInvalidated).toBe(false);
+  client.clear();
 });

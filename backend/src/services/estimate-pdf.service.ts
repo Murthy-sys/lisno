@@ -1,3 +1,6 @@
+import { estimatePmcPaymentsAreValid, type EstimatePmcPaymentSplit, type EstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
+import { allocateEstimatePayables } from "../domain/estimate-gst-presentation.js";
+import { estimatePdfTax, formatPdfPaise, pdfPayableAmounts, recordedPaise, vendorOnly } from "./estimate-pdf-pricing.js";
 import { estimateAggregateLineAmountIsValid, type EstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { estimateComponentLineAmountIsValid, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../domain/estimate-component-pricing.js";
@@ -19,6 +22,8 @@ export interface EstimatePdfLine extends EstimateDimensionMetadata {
   modeTier?: KnowledgeModeTier;
   pricingMode?: "pmc" | "sub_vendor" | "in_house";
   rateSource?: "configuration" | "manual";
+  pmcVendorPayable?: true;
+  pmcPaymentSplit?: EstimatePmcPaymentSplit;
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
   componentPricing?: EstimateComponentPricing;
   aggregatePricing?: EstimateAggregatePricing;
@@ -50,6 +55,7 @@ export interface EstimatePdfLine extends EstimateDimensionMetadata {
 }
 
 export interface EstimatePdfInput {
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   proposal?: EstimateProposalMetadata;
   id: string;
   version: number;
@@ -63,6 +69,7 @@ export interface EstimatePdfInput {
   totalPaise?: number;
   roundOffPaise?: number;
   lineItems: EstimatePdfLine[];
+  includedPayablesPaise?: readonly number[];
   lead: {
     clientName: string;
     clientEmail: string;
@@ -130,12 +137,6 @@ function safeFilenamePart(value: string): string {
     .replace(/^-+|-+$/g, "");
 
   return part;
-}
-
-function formatInr(value: number): string {
-  return `INR ${new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: 2
-  }).format(value)}`;
 }
 
 function statusLabel(status: string): string {
@@ -259,7 +260,7 @@ function lineDescription(line: EstimatePdfLine): string {
   return estimatePdfCatalogue.get(line.catalogueId)?.description ?? line.catalogueId;
 }
 
-function lineCellText(line: EstimatePdfLine) {
+function lineCellText(line: EstimatePdfLine, grossAmount: number, tax: ReturnType<typeof estimatePdfTax>) {
   if (!estimateDimensionSnapshotValid(line)) throw new Error("The recorded estimate dimensions or calculated quantity are invalid.");
   const measurements = line.dimensions
     ? `${line.dimensionsMandatory ? "Dimensions" : "Recorded dimensions"}: L ${line.dimensions.length} × W ${line.dimensions.width} × H ${line.dimensions.height}${line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}${line.dimensionsMandatory ? "; quantity = L × W" : ""}`
@@ -277,16 +278,10 @@ function lineCellText(line: EstimatePdfLine) {
     quantity: `${new Intl.NumberFormat("en-IN", {
       maximumFractionDigits: line.source === "configuration" ? 6 : 2
     }).format(line.quantity)} ${line.unit}`,
-    rate: estimateAggregateLineAmountIsValid(line) ? "Price including margin" : estimateComponentLineAmountIsValid(line) ? "From components" : formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
-    total: formatInr(line.amountPaise == null ? requiredPdfMoney(line.amount) : line.amountPaise / 100)
+    rate: estimateAggregateLineAmountIsValid(line) ? "Included" : estimateComponentLineAmountIsValid(line) ? "From components"
+      : `INR ${formatPdfPaise(allocateEstimatePayables([recordedPaise(line.ratePaise, line.rate)], tax)[0]!)}`,
+    total: `INR ${formatPdfPaise(grossAmount)}`
   };
-}
-
-function requiredPdfMoney(value: number | null): number {
-  if (value === null || !Number.isFinite(value) || value < 0) {
-    throw new TypeError("An included estimate line has an incomplete amount and cannot be rendered as final.");
-  }
-  return value;
 }
 
 type LineCellText = ReturnType<typeof lineCellText>;
@@ -312,14 +307,6 @@ function measureLineCells(
   const textHeight = Math.max(...regularCellHeights, totalHeight);
 
   return Math.max(minimumRowHeight, textHeight + rowVerticalPadding);
-}
-
-function lineRowHeight(
-  doc: PDFKit.PDFDocument,
-  line: EstimatePdfLine,
-  profile: EstimatePdfProfile
-): number {
-  return measureLineCells(doc, lineCellText(line), profile);
 }
 
 function measureLineCell(
@@ -508,10 +495,10 @@ function drawLineRowFragment(
 
 function drawLineRow(
   doc: PDFKit.PDFDocument,
-  line: EstimatePdfLine,
+  cells: LineCellText,
   profile: EstimatePdfProfile
 ): void {
-  let remaining = lineCellText(line);
+  let remaining = cells;
   let continuation = false;
 
   while (Object.values(remaining).some(Boolean)) {
@@ -565,10 +552,10 @@ function maximumFreshRowHeight(doc: PDFKit.PDFDocument): number {
 
 function rowReservation(
   doc: PDFKit.PDFDocument,
-  line: EstimatePdfLine,
+  cells: LineCellText,
   profile: EstimatePdfProfile
 ): number {
-  const rowHeight = lineRowHeight(doc, line, profile);
+  const rowHeight = measureLineCells(doc, cells, profile);
   const freshCapacity = maximumFreshRowHeight(doc);
   return rowHeight <= freshCapacity
     ? rowHeight
@@ -576,9 +563,9 @@ function rowReservation(
 }
 
 function groupedIncludedLines(input: EstimatePdfInput) {
-  const groups = new Map<string, { label: string; lines: EstimatePdfLine[] }>();
-
-  for (const line of input.lineItems.filter((item) => item.included)) {
+  const groups = new Map<string, { label: string; lines: LineCellText[] }>();
+  const included = input.lineItems.filter(line => line.included);
+  for (const line of included) {
     if (line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line) && !estimateAggregateLineAmountIsValid(line)) {
       throw new TypeError("An included component-priced estimate line needs valid saved component amounts before PDF generation.");
     }
@@ -586,13 +573,16 @@ function groupedIncludedLines(input: EstimatePdfInput) {
       (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line) && !estimateAggregateLineAmountIsValid(line)) {
       throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");
     }
+  }
+  const payables = pdfPayableAmounts(input, included), tax = estimatePdfTax(input);
+  for (const [index, line] of included.entries()) {
     const entry = line.source === "configuration" ? undefined : estimatePdfCatalogue.get(line.catalogueId);
     const key = line.source === "configuration" ? line.mainBasketId ?? "" : entry?.sectionId ?? "legacy";
     const group = groups.get(key) ?? {
       label: line.source === "configuration" ? line.mainBasketName ?? "Configured basket" : entry?.sectionLabel ?? "Additional items",
       lines: []
     };
-    group.lines.push(line);
+    group.lines.push(lineCellText(line, payables[index]!, tax));
     groups.set(key, group);
   }
 
@@ -773,7 +763,7 @@ function drawTotals(
   const labelX = doc.page.width - doc.page.margins.right - 220;
   const amountX = labelX + 100;
   const amountWidth = 120;
-  const row = (label: string, amount: number, bold = false, signed = false) => {
+  const row = (label: string, paise: number, bold = false, signed = false) => {
     const y = doc.y;
     doc
       .font(bold ? "Helvetica-Bold" : "Helvetica")
@@ -781,7 +771,7 @@ function drawTotals(
       .fillColor(bold ? colors.ink : colors.muted)
       .text(label, labelX, y, { width: 100, lineBreak: false })
       .fillColor(colors.ink)
-      .text(signed ? `${amount < 0 ? "-" : "+"}INR ${Math.abs(amount).toFixed(2)}` : formatInr(amount), amountX, y, {
+      .text(signed ? `${paise < 0 ? "-" : "+"}INR ${(Math.abs(paise) / 100).toFixed(2)}` : `INR ${formatPdfPaise(paise)}`, amountX, y, {
         width: amountWidth,
         align: "right",
         lineBreak: false
@@ -789,22 +779,20 @@ function drawTotals(
     doc.y = y + (bold ? 24 : 20);
   };
 
-  row("Subtotal", input.subtotalPaise === undefined ? input.subtotal : input.subtotalPaise / 100);
-  row("GST @ 18%", input.gstPaise === undefined ? input.gst : input.gstPaise / 100);
-  if (input.roundOffPaise) row("Round off", input.roundOffPaise / 100, false, true);
+  if (input.roundOffPaise) row("Round off", input.roundOffPaise, false, true);
   doc
     .strokeColor(colors.red)
     .lineWidth(1)
     .moveTo(labelX, doc.y - 5)
     .lineTo(amountX + amountWidth, doc.y - 5)
     .stroke();
-  row("Final total", input.totalPaise === undefined ? input.total : input.totalPaise / 100, true);
+  row(vendorOnly(input) ? "Payable to vendor" : "Total payable", recordedPaise(input.totalPaise, input.total), true);
 
   const terms = [
     "Valid for 30 days.",
     "Rates are subject to material market changes.",
     "Final scope depends on site measurement.",
-    "GST is applied as shown."
+    "Unit rates and amounts include all taxes."
   ];
   doc
     .font("Helvetica")
@@ -860,6 +848,9 @@ export function createEstimatePdfService(options?: {
 
   return {
     async generate(input, generateOptions) {
+      if (!estimatePmcPaymentsAreValid(input, { projected: true })) {
+        throw new TypeError("The PMC payment details do not reconcile.");
+      }
       if ([input.subtotalPaise, input.gstPaise, input.totalPaise, input.roundOffPaise].some(value => value !== undefined) &&
         !estimateTotalsReconcile(input)) {
         throw new TypeError("The estimate totals do not reconcile.");

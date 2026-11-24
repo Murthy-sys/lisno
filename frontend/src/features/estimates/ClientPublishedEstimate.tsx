@@ -1,3 +1,6 @@
+import { clientEstimateMoney, clientEstimateTotal, PmcPaymentSummary, PmcPaymentLine } from "./estimatePmcPaymentPresentation";
+export { clientEstimateMoney } from "./estimatePmcPaymentPresentation";
+import { readEstimatePmcPaymentSplit } from "../../../../shared/estimation/estimatePmcPaymentSplit";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { EstimateComponentBreakdown } from "../leads/EstimateComponentBreakdown";
 import { hasGovernedInHousePrice, lineAggregatePrice } from "./estimateAggregatePresentation";
@@ -19,8 +22,6 @@ import { estimateDesignKeys } from "../leads/estimateDesignApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { decideEstimateAsClient, downloadClientEstimatePdf, estimateWorkflowKeys, type EstimateQueueItem } from "./estimateWorkflowApi";
 import { quotationApprovalNeedsClient } from "./quotationApproval";
-
-export const clientEstimateMoney = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 
 export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: { estimate: EstimateQueueItem; decisionBlocked?: boolean }) {
   const reviewSectionRef = useRef<HTMLElement>(null);
@@ -61,7 +62,7 @@ export function PreEstimateComparison({ estimate }: { estimate: EstimateQueueIte
   const row = (snapshot: EstimateClientReviewSnapshot, id: string) => snapshot.lineItems.find((line) => line.id === id);
   return <div className="client-commercial-state" aria-label="Changes from pre-estimate">
     <strong>{quotationWorkflow ? changes.noChanges ? "No changes from pre-design approval" : "Changes from your pre-design approval" : changes.noChanges ? "No changes from pre-estimate" : "Changes from your approved pre-estimate"}</strong>
-    <p>{quotationWorkflow ? "Pre-design approved quotation" : "Pre-estimate"} {clientEstimateMoney(before.snapshot.totalPaise === undefined ? before.snapshot.total : before.snapshot.totalPaise / 100)} · {quotationWorkflow ? "Designer-revised quotation" : "Final submitted estimate"} {clientEstimateMoney(after.snapshot.totalPaise === undefined ? after.snapshot.total : after.snapshot.totalPaise / 100)}</p>
+    <p>{quotationWorkflow ? "Pre-design approved quotation" : "Pre-estimate"} {clientEstimateMoney(clientEstimateTotal(before.snapshot))} · {quotationWorkflow ? "Designer-revised quotation" : "Final submitted estimate"} {clientEstimateMoney(clientEstimateTotal(after.snapshot))}</p>
     {changes.scopeChanged ? <p>Room or scope details have changed. Review the submitted scope before approving.</p> : null}
     {!changes.noChanges ? <ul>
       {changes.addedLineIds.map((id) => <li key={`added-${id}`}>Added: {describe(row(after.snapshot, id))}</li>)}
@@ -77,7 +78,7 @@ export function PreEstimateComparison({ estimate }: { estimate: EstimateQueueIte
 }
 
 function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReviewSnapshot }) {
-  const included = snapshot.lineItems.filter((item) => item.included);
+  const included = snapshot.lineItems.filter((item) => item.included && item.clientVisible !== false);
   const configuredDetails = (item: typeof included[number]) => item.itemType === "temporary"
     ? `${item.subBasketId === null ? item.mainBasketName ?? "Configured items" : item.subBasketName ?? "Sub Basket"} · Temporary item · ${item.roomName}`
     : `${item.subBasketName ?? "Sub Basket"} · ${item.roomName}`;
@@ -100,30 +101,35 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
     group.items.push(item);
   }
   const pricing = (item: typeof included[number]) => !hasGovernedInHousePrice(item) && item.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && item.pricingMode === "in_house" && item.rateSource === "configuration" && readEstimateComponentPricing(item.componentPricing)?.totalPaise === item.amountPaise ? readEstimateComponentPricing(item.componentPricing) : null;
-  const amount = (value: typeof included[number]) => value.amountPaise === undefined
-    ? value.amount : value.amountPaise === null ? null : value.amountPaise / 100;
+  const amount = (value: typeof included[number]) => value.pmcPaymentSplit !== undefined
+    ? (() => { const split = readEstimatePmcPaymentSplit(value.pmcPaymentSplit); return split ? split.estimatedValuePaise / 100 : null; })()
+    : value.amountPaise === undefined ? value.amount : value.amountPaise === null ? null : value.amountPaise / 100;
   return <details className="client-commercial-details" open>
     <summary>Review section-wise estimate</summary>
     <div className="client-commercial-details__sections">
+      {snapshot.pmcPaymentSummary !== undefined ? <p>Item amounts are before GST. Payment breakdowns and the customer total include GST.</p> : null}
       {groups.map((group) => <details className="client-commercial-section" key={group.id} open>
-        <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.reduce((total, item) => total + (amount(item) ?? 0), 0))}</strong></summary>
+        <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.some(item => amount(item) === null) ? null : group.items.reduce((total, item) => total + amount(item)!, 0))}</strong></summary>
         <div className="client-commercial-lines">
           {group.items.map((item, index) => <div className="client-commercial-line" key={`${item.catalogueId}:${item.roomName}:${index}`}>
             <div><strong>{item.source === "configuration" ? item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line") : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? configuredDetails(item) : item.roomName}</span>{item.source === "configuration" ? <span>Configuration tier: {KNOWLEDGE_MODE_TIER_LABELS[item.modeTier ?? "signature"]}</span> : null}{item.dimensions ? <span>Dimensions: {item.dimensions.length} × {item.dimensions.width} × {item.dimensions.height}{item.dimensionRule ? ` ${item.dimensionRule.inputUnit}` : ""} (L × W × H){item.dimensionsMandatory ? " · Quantity = L × W" : " · Recorded measurements"}</span> : null}{item.specification ? <span>{item.specification}</span> : null}{item.estimateNotes?.map((note, noteIndex) => <span key={noteIndex}>{note}</span>)}</div>
-            <div className="client-commercial-line__quantity"><span>{hasGovernedInHousePrice(item) ? "Price including margin" : "Quantity / rate"}</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit}{hasGovernedInHousePrice(item)
+            <div className="client-commercial-line__quantity"><span>{hasGovernedInHousePrice(item) ? "Price including margin" : item.pmcPaymentSplit !== undefined ? "Quantity / vendor rate before GST" : "Quantity / rate"}</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit}{hasGovernedInHousePrice(item)
               ? lineAggregatePrice(item, item) ? ` · ${clientEstimateMoney(lineAggregatePrice(item, item)!.totalPaise / 100)}` : " · Price unavailable"
               : <> × {pricing(item) ? "Calculated from components" : item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</>}</span></div>
             <strong className="client-commercial-line__amount">{amount(item) === null ? "Amount unavailable" : clientEstimateMoney(amount(item)!)}</strong>
+            <PmcPaymentLine value={item.pmcPaymentSplit} />
             {pricing(item) ? <EstimateComponentBreakdown pricing={pricing(item)!} label={item.mainLineName ?? "Main Line"} /> : null}
           </div>)}
         </div>
       </details>)}
       {!included.length ? <p>No item details are available for this quotation.</p> : null}
+      <PmcPaymentSummary value={snapshot.pmcPaymentSummary} />
       <dl className="client-commercial-totals">
-        <div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotalPaise === undefined ? snapshot.subtotal : snapshot.subtotalPaise / 100)}</dd></div>
+        {snapshot.pmcPaymentSummary === undefined ? <><div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotalPaise === undefined ? snapshot.subtotal : snapshot.subtotalPaise / 100)}</dd></div>
         <div><dt>GST</dt><dd>{clientEstimateMoney(snapshot.gstPaise === undefined ? snapshot.gst : snapshot.gstPaise / 100)}</dd></div>
         {snapshot.roundOffPaise !== undefined && snapshot.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{snapshot.roundOffPaise < 0 ? "−" : "+"}{clientEstimateMoney(Math.abs(snapshot.roundOffPaise) / 100)}</dd></div> : null}
-        <div><dt>Total including GST</dt><dd>{clientEstimateMoney(snapshot.totalPaise === undefined ? snapshot.total : snapshot.totalPaise / 100)}</dd></div>
+        </> : null}
+        <div><dt>Total including GST</dt><dd>{clientEstimateMoney(clientEstimateTotal(snapshot))}</dd></div>
       </dl>
     </div>
   </details>;
@@ -178,7 +184,7 @@ export function ClientEstimateDecision({ estimate, review, decisionBlocked, fall
       }
     }
   });
-  const available = review.canDecide && review.status === "pending" && estimate.status === "sent_to_client" && !completed && !decisionBlocked;
+  const available = review.canDecide && review.status === "pending" && estimate.status === "sent_to_client" && !completed && !decisionBlocked && clientEstimateTotal(review.snapshot) !== null;
   const openDialog = (decision: "approve" | "request_changes", trigger: HTMLButtonElement) => {
     triggerRef.current = trigger;
     setValidation("");
@@ -201,7 +207,8 @@ export function ClientEstimateDecision({ estimate, review, decisionBlocked, fall
         action.mutate(dialog);
       }}>
         <div className="ui-dialog__body">
-          <div className="client-estimate-decision-form__summary"><strong>{review.snapshot.projectName}</strong><span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span><span>Total including GST</span><strong>{clientEstimateMoney(review.snapshot.totalPaise === undefined ? review.snapshot.total : review.snapshot.totalPaise / 100)}</strong></div>
+          <div className="client-estimate-decision-form__summary"><strong>{review.snapshot.projectName}</strong><span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span><span>Total including GST</span><strong>{clientEstimateMoney(clientEstimateTotal(review.snapshot))}</strong></div>
+          <PmcPaymentSummary value={review.snapshot.pmcPaymentSummary} />
           {dialog === "approve" && review.phase === "post" ? <p>{quotationWorkflow ? "Approval makes this revised quotation current so design work can continue. You will review the uploaded design separately before procurement." : "Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and the required procurement checks."}</p> : null}
           {dialog === "approve" ? <p>Confirm that you have reviewed the submitted scope and total. Your approval will be recorded for this version.</p> : <label htmlFor={`estimate-change-note-${estimate.id}`}><span>Changes needed <span aria-hidden="true">*</span></span><Textarea ref={noteRef} id={`estimate-change-note-${estimate.id}`} value={note} maxLength={1000} aria-required="true" aria-invalid={Boolean(validation)} aria-describedby={`estimate-note-hint-${estimate.id}`} disabled={action.isPending} onChange={(event) => { setNote(event.target.value); setValidation(""); }} /><span id={`estimate-note-hint-${estimate.id}`} className="client-commercial-review__hint">Tell {revisionOwner} which items, quantities, or specifications to revise. {note.length}/1,000 characters.</span></label>}
           {validation ? <p role="alert">{validation}</p> : null}

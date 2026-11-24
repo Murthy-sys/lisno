@@ -663,7 +663,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectClientInvitationsRouter(authService, projectClientInvitations, (_req, _res, next) => next(), invitationDeliveryRateLimit));
   app.use("/api/v1", createEstimateRequirementsRouter(authService, auditService));
   app.use("/api/v1", createEstimateTiersRouter(authService, auditService));
-  app.use("/api/v1", createQuotationRouter(authService, auditService));
+  app.use("/api/v1", createQuotationRouter(authService, auditService, estimatePdfService));
   app.use("/api/v1", createDesignTeamRouter(authService, auditService));
   app.use("/api/v1", createEstimateCollaborationRouter(authService, auditService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
@@ -818,7 +818,7 @@ export function createApp(dependencies: AppDependencies) {
       estimatePublicationService,
       estimateDecisionService,
       estimateClientReviewService,
-      createEstimateRevisionsService({ leads: leadService, storage: estimateClientReviewStorage })
+      createEstimateRevisionsService({ leads: leadService, storage: estimateClientReviewStorage, renditions: quotationRenditions })
     )
   );
   app.use("/api/v1", createEstimatorCatalogueRouter(authService));

@@ -1,3 +1,4 @@
+import { pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -21,9 +22,9 @@ function fixture(withDimensions = false) {
   const dimensionRule = { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "unit", decimalScale: 2 };
   const source: EstimationCatalogueMainLine = { id: "main-line", mainLineId: "main-line", basketId: "basket", subBasketId: "sub", name: "Ceiling", displayOrder: 1,
     revisionId: "revision", itemVersion: 4, revisionVersion: 2, ...(withDimensions ? { dimensionsMandatory: true, dimensionRule } : {}), uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 },
-    modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null }, applicableTiers: ["signature", "premium", "functional"], tierPricing: {
-      signature: { modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null } },
-      premium: { modeBaseRatesPaise: { pmc: 1500, sub_vendor: 2500, in_house: null } },
+    pmcPricing: pmcPricingFixture(1000), modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null }, applicableTiers: ["signature", "premium", "functional"], tierPricing: {
+      signature: { pmcPricing: pmcPricingFixture(1000), modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null } },
+      premium: { pmcPricing: pmcPricingFixture(1500), modeBaseRatesPaise: { pmc: 1500, sub_vendor: 2500, in_house: null } },
       functional: { modeBaseRatesPaise: { pmc: 0, sub_vendor: 0, in_house: null } }
     } };
   const line: ConfiguredEstimateLine = { id: "saved-line", source: "configuration", catalogueId: "main-line", roomId: "living", roomName: "Living & Dining",
@@ -42,7 +43,10 @@ function fixture(withDimensions = false) {
     if (url.endsWith("/leads/lead")) return Response.json({ data: { id: "lead", clientName: "Client", projectName: "Home", location: "Pune", propertyType: "Villa" } });
     if (url.endsWith("/leads/lead/estimate") && method === "GET") return Response.json({ data: stored });
     if (url.includes("/estimation/catalogue?")) return Response.json({ data: { items: [{ id: "basket", name: "Gypsum", displayOrder: 1, subBaskets: [{ id: "sub", basketId: "basket", name: "Ceilings", displayOrder: 1, mainLines: [source] }] }], pagination: { total: 1, hasMore: false, offset: 0, limit: 100 }, ineligibleLineCount: 0 } });
-    if (url.includes("/estimation/catalogue/recommendations?")) return Response.json({ data: { sources: [] } });
+    if (url.includes("/estimation/catalogue/recommendations?")) return Response.json({ data: { sources: [{
+      mainLineId: source.mainLineId, available: true, revisionId: source.revisionId,
+      itemVersion: source.itemVersion, revisionVersion: source.revisionVersion, rules: [], guidance: []
+    }] } });
     if (url.endsWith("/leads/lead/estimate/tier-comparison") && method === "POST") {
       const request = JSON.parse(String(init?.body)) as EstimateTierComparisonInput;
       comparisons.push(request);
@@ -76,6 +80,52 @@ function fixture(withDimensions = false) {
 }
 
 describe("Sales estimate tier persistence", () => {
+  it("shows Lisno’s maximum margin separately and reconciles the vendor rate, row, room and estimate totals", async () => {
+    const data = fixture();
+    const tier = data.source.tierPricing!.signature!;
+    tier.pmcPricing = { baseRatePaise: 10_000, pmcMarginBps: 2000, lowQuantityLimit: "5", impactBps: 1500 };
+    tier.modeBaseRatesPaise.pmc = 10_000;
+    const user = userEvent.setup();
+    data.mount();
+    const toggle = () => screen.getByRole("switch", { name: /PMC pricing mode/ });
+    await waitFor(() => expect(toggle()).toBeEnabled());
+    await user.click(toggle());
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity/ }), { target: { value: "2.5" } });
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("135.7");
+    expect(screen.getByText(/Maximum Lisno margin/)).toHaveTextContent("20% · ₹71.88");
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity/ }), { target: { value: "10" } });
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("118");
+    expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹1,180");
+    expect(screen.getByText(/Maximum Lisno margin/)).toHaveTextContent("20% · ₹250");
+    expect(screen.getByRole("button", { name: /Collapse Gypsum, subtotal/ })).toHaveAccessibleName(/₹1,180/);
+    expect(screen.getByRole("button", { name: /Living & Dining.*sqft/ })).toHaveTextContent("₹1,180 incl. GST");
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByText("Total payable to vendor (incl. GST)").closest("span")).toHaveTextContent("₹1,180");
+    expect(screen.queryByText(/Maximum Lisno margin/)).not.toBeInTheDocument();
+  });
+
+  it("enables Signature PMC for one sq ft and restores the selection and pricing after saving", async () => {
+    const data = fixture();
+    const user = userEvent.setup();
+    const tier = data.source.tierPricing!.signature!;
+    tier.pmcPricing = { baseRatePaise: 10_000, pmcMarginBps: 2000, lowQuantityLimit: "0", impactBps: 0 };
+    tier.modeBaseRatesPaise.pmc = 10_000;
+    data.updateStored({ ...data.stored(), lineItems: data.stored().lineItems.map(line => ({ ...line, quantity: 1 })) });
+    const view = data.mount();
+    const toggle = () => screen.getByRole("switch", { name: /PMC pricing mode/ });
+    await waitFor(() => expect(toggle()).toBeEnabled());
+    await user.click(toggle());
+    expect(toggle()).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(data.saves[0]?.lineItems).toMatchObject([{ pricingMode: "pmc", modeTier: "signature", quantity: 1, ratePaise: 10_000 }]);
+    view.unmount();
+    data.mount();
+    await waitFor(() => expect(toggle()).toBeChecked());
+    expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹118");
+    expect(screen.getByText(/Maximum Lisno margin/)).toHaveTextContent("20% · ₹25");
+  });
+
   it("lets a saved excluded zero-Signature row choose Premium before inclusion and saves its configured price", async () => {
     const user = userEvent.setup(), data = fixture();
     data.source.tierPricing!.signature!.modeBaseRatesPaise.sub_vendor = 0;
@@ -202,7 +252,7 @@ describe("Sales estimate tier persistence", () => {
     expect(data.saves).toEqual([]);
   });
 
-  it("loads saved PMC without writing or repricing and persists switch changes with the selected tier", async () => {
+  it("refreshes the saved PMC draft from current vendor pricing and persists the selected tier", async () => {
     const user = userEvent.setup(); const data = fixture();
     data.updateStored({ ...data.stored(), lineItems: data.stored().lineItems.map(line => ({
       ...line, classification: "special" as const, pricingMode: "pmc" as const, modeTier: "premium" as const
@@ -212,11 +262,11 @@ describe("Sales estimate tier persistence", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
     expect(pmc).toBeChecked();
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("116.82");
-    expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹233.64");
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("17.7");
+    expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹35.4");
     expect(data.saves).toEqual([]);
     await act(async () => { await view.client.refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
-    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("116.82");
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("17.7");
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked(); expect(data.saves).toEqual([]);
 
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));

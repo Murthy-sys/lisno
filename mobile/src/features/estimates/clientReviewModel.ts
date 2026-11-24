@@ -1,3 +1,4 @@
+import { readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary, estimatePmcPaymentsAreValid, type EstimatePmcPaymentSplit, type EstimatePmcPaymentSummary } from "../../../../shared/estimation/estimatePmcPaymentSplit";
 import { canonicalEstimateDimensions, readEstimateDimensionRule, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing, estimateComponentLineAmountIsValid, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { z } from "zod";
@@ -28,6 +29,8 @@ const lineItemSchema = z.object({
   mainLineName: z.string().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   modeTier: z.enum(["signature", "premium", "functional"]).optional(),
+  pmcVendorPayable: z.literal(true).optional(),
+  pmcPaymentSplit: z.custom<EstimatePmcPaymentSplit>(value => readEstimatePmcPaymentSplit(value) !== null).transform(value => readEstimatePmcPaymentSplit(value)!).optional(),
   pricingMode: z.enum(["pmc", "sub_vendor", "in_house"]).optional(),
   rateSource: z.enum(["configuration", "manual"]).optional(),
   pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
@@ -51,12 +54,16 @@ const lineItemSchema = z.object({
 }).refine(line => (line.included === false && line.dimensions === undefined || estimateLineDimensionsValid(line)) &&
   (line.pricingBasis === undefined && line.componentPricing === undefined || estimateComponentLineAmountIsValid(line)));
 const snapshotSchema = z.object({
+  pmcPaymentSummary: z.custom<EstimatePmcPaymentSummary>(value => readEstimatePmcPaymentSummary(value) !== null).transform(value => readEstimatePmcPaymentSummary(value)!).optional(),
   projectName: z.string(), clientName: z.string(), location: z.string(),
   propertyType: z.string().optional(),
   lineItems: z.array(lineItemSchema),
   total: nullableMoney, subtotal: nullableMoney, gst: nullableMoney,
-  totalPaise: paise.nullable().optional(), subtotalPaise: paise.nullable().optional(), gstPaise: paise.nullable().optional()
-});
+  totalPaise: paise.nullable().optional(), subtotalPaise: paise.nullable().optional(), gstPaise: paise.nullable().optional(),
+  roundOffPaise: z.number().int().safe().optional()
+}).refine(snapshot => estimatePmcPaymentsAreValid({ ...snapshot,
+  subtotalPaise: snapshot.subtotalPaise ?? undefined, gstPaise: snapshot.gstPaise ?? undefined, totalPaise: snapshot.totalPaise ?? undefined
+}, { projected: true }));
 const publishedReviewSchema = z.object({
   id, version: z.number().int().positive(), estimateVersion: z.number().int().positive(),
   phase: z.enum(["pre", "post"]).optional(), sendGeneration: z.number().int().positive(),
@@ -80,7 +87,7 @@ const estimateSchema = z.object({
   return {
     ...estimate,
     publishedReview: snapshot ? estimate.publishedReview : null,
-    total: snapshot ? publishedMoney(snapshot.total, snapshot.totalPaise) : null,
+    total: snapshot ? publishedEstimateTotal(snapshot) : null,
     subtotal: snapshot ? publishedMoney(snapshot.subtotal, snapshot.subtotalPaise) : null,
     gst: snapshot ? publishedMoney(snapshot.gst, snapshot.gstPaise) : null,
     lineItems: snapshot?.lineItems ?? [],
@@ -91,6 +98,14 @@ const estimateSchema = z.object({
 export type ClientEstimate = z.infer<typeof estimateSchema>;
 export type ClientEstimateSnapshot = z.infer<typeof snapshotSchema>;
 export type ClientPublishedReview = z.infer<typeof publishedReviewSchema>;
+
+export function publishedEstimateTotal(snapshot: ClientEstimateSnapshot): number | null {
+  if (snapshot.pmcPaymentSummary !== undefined) {
+    const summary = readEstimatePmcPaymentSummary(snapshot.pmcPaymentSummary);
+    return summary ? summary.customerTotalPayablePaise / 100 : null;
+  }
+  return publishedMoney(snapshot.total, snapshot.totalPaise);
+}
 
 /** Paise is authoritative when supplied, including an explicit unavailable value. */
 export function publishedMoney(rupees: number | null | undefined, amountPaise?: number | null): number | null {
@@ -273,7 +288,7 @@ export function canDecideClientEstimate(estimate: ClientEstimate): boolean {
   return !estimate.reviewSourceIssue && estimate.status === "sent_to_client" && Boolean(review?.canDecide) &&
     review?.status === "pending" && estimate.version === review.estimateVersion && estimate.total !== null && estimate.subtotal !== null && estimate.gst !== null &&
     review.snapshot.lineItems.filter((line) => line.included).every((line) => (estimateComponentLineAmountIsValid(line) || publishedMoney(line.rate, line.ratePaise) !== null) && publishedMoney(line.amount, line.amountPaise) !== null) &&
-    (review.phase !== "post" || Boolean(estimate.preApprovedReview && estimate.changesFromPre && publishedMoney(estimate.preApprovedReview.snapshot.total, estimate.preApprovedReview.snapshot.totalPaise) !== null));
+    (review.phase !== "post" || Boolean(estimate.preApprovedReview && estimate.changesFromPre && publishedEstimateTotal(estimate.preApprovedReview.snapshot) !== null));
 }
 
 export function canEditClientPlan(estimate: ClientEstimate): boolean {

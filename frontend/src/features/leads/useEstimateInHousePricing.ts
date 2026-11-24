@@ -7,7 +7,7 @@ import { estimateAggregatePricingMatchesLine, readEstimateAggregatePricing } fro
 import { configuredInHouseGoverned, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredQuantityUnits, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
 
 export function estimateInHousePreviewInput(line: ConfiguredLineDraft): EstimateInHousePreviewLine | null {
-  if (!line.included || !configuredUsesComponentPricing(line) || line.sourceMissing || line.uomNeedsQuantityReview || line.configurationPricingChanged ||
+  if (!line.included || !configuredUsesComponentPricing(line) || line.roomMismatch || line.sourceMissing || line.uomNeedsQuantityReview || line.configurationPricingChanged ||
       configuredDimensionsIssue(line) || configuredInHouseSelectionIssue(line) ||
       configuredQuantityUnits(line.quantity, line.uomDecimalScale, true) === null) return null;
   const itemVersion = line.itemVersion ?? line.sourceItemVersion;

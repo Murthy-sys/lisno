@@ -360,11 +360,58 @@ describe("Unified Client estimation", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "View submitted version", hidden: true })).not.toBeInTheDocument()); expect(view.decisions).toEqual([]);
   });
 
+  it.each(["pre", "post"] as const)("opens the %s submitted PDF and keeps a later saved draft bound to its own version", async phase => {
+    const view = setup({ phase }), user = userEvent.setup();
+    const requests: string[] = [];
+    const pdf = () => new HttpResponse("%PDF-1.5", { headers: { "content-type": "application/pdf" } });
+    server.use(
+      http.get("/api/v1/client/estimates/estimate-one/pdf", ({ request }) => {
+        requests.push(`round=${new URL(request.url).searchParams.get("roundId")}`); return pdf();
+      }),
+      http.get("/api/v1/projects/project-one/quotation/draft/pdf", ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        requests.push(`draft=${query.get("estimateId")}:${query.get("expectedVersion")}`); return pdf();
+      })
+    );
+    const create = URL.createObjectURL, revoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:quotation-test"); URL.revokeObjectURL = vi.fn();
+    const open = async (title: string) => {
+      await user.click(await screen.findByRole("button", { name: "View quotation PDF" }));
+      expect(await screen.findByTitle(title)).toBeVisible();
+    };
+    try {
+      await open("Submitted quotation · Version 3");
+      await user.keyboard("{Escape}");
+      const quantity = screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ });
+      await user.clear(quantity); await user.type(quantity, "4");
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await screen.findByText(/Waiting for (Sales|Designer) confirmation/);
+      await open("Draft quotation · Version 4");
+      await user.keyboard("{Escape}");
+      view.state.saveError = 422;
+      await user.clear(quantity); await user.type(quantity, "6");
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await screen.findByText("Save rejected");
+      await open("Draft quotation · Version 4");
+      expect(screen.getByText(/PDF shows the last saved draft/)).toBeVisible();
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: "Discard changes" }));
+      await user.click(screen.getByText("Estimate options"));
+      await user.click(screen.getByRole("button", { name: "View submitted version" }));
+      await screen.findByText("This quotation has been superseded");
+      await open("Submitted quotation · Version 3");
+      expect(requests).toEqual(["round=round-estimate-one", "draft=estimate-one:4", "draft=estimate-one:4", "round=round-estimate-one"]);
+      expect(view.decisions).toHaveLength(0);
+    } finally {
+      view.unmount(); URL.createObjectURL = create; URL.revokeObjectURL = revoke;
+    }
+  });
+
   it("blocks approval after PDF verification fails until refresh", async () => {
     const view = setup(), user = userEvent.setup(); view.state.pdfError = 409;
     await user.click(await screen.findByRole("button", { name: "Review quotation" }));
-    await user.click(screen.getByText("Estimate options"));
-    await user.click(await screen.findByRole("button", { name: /Download PDF/ }));
+    await user.click(await screen.findByRole("button", { name: "View quotation PDF" }));
+    await user.keyboard("{Escape}");
     expect(await screen.findByText("Refresh the submitted version before making a decision.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument(); expect(view.decisions).toEqual([]);
   });

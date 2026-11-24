@@ -75,6 +75,15 @@ function setup(initial = fixture(), readOnly = false) {
 }
 
 describe("Client inline non-negotiable recommendations", () => {
+  it("keeps a narrowed saved origin visible without requesting recommendations from it", async () => {
+    const initial = fixture();
+    initial.lines[0]!.roomMismatch = true;
+    const { requests } = setup(initial);
+    expect(await screen.findByText(/no longer applies to Kitchen/)).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
+    expect(requests).toHaveLength(0);
+  });
+
   it("keeps required unpriced work reviewable without offering an Add or changing saved selections", async () => {
     const { saves } = setup();
     const reviewMessage = "Some required items have no base price greater than zero. Ask your team to review them.";

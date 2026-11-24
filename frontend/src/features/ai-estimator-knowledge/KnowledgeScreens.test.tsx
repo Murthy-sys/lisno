@@ -1,3 +1,4 @@
+import { matrixFixture } from "./knowledgeMarginMatrix.test-fixture";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -43,6 +44,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeMarginMatrix: vi.fn(async (basketId: string, subBasketId: string) => matrixFixture(basketId, subBasketId)),
     getKnowledgeSubBasketMargins: vi.fn(),
     applyKnowledgeSubBasketMargins: vi.fn(),
     createKnowledgeMainLine: vi.fn(),
@@ -506,9 +508,11 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 1, revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null });
 
   vi.clearAllMocks();
-  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId, options) => {
     const empty = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "No margins configured." };
-    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
+    const defaults = options?.inHouseScope ? matrixFixture(basketId, subBasketId).defaults.filter(row => row.tier === options.modeTier)
+      .map(row => ({ ...row, ranges: [], provenance: "unset" as const })) : undefined;
+    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", defaults, modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
   });
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
@@ -618,12 +622,16 @@ describe("Mode sidebar compact default margins", () => {
     const advanced = { pmcMinimumMarginBps: 1000, pmcMarginBps: 1500,
       modeCalculations: { pmc: calculation, sub_vendor: null, in_house_labor: null, in_house_material: null } };
     const saved = { mismatchCount: 0, mismatches: [], canApply: false, unavailableReason: null };
+    const pmc = [{ key: "margin" as const, minimumBps: 1200, maximumBps: 1800 }];
+    const vendor = [{ key: "margin" as const, minimumBps: 2500, maximumBps: 3500 }];
+    const inHouse = [{ key: "labor" as const, minimumBps: 2000, maximumBps: 3000 }, { key: "material" as const, minimumBps: 1500, maximumBps: 2500 }];
     const defaults: KnowledgeSubBasketMarginSummary = {
       basketId: "basket-1", subBasketId: "joinery", source: { mainLineId: "source", mainLineName: "Default panelling" }, versionToken: "source-token", totalMainLines: 3,
+      defaults: [{ tier: "signature", mode: "pmc", ranges: pmc, provenance: "existing" },
+        { tier: "signature", mode: "sub_vendor", ranges: vendor, provenance: "existing" },
+        { tier: "signature", mode: "in_house", ranges: inHouse, resolution: "shared", provenance: "approved" }],
       modes: {
-        pmc: { ...saved, ranges: [{ key: "margin", minimumBps: 1200, maximumBps: 1800 }] },
-        sub_vendor: { ...saved, ranges: [{ key: "margin", minimumBps: 2500, maximumBps: 3500 }] },
-        in_house: { ...saved, ranges: [{ key: "labor", minimumBps: 2000, maximumBps: 3000 }, { key: "material", minimumBps: 2000, maximumBps: 3000 }] }
+        pmc: { ...saved, ranges: pmc }, sub_vendor: { ...saved, ranges: vendor }, in_house: { ...saved, ranges: inHouse }
       }
     };
     vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockResolvedValue(defaults);
@@ -640,12 +648,12 @@ describe("Mode sidebar compact default margins", () => {
     expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
     await selectWorkspaceMode(user, "Signature Mode");
     const panel = await screen.findByRole("region", { name: "Sub-basket defaults" });
-    expect(await within(panel).findByText("12% - 18%")).toBeVisible();
-    expect(within(panel).getByText("25% - 35%")).toBeVisible();
-    expect(within(panel).getByText("20% - 30%")).toBeVisible();
-    expect(within(panel).getByText("PMC margin:")).toBeVisible();
-    expect(within(panel).getByText("Sub-vendor margin:")).toBeVisible();
-    expect(within(panel).getByText("In-house margin:")).toBeVisible();
+    expect(await within(panel).findByText("12% / 18%")).toBeVisible();
+    expect(within(panel).getByText("25% / 35%")).toBeVisible();
+    expect(within(panel).getByText("Labour 20% / 30% · Material 15% / 25%")).toBeVisible();
+    expect(within(panel).getByText("Signature · PMC")).toBeVisible();
+    expect(within(panel).getByText("Signature · Sub-vendor")).toBeVisible();
+    expect(within(panel).getByText("Signature · In-house")).toBeVisible();
     expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("heading")).not.toBeInTheDocument();
@@ -659,7 +667,7 @@ describe("Mode sidebar compact default margins", () => {
     expect(base).toHaveValue("65.00");
     await user.clear(base);
     await user.type(base, "66");
-    expect(panel).toHaveTextContent("12% - 18%");
+    expect(panel).toHaveTextContent("12% / 18%");
     await user.click(screen.getByRole("button", { name: "Save Signature Mode" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 2, expectedAggregateVersion: item.version,
@@ -1559,6 +1567,64 @@ describe("AI estimator knowledge screens", () => {
     name: /Does designer need to check stock before selection/
   })).getByRole("radio", { name: answer });
 
+  it("saves closure priority on the current revision and restores it when reopening the tab", async () => {
+    const user = userEvent.setup();
+    let current = item;
+    let overview = section("overview", { showByDefault: true });
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "overview" ? overview : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      current = { ...current, version: current.version + 1 };
+      const saved = mutationSection(key, input.payload, overview.version + 1, current.version);
+      overview = saved;
+      return saved;
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    for (const choice of ["P1", "P2", "P3"]) {
+      await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+      await user.click(await screen.findByRole("radio", { name: choice }));
+      await user.click(screen.getByRole("button", { name: "Save closure priority" }));
+      expect(await screen.findByText("Closure priority saved.")).toBeVisible();
+      expect(overview.payload).toEqual({ showByDefault: true, closurePriority: choice });
+      await user.click(screen.getByRole("tab", { name: "Overview" }));
+    }
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    expect(await screen.findByRole("radio", { name: "P3" })).toBeChecked();
+  });
+
+  it.each(["pending edit", "unknown write"] as const)("pins the original closure priority revision across a draft switch (%s)", async scenario => {
+    const user = userEvent.setup();
+    let current = item;
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, id, key) => ({
+      ...section(key, key === "overview" ? { closurePriority: id === "revision-1" ? "P1" : "P3" } : {}), revisionId: id
+    }));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValue(new Error("Lost response"));
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    await user.click(await screen.findByRole("radio", { name: "P2" }));
+    if (scenario === "unknown write") {
+      await user.click(screen.getByRole("button", { name: "Save closure priority" }));
+      await screen.findByRole("button", { name: "Load current closure priority" });
+    }
+    current = { ...item, version: 5, draftRevisionId: "revision-2", draftRevision: { ...item.draftRevision!, id: "revision-2" } };
+    await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.item("line-1"), current); });
+    const discard = await screen.findByRole("button", { name: "Discard choice and load current revision" });
+    expect(screen.getByRole("radio", { name: "P2" })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Save closure priority" })).not.toBeInTheDocument();
+    if (scenario === "unknown write") {
+      expect(discard).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Load current closure priority" }));
+      expect(await screen.findByText("Saved closure priority on the previous revision: P1.")).toBeVisible();
+      expect(knowledgeApi.getKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "overview");
+    }
+    await user.click(discard);
+    expect(await screen.findByRole("radio", { name: "P3", checked: true })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(scenario === "unknown write" ? 1 : 0);
+  });
+
   it("blocks discarding Design while a direct rules save is still in flight", async () => {
     const user = userEvent.setup();
     let current = item;
@@ -1737,9 +1803,14 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
     const closure = screen.getByRole("tabpanel", { name: "Basket closure priority" });
     expect(within(closure).getByRole("heading", { name: "Basket closure priority", level: 2 })).toBeVisible();
-    expect(closure).toHaveTextContent("No configuration options are available in this section yet.");
-    expect(within(closure).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    if (state === "no revision") {
+      expect(closure).toHaveTextContent("Create a draft revision to configure closure priority.");
+    } else {
+      expect(within(closure).getAllByRole("radio")).toHaveLength(3);
+      expect(closure).toHaveTextContent("No closure priority selected.");
+      if (state === "draft") expect(within(closure).getByRole("button", { name: "Save closure priority" })).toBeDisabled();
+      else expect(within(closure).getByRole("radio", { name: "P2" })).toBeDisabled();
+    }
     expect(screen.getByRole("region", { name: "Workspace status" })).toHaveTextContent("0 of 4 tabs configured");
     expect(knowledgeApi.getKnowledgeSection).toHaveBeenCalledTimes(sectionReads);
     expect(knowledgeApi.getKnowledgeBasketQuality).not.toHaveBeenCalled();
@@ -1787,7 +1858,7 @@ describe("AI estimator knowledge screens", () => {
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "overview", expect.objectContaining({
       payload: { uomId: squareMetre.id }
     }));
-    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save closure priority" })).toBeDisabled();
   });
 
   it("edits a reusable Surface from Overview without replacing the pending Main Line selection", async () => {
@@ -2401,6 +2472,82 @@ describe("AI estimator knowledge screens", () => {
     }));
     await waitFor(() => expect(screen.getByRole("region", { name: "Overview saved summary" })).toHaveTextContent("Square metre"));
     expect(screen.getByRole("region", { name: "Overview saved summary" })).not.toHaveTextContent("Square foot");
+  });
+
+  it("saves room applicability across a failed save, reopens it, and clears it while preserving closure priority", async () => {
+    const user = userEvent.setup();
+    const otherFields = { closurePriority: "P2", uomId: squareFoot.id, showByDefault: true };
+    let loaded = section("overview", otherFields);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "overview" ? loaded : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new Error("Room save failed"))
+      .mockImplementation(async (_line, _revision, key, input) => {
+        const saved = mutationSection(key, input.payload, loaded.version + 1);
+        loaded = saved;
+        return saved;
+      });
+    const path = "/admin/configuration/estimation/items/line-1";
+    const route = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const picker = await screen.findByRole("button", { name: "Applicable rooms / places" });
+    expect(picker).toHaveTextContent("All rooms and places");
+    await user.click(picker);
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+    await user.keyboard("{Escape}");
+    expect(picker).toHaveFocus();
+    expect(picker).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await screen.findByText("Room save failed");
+    expect(picker).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(loaded.payload).toEqual({ ...otherFields, applicableRoomCategories: ["bedroom", "living"] }));
+    view.unmount();
+    view.queryClient.clear();
+    renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const reopened = await screen.findByRole("button", { name: "Applicable rooms / places" });
+    expect(reopened).toHaveTextContent("Bedroom, Living & Dining");
+    await user.click(reopened);
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining", checked: true }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom", checked: true }));
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(loaded.payload).toEqual({ ...otherFields, applicableRoomCategories: [] }));
+    expect(reopened).toHaveTextContent("All rooms and places");
+  });
+
+  it.each([
+    ["main_line", false], ["main_line", true], ["temporary", false], ["temporary", true]
+  ] as const)("saves and reopens the %s default-display setting from %s without replacing other Overview fields", async (itemType, initial) => {
+    const user = userEvent.setup();
+    const otherFields = { uomId: squareFoot.id, clientVisible: false, applicableTiers: ["premium"], surfaceIds: [wallSurface.id] };
+    let loaded = section("overview", { ...otherFields, showByDefault: initial });
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "overview" ? loaded : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const saved = mutationSection(key, input.payload, loaded.version + 1);
+      loaded = saved;
+      return saved;
+    });
+    const path = "/admin/configuration/estimation/items/line-1";
+    const route = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const group = await screen.findByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(group).getByRole("radio", { name: initial ? "Yes" : "No" })).toBeChecked();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(within(group).getByRole("radio", { name: initial ? "No" : "Yes" }));
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "overview", {
+      expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured",
+      payload: { ...otherFields, showByDefault: !initial }
+    }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Overview" })).toBeDisabled());
+    view.unmount();
+    view.queryClient.clear();
+    renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const reopened = await screen.findByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(reopened).getByRole("radio", { name: initial ? "No" : "Yes" })).toBeChecked();
+    expect(loaded.payload).toEqual({ ...otherFields, showByDefault: !initial });
   });
 
   it("keeps exactly one contextual Overview Save across clean, dirty, and saving states", async () => {

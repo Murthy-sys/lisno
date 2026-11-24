@@ -63,7 +63,13 @@ export const knowledgeQueryKeys = {
     modeTier === "signature"
       ? ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId] as const
       : ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId, "tier", modeTier] as const,
-  subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
+  subBasketMarginMatrix: (basketId: string, subBasketId: string) =>
+    ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId, "matrix", "shared"] as const,
+  sharedSubBasketTierMargins: (basketId: string, subBasketId: string, modeTier: KnowledgeModeConfigurationScope) =>
+    ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId, "tier", modeTier, "shared"] as const,
+  subBasketLists: (basketId?: string) => basketId
+    ? ["ai-estimator-knowledge", "sub-baskets", basketId] as const
+    : ["ai-estimator-knowledge", "sub-baskets"] as const,
   subBasketDeletionImpacts: (basketId?: string) => basketId
     ? ["ai-estimator-knowledge", "sub-basket-deletion-impact", basketId] as const
     : ["ai-estimator-knowledge", "sub-basket-deletion-impact"] as const,

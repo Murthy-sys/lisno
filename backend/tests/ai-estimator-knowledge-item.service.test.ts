@@ -69,6 +69,119 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it.each(["main_line", "temporary"] as const)("persists default display on a %s with Overview CAS and unrelated-field preservation", async (itemType) => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Default ${itemType}`, itemType });
+    const revisionId = item.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, item.id, revisionId, "overview");
+    expect(initial.payload).not.toHaveProperty("showByDefault");
+    expect(await AiEstimatorKnowledgeSectionModel.findById(initial.id).lean()).not.toHaveProperty("payload.showByDefault");
+    const selected = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: initial.version, expectedAggregateVersion: item.version,
+      payload: { ...initial.payload, showByDefault: true, uomId: "uom-sqft", clientVisible: false }
+    });
+    expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload)
+      .toMatchObject({ showByDefault: true, uomId: "uom-sqft", clientVisible: false });
+    expect(appendAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "ai_estimator_knowledge_section_updated" }), expect.anything());
+    const unrelated = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: selected.version, expectedAggregateVersion: selected.aggregateVersion,
+      payload: { ...selected.payload, description: "Updated description" }
+    });
+    expect(unrelated.payload).toMatchObject({ showByDefault: true, clientVisible: false, description: "Updated description" });
+    await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: selected.version, expectedAggregateVersion: unrelated.aggregateVersion,
+      payload: { ...unrelated.payload, showByDefault: false }
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: unrelated.version, expectedAggregateVersion: selected.aggregateVersion,
+      payload: { ...unrelated.payload, showByDefault: false }
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    const deselected = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: unrelated.version, expectedAggregateVersion: unrelated.aggregateVersion,
+      payload: { ...unrelated.payload, showByDefault: false }
+    });
+    expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload).toEqual(deselected.payload);
+    expect(deselected.payload).toMatchObject({ showByDefault: false, uomId: "uom-sqft", clientVisible: false, description: "Updated description" });
+  });
+
+  it.each([true, false])("preserves default display %s through duplication and a new draft without changing active history", async (showByDefault) => {
+    const { service } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Copy default ${showByDefault}` });
+    const revisionId = item.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, item.id, revisionId, "overview");
+    const saved = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: initial.version, expectedAggregateVersion: item.version,
+      payload: { ...initial.payload, uomId: "uom-sqft", showByDefault }
+    });
+    const duplicate = await service.duplicate(ACTOR, item.id, { expectedVersion: saved.aggregateVersion, name: `Copied default ${showByDefault}` });
+    expect(duplicate.id).not.toBe(item.id);
+    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload.showByDefault).toBe(showByDefault);
+    // Establish an isolated historical fixture without configuring unrelated activation requirements.
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: revisionId }, { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: item.id }, { $set: { status: "active", activeRevisionId: revisionId, draftRevisionId: null } });
+    await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { ...saved.payload, showByDefault: !showByDefault }
+    })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+    const copied = await service.createRevision(ACTOR, item.id, { expectedVersion: saved.aggregateVersion });
+    const draft = await service.getSection(ACTOR, item.id, copied.draftRevisionId!, "overview");
+    expect(draft.payload.showByDefault).toBe(showByDefault);
+    await service.updateSection(ACTOR, item.id, copied.draftRevisionId!, "overview", {
+      expectedVersion: draft.version, expectedAggregateVersion: copied.version,
+      payload: { ...draft.payload, showByDefault: !showByDefault }
+    });
+    expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload).toEqual(saved.payload);
+    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload.showByDefault).toBe(showByDefault);
+  });
+
+  it("saves and clears room applicability with section concurrency protection", async () => {
+    const { service } = createService();
+    const line = await service.createMainLine(ACTOR, "basket-carpentry", { name: "POP Gypsum" });
+    const revision = line.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, line.id, revision, "overview");
+    const command = { expectedVersion: initial.version, expectedAggregateVersion: line.version,
+      payload: { ...initial.payload, closurePriority: "P1", applicableRoomCategories: ["bedroom", "living"] } };
+    const saved = await service.updateSection(ACTOR, line.id, revision, "overview", command);
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload).toMatchObject(command.payload);
+    await expect(service.updateSection(ACTOR, line.id, revision, "overview", command)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await service.updateSection(ACTOR, line.id, revision, "overview", { expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion, payload: { ...saved.payload, applicableRoomCategories: [] } });
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload).toMatchObject({
+      applicableRoomCategories: [], closurePriority: "P1" });
+  });
+
+  it("isolates closure priorities across copied lines and revisions", async () => {
+    const { service } = createService();
+    const line = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Closure source" });
+    const revision = line.draftRevisionId!;
+    const initial = await service.getSection(ACTOR, line.id, revision, "overview");
+    expect(initial.payload).not.toHaveProperty("closurePriority");
+    const saved = await service.updateSection(ACTOR, line.id, revision, "overview", {
+      expectedVersion: initial.version, expectedAggregateVersion: line.version,
+      payload: { ...initial.payload, closurePriority: "P1", showByDefault: true }
+    });
+    const copy = await service.duplicate(ACTOR, line.id, { expectedVersion: saved.aggregateVersion, name: "Closure copy" });
+    const copied = await service.getSection(ACTOR, copy.id, copy.draftRevisionId!, "overview");
+    expect(copied.payload).toMatchObject({ closurePriority: "P1", showByDefault: true });
+    await service.updateSection(ACTOR, copy.id, copy.draftRevisionId!, "overview", {
+      expectedVersion: copied.version, expectedAggregateVersion: copy.version,
+      payload: { ...copied.payload, closurePriority: "P2" }
+    });
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: revision }, { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: line.id }, { $set: { status: "active", activeRevisionId: revision, draftRevisionId: null } });
+    const next = await service.createRevision(ACTOR, line.id, { expectedVersion: saved.aggregateVersion });
+    const draft = await service.getSection(ACTOR, line.id, next.draftRevisionId!, "overview");
+    expect(draft.payload.closurePriority).toBe("P1");
+    await service.updateSection(ACTOR, line.id, next.draftRevisionId!, "overview", {
+      expectedVersion: draft.version, expectedAggregateVersion: next.version,
+      payload: { ...draft.payload, closurePriority: "P3" }
+    });
+    expect((await service.getSection(ACTOR, line.id, next.draftRevisionId!, "overview")).payload)
+      .toMatchObject({ closurePriority: "P3", showByDefault: true });
+    expect((await service.getSection(ACTOR, line.id, revision, "overview")).payload.closurePriority).toBe("P1");
+    expect((await service.getSection(ACTOR, copy.id, copy.draftRevisionId!, "overview")).payload.closurePriority).toBe("P2");
+  });
+
   it("reads legacy Design defaults and lazily saves with section and aggregate CAS", async () => {
     const { service, appendAudit } = createService();
     const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Legacy Design fixture" });

@@ -1,3 +1,4 @@
+import { ROOM_CATEGORIES } from "./domain/estimate-room-options.js";
 import { PROJECT_NUMBER_SCHEMA } from "./openapi/project-number.js";
 import { USER_RESPONSIBILITY_SCHEMAS } from "./openapi/user-responsibilities.js";
 import { DEFAULT_PROJECT_NEXT_ACTION, NATIVE_PLACE_MAX_LENGTH, TENTATIVE_BUDGET_MAX_LENGTH, PROJECT_LANGUAGES, PROJECT_CATEGORIES } from "./contracts/project-initiation.js";
@@ -364,6 +365,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
 };
 
 const pdfOperations = new Set<string>([
+  "GET /projects/:projectId/quotation/draft/pdf",
   "POST /projects/:projectId/estimate-tier-comparison/pdf",
   "POST /leads/:leadId/estimate/tier-comparison/pdf",
   "GET /estimates/:estimateId/revisions/:revisionId/pdf",
@@ -700,7 +702,20 @@ const queryParametersByOperation: Readonly<
       schema: { type: "string", enum: ["true", "false"], default: "false" },
       description: "Use the same Draft and Inactive readiness policy as the opted-in estimator catalogue." }
   ],
+  "GET /estimates/:estimateId/pdf": [
+    { name: "audience", in: "query", required: false, schema: { type: "string", enum: ["client"] }, description: "With expectedVersion, preview only the saved customer-visible draft." },
+    { name: "expectedVersion", in: "query", required: false, schema: { type: "integer", minimum: 1 }, description: "Required with audience=client." },
+    { name: "stage", in: "query", required: false, schema: { type: "string", enum: ["internal-review"] }, description: "Preview a legacy quotation pending internal review. Omit for a draft." }
+  ],
+  "GET /projects/:projectId/quotation/draft/pdf": [
+    { name: "estimateId", in: "query", required: true, schema: { type: "string", minLength: 1, maxLength: 500 } },
+    { name: "expectedVersion", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "Persisted working quotation version to preview. A stale or closed draft returns a conflict." }
+  ],
+  "GET /estimates/:estimateId/revisions/:revisionId/pdf": [
+    { name: "audience", in: "query", required: false, schema: { type: "string", enum: ["client"] }, description: "Use client to read the customer-visible PDF for this revision. Omission returns the staff archive." }
+  ],
   "GET /projects/:projectId/quotation/items": [
+    { name: "roomId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
     { name: "search", in: "query", required: false, schema: { type: "string", maxLength: 200 } },
     { name: "mainBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
     { name: "subBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
@@ -2424,11 +2439,34 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         reviewRoundVersion: { type: "integer", minimum: 1 }
       }
     },
+    EstimatePmcPaymentSplit: {
+      type: "object", additionalProperties: false, readOnly: true,
+      description: "Frozen PMC recipient amounts. The configured gross margin applies to the estimated value before tax; payable fields include allocated recorded tax. Existing line amount remains the vendor amount.",
+      required: ["version", "marginBps", "vendorAmountPaise", "lisnoAmountPaise", "estimatedValuePaise", "vendorPayablePaise", "lisnoPayablePaise", "totalPayablePaise", "taxBasis"],
+      properties: {
+        version: { type: "integer", enum: [1] }, marginBps: { type: "integer", minimum: 1000, maximum: 2000 },
+        ...Object.fromEntries(["vendorAmountPaise", "lisnoAmountPaise", "estimatedValuePaise", "vendorPayablePaise", "lisnoPayablePaise", "totalPayablePaise"].map(key => [key, { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }])),
+        taxBasis: { type: "object", additionalProperties: false, required: ["subtotalPaise", "gstPaise"], properties: {
+          subtotalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, gstPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+        } }
+      }
+    },
+    EstimatePmcPaymentSummary: {
+      type: "object", additionalProperties: false, readOnly: true,
+      description: "Full-estimate recipient totals, preserved when detail rows are hidden. customerTotalPayablePaise includes the added PMC Lisno fee; existing totalPaise keeps its vendor/non-PMC meaning. Absent historical fields are never inferred.",
+      required: ["version", "vendorPayablePaise", "lisnoPayablePaise", "pmcTotalPayablePaise", "otherWorkPayablePaise", "roundOffPaise", "customerTotalPayablePaise", "nonPmcMilestoneBasisPaise"],
+      properties: {
+        version: { type: "integer", enum: [1] },
+        ...Object.fromEntries(["vendorPayablePaise", "lisnoPayablePaise", "pmcTotalPayablePaise", "otherWorkPayablePaise", "customerTotalPayablePaise", "nonPmcMilestoneBasisPaise"].map(key => [key, { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }])),
+        roundOffPaise: { type: "integer", minimum: -50, maximum: 49 }
+      }
+    },
     ClientEstimateSnapshot: {
       type: "object", additionalProperties: false,
       description: "Immutable submitted commercial proposal. Configured lines retain exact integer-paise rates and amounts alongside rupee display values; historical lines retain their whole-rupee boundary.",
       required: ["clientName", "projectName", "location", "propertyType", "lineItems", "subtotal", "gst", "total"],
       properties: {
+        pmcPaymentSummary: { $ref: "#/components/schemas/EstimatePmcPaymentSummary" },
         proposal: { $ref: "#/components/schemas/EstimateProposalMetadata" },
         clientName: { type: "string" }, projectName: { type: "string" }, location: { type: "string" }, propertyType: { type: "string" },
         rooms: { type: "array", items: { type: "object", additionalProperties: true }, description: "Optional frozen room metadata; historical staff reads expose only saved identity, label and dimensions." },
@@ -2455,6 +2493,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
             modeTier: { ...modeTier, description: "Frozen selected Mode tier. Absent historical values mean Signature; amounts do not follow later Configuration edits." },
             selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Frozen component selection for this estimate line. Newly configured components are not added to this selection." },
+            pmcPaymentSplit: { $ref: "#/components/schemas/EstimatePmcPaymentSplit" },
+            pmcVendorPayable: { type: "boolean", enum: [true], readOnly: true, description: "Present for recorded PMC vendor payable pricing. Unmarked historical prices retain their original basis." },
             rateSource: { type: "string", enum: ["configuration", "manual"], description: "Frozen origin of the saved selling rate. Published amounts never follow later Configuration changes." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
             sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
@@ -2549,15 +2589,25 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         } }
       }
     },
+    EstimatePmcPricing: {
+      type: "object", additionalProperties: false, readOnly: true,
+      required: ["baseRatePaise", "lowQuantityLimit", "impactBps", "pmcMarginBps"],
+      properties: { baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        lowQuantityLimit: { type: "string" }, impactBps: { type: "integer", minimum: 0 },
+        pmcMarginBps: { type: "integer", minimum: 1000, maximum: 2000 } },
+      description: "Internal Sales-only inputs for the quantity-adjusted vendor payable and maximum pre-tax Lisno margin."
+    },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "showByDefault", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
         dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
         dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
         clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview visibility for all client quotation screens and documents. Internal estimating and approved totals are unchanged." },
+        applicableRoomCategories: { type: "array", uniqueItems: true, maxItems: ROOM_CATEGORIES.length, items: { type: "string", enum: ROOM_CATEGORIES.map(category => category.id) }, description: "Room and place categories in which this Main Line can be newly assigned. Missing or empty means all rooms." },
+        showByDefault: { type: "boolean", default: false, readOnly: true, description: "Current saved Overview default-display setting. Only true adds eligible unused previews to default estimation browsing. False retains sources for explicit additions, recommendations and saved estimates." },
         hasConfiguredBasePrice: { type: "boolean", readOnly: true, description: "At least one valid saved base price greater than zero in default, Signature, Premium, or Functional Configuration. Zero-only bases do not qualify; selected source records remain available when false. Discovery metadata only, without a tier or selling-rate fallback." },
         basePriceAvailability: {
           type: "object", additionalProperties: false, readOnly: true, required: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES],
@@ -2567,6 +2617,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           }])),
           description: "Positive raw-base availability for each current Configuration scope and pricing method. Standard requires Sub-vendor; another method cannot establish its eligibility. Default may establish discovery but is not a financial estimation tier. No raw private costs or price fallback are exposed."
         },
+        pmcPricing: { $ref: "#/components/schemas/EstimatePmcPricing" },
         name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
         itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
@@ -2587,13 +2638,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         },
         tierPricing: { type: "object", additionalProperties: false, properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
           type: "object", additionalProperties: false, required: ["modeBaseRatesPaise"],
-          properties: { modeBaseRatesPaise: tierBaseRates, inHouseComponents: tierComponents }
+          properties: { modeBaseRatesPaise: tierBaseRates, inHouseComponents: tierComponents, pmcPricing: { $ref: "#/components/schemas/EstimatePmcPricing" } }
         }])), description: "Pricing and component selection belong to this tier only. Missing entries cannot fall back to Signature. Root pricing fields retain legacy Signature values." },
         inHouseBaseRatePaise: { type: "integer", minimum: 0, nullable: true,
           description: "Legacy field name: In-house selling unit rate including configured maximum profit for the selected source revision, in paise; null when unavailable or priced through components." },
         modeBaseRatesPaise: {
           type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
-          description: "Selling unit rates from the latest saved draft revision, otherwise active, in integer paise. Legacy field name: each rate adds the selected mode and tier's configured maximum profit to its base, rounded to the nearest paise. Split legacy In-house adds the independently priced labor and material amounts; component-based In-house uses its separate calculation. Margin percentages and calculation details are not exposed. Missing or invalid base rates or maxima are null. Quantity impacts and GST are not included in these unit rates.",
+          description: "Current pre-tax unit rates in paise. PMC contains the vendor base before quantity impact. Sub-Vendor and legacy In-house contain their configured selling rates. Unavailable rates are null.",
           properties: {
             pmc: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
             sub_vendor: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },

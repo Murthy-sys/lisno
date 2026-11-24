@@ -1,3 +1,6 @@
+import { readEstimatePmcPaymentSplit } from "../../../../shared/estimation/estimatePmcPaymentSplit";
+import { PmcPaymentLine } from "../estimates/estimatePmcPaymentPresentation";
+import { parseScaledQuantity } from "../../../../shared/knowledge/knowledgeSlabRate";
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
 import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
@@ -9,11 +12,12 @@ import type { QuotationLine } from "./quotationApi";
 import { hasGovernedInHousePrice, lineAggregatePrice } from "../estimates/estimateAggregatePresentation";
 
 /** The shared Sales row, driven only by the scoped quotation response and commands. */
-export function ClientQuotationLine({ item, currentLine, selected, disabled, grouped, canChangePricingMode, onTogglePmc, onChange, money }: {
+export function ClientQuotationLine({ item, currentLine, selected, disabled, useRecordedPmcRate = false, grouped, canChangePricingMode, onTogglePmc, onChange, money }: {
   item: QuotationItemDraft;
   currentLine: QuotationLine;
   selected: boolean;
   disabled: boolean;
+  useRecordedPmcRate?: boolean;
   grouped: boolean;
   canChangePricingMode: boolean;
   onTogglePmc: () => void;
@@ -23,8 +27,8 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   const line = item.line;
   const label = `${currentLine.mainLineName} in ${currentLine.roomName}`;
   const unavailable = !currentLine.source;
-  const blocked = disabled || unavailable || grouped;
-  const fieldsDisabled = blocked || !selected;
+  const blocked = disabled || unavailable || grouped || Boolean(currentLine.roomMismatch && !currentLine.included);
+  const fieldsDisabled = blocked || !selected || Boolean(currentLine.roomMismatch);
   const choices = quotationItemChoices({ ...item, line: { ...item.line, pricingMode: currentLine.pricingMode, choices: currentLine.choices, pricingModeChoices: currentLine.pricingModeChoices } });
   const choice = choices.find(option => option.modeTier === item.modeTier);
   const governed = hasGovernedInHousePrice(choice);
@@ -35,6 +39,18 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   const modePricingUnavailable = Boolean(currentLine.pricingModeChoices?.length) && (!choice?.available || !choice.source);
   const quantity = Number(item.quantity);
   const measured = line.dimensionsMandatory ? calculateDimensionQuantity(line.dimensionRule, item.dimensions) : null;
+  const schedule = item.pricingMode === "pmc" && choice?.available ? choice.vendorRateSchedule : undefined;
+  const quantityForPrice = line.dimensionsMandatory ? String(measured?.quantity ?? "") : item.quantity;
+  let unitRatePaise = choice?.ratePaise ?? null;
+  if (useRecordedPmcRate && currentLine.pricingMode === "pmc" && item.kind === "update") {
+    unitRatePaise = currentLine.ratePaise;
+  } else if (schedule) {
+    const quantityUnits = parseScaledQuantity(quantityForPrice, 18);
+    const limitUnits = parseScaledQuantity(schedule.lowQuantityLimit, 18);
+    unitRatePaise = quantityUnits.status !== "valid" ? null
+      : limitUnits.status === "valid" ? (quantityUnits.scaledQuantity <= limitUnits.scaledQuantity ? schedule.lowQuantityRatePaise : schedule.standardRatePaise)
+      : limitUnits.reason === "positive" ? schedule.standardRatePaise : null;
+  }
   const changeQuantity = (direction: -1 | 1) => {
     if (fieldsDisabled) return;
     const next = (Number.isFinite(quantity) ? quantity : 0) + direction;
@@ -58,13 +74,15 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
           <input aria-label={`Quantity for ${label} ${line.uomName}`} type="number" inputMode="decimal" min="0" step="any" value={item.quantity} disabled={fieldsDisabled} onChange={event => onChange({ quantity: event.target.value })} />
           <button type="button" aria-label={`Increase quantity for ${label}`} disabled={fieldsDisabled} onClick={() => changeQuantity(1)}>+</button>
         </span></label>}
-      <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price incl. GST" : `Rate incl. GST (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price including GST for ${label}`}>{governed ? money(estimatePriceIncludingGst(aggregate?.totalPaise)) : components ? "From components" : money(estimatePriceIncludingGst(choice?.ratePaise))}</output></div>
-      <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"} incl. GST</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} including GST for ${label}`}>{item.kind === "update" ? money(estimatePriceIncludingGst(currentLine.amountPaise)) : "After save"}</output></div>
+      <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price incl. GST" : `${item.pricingMode === "pmc" && !useRecordedPmcRate ? "Vendor rate" : "Rate"} incl. GST (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price including GST for ${label}`}>{governed ? money(estimatePriceIncludingGst(aggregate?.totalPaise)) : components ? "From components" : money(estimatePriceIncludingGst(unitRatePaise))}</output></div>
+      <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"} incl. GST</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} including GST for ${label}`}>{item.kind === "update" ? money(currentLine.pmcPaymentSplit !== undefined ? readEstimatePmcPaymentSplit(currentLine.pmcPaymentSplit)?.totalPayablePaise ?? null : currentLine.taxInclusiveAmountPaise === undefined ? estimatePriceIncludingGst(currentLine.amountPaise) : currentLine.taxInclusiveAmountPaise) : "After save"}</output></div>
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
-        {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
+        {...(!line.dimensionsMandatory && selected && !fieldsDisabled ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
     </>}>
+    {selected ? <PmcPaymentLine value={currentLine.pmcPaymentSplit} /> : null}
     {selected ? <EstimateLineTierDetails rowKey={line.id} label={label} tier={item.modeTier}
       description={unavailable ? null : choice?.description} details={undefined} /> : null}
+    {currentLine.roomMismatch ? <p className="configured-estimate-line__message" role="status">Review this saved item. Its Main Line no longer applies to {currentLine.roomName}.</p> : null}
     {unavailable ? <p className="configured-estimate-line__message" role="status">This saved item is unavailable in the current Configuration. Your team must review it before you can edit or remove it. Saved amounts are unchanged.</p> : null}
     {selected && line.dimensionsMandatory ? line.dimensionRule
       ? <EstimateDimensionsFields label={label} dimensions={item.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={fieldsDisabled} onChange={dimensions => onChange({ dimensions })} />

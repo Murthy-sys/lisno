@@ -1,0 +1,7 @@
+# PMC info popup task plan
+
+[Approved specification](../specs/2026-11-23-pmc-reason-popup-design.md)
+
+1. **Implement the row interaction.** The frontend owner will update the PMC-only variant of `EstimatePricingModeControl` and its styles. When the row supplies a reason, render an independently focusable info button beside the switch using the estimate’s existing info icon style. Give the button an item-specific accessible name. Show the exact reason in a closed-by-default popup. Support click, tap and keyboard activation, trigger and outside-click dismissal, and Escape with focus returned to the button. Keep the popup within the viewport.
+2. **Cover blocked and available rows.** The test owner can work in parallel in the existing frontend test files using the approved interaction contract. Check that the disabled switch’s info button opens the correct row’s message, all dismissal paths work, and the available switch renders alone. Confirm that opening and closing help never calls the pricing change handler. Update assertions that previously expected permanently visible text.
+3. **Verify the integrated change.** After both slices, run the affected control and estimate-builder tests, frontend typecheck and build, and `git diff --check`. Exercise keyboard interaction at desktop width and tap interaction at phone width. Check the message fits, the closed row stays compact and the selected mode is preserved.

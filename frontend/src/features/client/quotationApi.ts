@@ -1,3 +1,4 @@
+import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensions } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { apiClient } from "../../api/client";
@@ -25,6 +26,7 @@ export interface QuotationBasket {
   subBaskets: Array<{ id: string; name: string }>;
 }
 export interface QuotationLine extends EstimateTierLine, QuotationGrouping {
+  roomMismatch?: boolean;
   classification?: "standard" | "special";
   pricingModeChoices?: QuotationPricingModeChoice[];
   roomId: string;
@@ -84,7 +86,7 @@ export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines">, Cur
   phase: "pre" | "post";
   status: EstimateStatus;
   pricedRevision: number;
-  rooms: Array<{ id: string; name: string }>;
+  rooms: Array<{ id: string; name: string; typeId?: string | null }>;
   reviewState: "draft" | "awaiting_staff_review" | "ready_for_approval" | "approved";
   lines: QuotationLine[];
   excludedLines?: QuotationLine[];
@@ -98,6 +100,7 @@ export interface QuotationPricingModeChoice {
   choices: EstimateTierChoice[];
 }
 export interface QuotationCandidate extends QuotationGrouping {
+  applicableRoomCategories?: readonly RoomCategoryId[];
   classification?: "standard" | "special";
   pricingModeChoices?: QuotationPricingModeChoice[];
   mainLineId: string;
@@ -147,6 +150,7 @@ export interface QuotationRevision {
   phase: "pre" | "post";
 }
 export interface QuotationCandidateFilters {
+  roomId?: string;
   mainBasketId?: string;
   subBasketId?: string;
 }
@@ -194,6 +198,7 @@ export const getQuotationSetup = (projectId: string) => apiClient.get<QuotationS
 export const getQuotationRevision = (projectId: string) => apiClient.get<QuotationRevision>(`${path(projectId)}/revision`);
 export const getQuotationCandidates = (projectId: string, search: string, offset = 0, filters: QuotationCandidateFilters = {}) => {
   const query = new URLSearchParams({ search, limit: "20", offset: String(offset) });
+  if (filters.roomId) query.set("roomId", filters.roomId);
   if (filters.mainBasketId) query.set("mainBasketId", filters.mainBasketId);
   if (filters.subBasketId) query.set("subBasketId", filters.subBasketId);
   return apiClient.get<{ items: QuotationCandidate[]; total: number; limit: number; offset: number }>(`${path(projectId)}/items?${query}`);

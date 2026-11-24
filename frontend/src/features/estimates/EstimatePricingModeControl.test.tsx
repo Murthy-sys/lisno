@@ -19,6 +19,7 @@ describe("EstimatePricingModeControl", () => {
     const { container } = render(<Editor />);
     const toggle = screen.getByRole("switch", { name: `PMC pricing mode for ${label}` });
     expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText("Pricing")).not.toBeInTheDocument();
     expect(screen.queryByText("Vendor")).not.toBeInTheDocument();
     expect(screen.queryByText("In-house")).not.toBeInTheDocument();
@@ -52,20 +53,53 @@ describe("EstimatePricingModeControl", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
-  it("associates each unavailable PMC transition with its own explanation", () => {
+  it("opens and dismisses the correct row’s pricing explanation without changing the estimate", async () => {
+    const user = userEvent.setup();
     const change = vi.fn();
+    const ceilingReason = "PMC price is unavailable for this tier.";
+    const paintingReason = "Sub-Vendor price is unavailable for this tier.";
     render(<>
       <EstimatePricingModeControl mode="sub_vendor" label="Ceiling" groupName="ceiling" editable disabled variant="pmc-only"
-        disabledReason="PMC price is unavailable for this tier." onTogglePmc={change} onChange={change} />
+        disabledReason={ceilingReason} onTogglePmc={change} onChange={change} />
       <EstimatePricingModeControl mode="pmc" label="Painting" groupName="painting" editable disabled variant="pmc-only"
-        disabledReason="Sub-Vendor price is unavailable for this tier." onTogglePmc={change} onChange={change} />
+        disabledReason={paintingReason} onTogglePmc={change} onChange={change} />
+      <button type="button">Outside</button>
     </>);
     const ceiling = screen.getByRole("switch", { name: "PMC pricing mode for Ceiling" });
     const painting = screen.getByRole("switch", { name: "PMC pricing mode for Painting" });
-    expect(ceiling).toHaveAccessibleDescription("PMC price is unavailable for this tier.");
-    expect(ceiling).toHaveAttribute("title", "PMC price is unavailable for this tier.");
-    expect(painting).toHaveAccessibleDescription("Sub-Vendor price is unavailable for this tier.");
-    expect(ceiling.getAttribute("aria-describedby")).not.toBe(painting.getAttribute("aria-describedby"));
+    const ceilingInfo = screen.getByRole("button", { name: /PMC.*Ceiling/i });
+    const paintingInfo = screen.getByRole("button", { name: /PMC.*Painting/i });
+    expect(ceiling).toBeDisabled();
+    expect(painting).toBeDisabled();
+    expect(ceiling).toHaveAccessibleDescription(ceilingReason);
+    expect(painting).toHaveAccessibleDescription(paintingReason);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(ceilingReason)).not.toBeInTheDocument();
+    expect(screen.queryByText(paintingReason)).not.toBeInTheDocument();
+    expect(ceilingInfo).toHaveAttribute("aria-expanded", "false");
+    expect(paintingInfo).toHaveAttribute("aria-expanded", "false");
+
+    await user.tab();
+    expect(ceilingInfo).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(ceilingInfo).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("dialog", { name: /PMC.*Ceiling/i })).toHaveTextContent(ceilingReason);
+    expect(paintingInfo).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard("{Escape}");
+    expect(ceilingInfo).toHaveAttribute("aria-expanded", "false");
+    expect(ceilingInfo).toHaveFocus();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(paintingInfo);
+    expect(screen.getByText(paintingReason)).toBeVisible();
+    await user.click(paintingInfo);
+    expect(paintingInfo).toHaveAttribute("aria-expanded", "false");
+    await user.click(paintingInfo);
+    await user.click(screen.getByRole("button", { name: "Outside" }));
+    expect(paintingInfo).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(ceiling).not.toBeChecked();
+    expect(painting).toBeChecked();
     expect(change).not.toHaveBeenCalled();
   });
 

@@ -1,3 +1,4 @@
+import { estimatePmcPaymentsAreValid, readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
@@ -775,7 +776,8 @@ function roundPresentationStages(includeDetail: boolean): Pipeline {
     estimate: {
       id: "$estimateId",
       version: "$estimateVersion",
-      total: "$estimateSnapshot.total"
+      total: { $cond: [{ $eq: [{ $type: "$estimateSnapshot.pmcPaymentSummary" }, "missing"] }, "$estimateSnapshot.total",
+        { $divide: ["$estimateSnapshot.pmcPaymentSummary.customerTotalPayablePaise", 100] }] }
     },
     assignedAdmin: {
       id: "$assignedAdmin._id",
@@ -984,6 +986,7 @@ function mapDetail(row: Row): EstimateClientReviewDetail {
 }
 
 function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
+  if (!estimatePmcPaymentsAreValid(row as any)) throw new Error("Published PMC payments do not reconcile.");
   if ([row.subtotalPaise, row.gstPaise, row.totalPaise, row.roundOffPaise].some(value => value !== undefined) &&
     !estimateTotalsReconcile(row)) throw new Error("Published estimate totals do not reconcile.");
   if (row.roundOffPaise !== undefined && (
@@ -993,6 +996,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
   }
   return {
     ...(row.proposal === undefined ? {} : { proposal: estimateProposalSchema.parse(row.proposal) }),
+    ...(row.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: readEstimatePmcPaymentSummary(row.pmcPaymentSummary)! }),
     clientName: stringField(row, "clientName"),
     projectName: stringField(row, "projectName"),
     location: stringField(row, "location"),
@@ -1019,6 +1023,8 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         ...(lineItem.modeTier === undefined ? {} : { modeTier: stringField(lineItem, "modeTier") as KnowledgeModeTier }),
         ...estimateDimensionSnapshotFields(lineItem),
         ...(lineItem.pricingMode === undefined ? {} : { pricingMode: stringField(lineItem, "pricingMode") as EstimatePricingMode }),
+        ...(lineItem.pmcVendorPayable === undefined ? {} : { pmcVendorPayable: true as const }),
+        ...(lineItem.pmcPaymentSplit === undefined ? {} : { pmcPaymentSplit: readEstimatePmcPaymentSplit(lineItem.pmcPaymentSplit)! }),
         ...(lineItem.rateSource === undefined ? {} : { rateSource: stringField(lineItem, "rateSource") as EstimateRateSource }),
         ...(lineItem.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: lineItem.selectedInHouseComponentIds as string[] }),
         ...(lineItem.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing: readEstimateComponentPricing(lineItem.componentPricing)! } : {}),

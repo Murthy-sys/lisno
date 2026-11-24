@@ -42,7 +42,8 @@ import type { VendorEffectiveStatus } from "./vendorInduction";
 import type {
   KnowledgeApplySubBasketMarginsInput,
   KnowledgeApplySubBasketMarginsResult,
-  KnowledgeSubBasketMarginSummary
+  KnowledgeSubBasketMarginSummary,
+  MarginCommitInput, MarginCommitResult, MarginEditField, MarginMatrix, MarginPreview, MarginPreviewInput
 } from "./knowledgeSubBasketMarginTypes";
 
 const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
@@ -123,6 +124,7 @@ export interface KnowledgeMainLineListParams {
 
 export interface KnowledgeSectionUpdate<TPayload extends KnowledgeJsonObject> {
   readonly modeTier?: KnowledgeModeConfigurationScope;
+  readonly marginEdits?: readonly MarginEditField[];
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
   readonly applicability?: "configured" | "not_configured" | "not_applicable";
@@ -604,11 +606,32 @@ function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQua
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
 }
 
-function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string, options?: { readonly modeTier?: KnowledgeModeConfigurationScope }): Promise<KnowledgeSubBasketMarginSummary> {
+function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string, options?: { readonly modeTier?: KnowledgeModeConfigurationScope; readonly inHouseScope?: "sub_basket" }): Promise<KnowledgeSubBasketMarginSummary> {
+  const params = new URLSearchParams();
+  if (options?.modeTier) params.set("modeTier", options.modeTier);
+  if (options?.inHouseScope) params.set("inHouseScope", options.inHouseScope);
+  const query = params.toString();
   return apiClient.get<KnowledgeSubBasketMarginSummary>(
-    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins${options?.modeTier ? `?modeTier=${segment(options.modeTier)}` : ""}`,
+    `${marginPath(basketId, subBasketId)}${query ? `?${query}` : ""}`,
     { showGlobalLoader: false }
   );
+}
+
+function marginPath(basketId: string, subBasketId: string): string {
+  return `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins`;
+}
+
+function getKnowledgeMarginMatrix(basketId: string, subBasketId: string): Promise<MarginMatrix> {
+  return apiClient.get<MarginMatrix>(`${marginPath(basketId, subBasketId)}/matrix?inHouseScope=sub_basket`, { showGlobalLoader: false });
+}
+
+function previewKnowledgeMarginDecision(basketId: string, subBasketId: string, input: MarginPreviewInput): Promise<MarginPreview> {
+  return apiClient.post<MarginPreview>(`${marginPath(basketId, subBasketId)}/preview`, { ...input, inHouseScope: "sub_basket" });
+}
+
+function commitKnowledgeMarginDecision(basketId: string, subBasketId: string, input: MarginCommitInput): Promise<MarginCommitResult> {
+  const action = input.decision.kind === "approve" ? "approve" : "defaults";
+  return apiClient.post<MarginCommitResult>(`${marginPath(basketId, subBasketId)}/${action}`, { ...input, inHouseScope: "sub_basket" });
 }
 
 function applyKnowledgeSubBasketMargins(
@@ -709,6 +732,9 @@ return {
   createKnowledgeSubBasket,
   updateKnowledgeSubBasket,
   getKnowledgeSubBasketMargins,
+  getKnowledgeMarginMatrix,
+  previewKnowledgeMarginDecision,
+  commitKnowledgeMarginDecision,
   applyKnowledgeSubBasketMargins,
   getKnowledgeBasketQuality,
   getKnowledgeSubBasketDeletionImpact,

@@ -1,3 +1,4 @@
+import type { MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeMaster, KnowledgeMasterType } from "../../../../shared/knowledge/knowledgeTypes";
 import type { KnowledgeMobileContext } from "./knowledgeRuntime";
 import type { SavedSummaryRow } from "../../../../shared/knowledge/knowledgeSavedSummaryTypes";
@@ -20,6 +21,7 @@ export interface KnowledgeSaveHandle {
 }
 
 export interface KnowledgeModeEditorProps extends KnowledgeEditorProps {
+  readonly onChange: (payload: KnowledgeJsonObject, editedMargin?: MarginEditField) => void;
   readonly inHouseSummary?: readonly SavedSummaryRow[];
   readonly referencedSpecificationIds?: readonly string[];
   readonly overviewPayload: KnowledgeJsonObject;

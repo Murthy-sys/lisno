@@ -1,4 +1,4 @@
-import { type ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -36,6 +36,104 @@ const defaults: ComponentProps<typeof EstimatorRecommendations> = {
   roomName: "Living room", contextKey: "room-living", sourceCount: 1, state: "ready", view: groupView, editable: true,
   onRetry: vi.fn(), onRefresh: vi.fn(), onSelect: vi.fn(() => true), onRemove: vi.fn(() => true)
 };
+
+describe("probable estimator recommendations", () => {
+  const targetId = recommendationTargetIdentity(directView.decisions[0]!.target!);
+  const optionalContextByTarget = new Map([[targetId, "lead-one:living:rule-accent:source-v1:target-v1"]]);
+
+  it("offers only probable targets and gives required relationships precedence", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn(() => true);
+    const { rerender } = render(<EstimatorRecommendations {...defaults} mode="probable" onSelect={onSelect}
+      view={{ ...groupView, decisions: [...groupView.decisions, ...directView.decisions] }} optionalContextByTarget={optionalContextByTarget} />);
+    expect(await screen.findByRole("button", { name: "Add Accent finish" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Ignore Accent finish" })).toBeEnabled();
+    expect(screen.queryByText("False ceiling painting")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add Accent finish" }));
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(directView.decisions[0]!.target);
+    rerender(<EstimatorRecommendations {...defaults} mode="probable" onSelect={onSelect} optionalContextByTarget={optionalContextByTarget}
+      view={{ ...directView, decisions: [...directView.decisions, { ...directView.decisions[0]!, key: "required-accent", requirement: "must" }] }} />);
+    expect(screen.queryByRole("button", { name: "Add Accent finish" })).not.toBeInTheDocument();
+  });
+
+  it("does not open a popup or move focus for required-only selections", () => {
+    const onOpenChange = vi.fn();
+    render(<><input aria-label="Quantity" autoFocus /><EstimatorRecommendations {...defaults} mode="probable"
+      popup={{ open: undefined, onOpenChange, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } }} /></>);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Probable items/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Quantity" })).toHaveFocus();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps Ignore through refetches and source-set changes, but not a changed relationship version", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn(), onRemove = vi.fn();
+    const props = { ...defaults, mode: "probable" as const, view: directView, optionalContextByTarget,
+      onSelect, onRemove, selectionFeedback: { contextKey: "lead-one:living" } };
+    const { rerender } = render(<EstimatorRecommendations {...props} />);
+    await user.click(screen.getByRole("button", { name: "Ignore Accent finish" }));
+    expect(screen.getByRole("button", { name: "Ignored Accent finish" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Your estimate is unchanged");
+    expect(onSelect).not.toHaveBeenCalled(); expect(onRemove).not.toHaveBeenCalled();
+    rerender(<EstimatorRecommendations {...props} state="loading" view={null} contextKey="source-list-changed" />);
+    rerender(<EstimatorRecommendations {...props} contextKey="source-list-changed" />);
+    expect(screen.getByRole("button", { name: "Ignored Accent finish" })).toBeDisabled();
+    rerender(<EstimatorRecommendations {...props} optionalContextByTarget={new Map([[targetId, "lead-one:living:rule-accent:source-v2:target-v1"]])} />);
+    expect(screen.getByRole("button", { name: "Ignore Accent finish" })).toBeEnabled();
+  });
+
+  it("acknowledges Ignore, closes the last decision and offers it again on explicit reopen", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn(), onRemove = vi.fn();
+    function Popup() {
+      const [open, setOpen] = useState<boolean | undefined>();
+      return <EstimatorRecommendations {...defaults} mode="probable" view={directView}
+        optionalContextByTarget={optionalContextByTarget} onSelect={onSelect} onRemove={onRemove}
+        completion={{ contextKey: "lead-one:living", selectedTargetIds: new Set() }}
+        selectionFeedback={{ contextKey: "lead-one:living" }}
+        popup={{ open, onOpenChange: setOpen, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } }} />;
+    }
+    render(<Popup />);
+    expect(await screen.findByRole("dialog", { name: "Probable items" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Ignore Accent finish" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Probable items (1)" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("Ignored Accent finish");
+    expect(onSelect).not.toHaveBeenCalled(); expect(onRemove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Probable items (1)" }));
+    expect(screen.getByRole("button", { name: "Ignore Accent finish" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add Accent finish" })).toBeEnabled();
+  });
+
+  it("does not automatically prompt for an already selected probable item", () => {
+    const onOpenChange = vi.fn();
+    render(<EstimatorRecommendations {...defaults} mode="probable" optionalContextByTarget={optionalContextByTarget}
+      view={{ ...directView, decisions: directView.decisions.map(decision => ({ ...decision, selected: true })) }}
+      completion={{ contextKey: "lead-one:living", selectedTargetIds: new Set([targetId]) }}
+      popup={{ open: undefined, onOpenChange, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } }} />);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("can finish ignoring an unavailable probable item despite its availability message", async () => {
+    const user = userEvent.setup();
+    const unavailable = { ...directView.decisions[0]!, available: false, target: null, unavailableReason: "price_not_configured" as const };
+    function Popup() {
+      const [open, setOpen] = useState<boolean | undefined>();
+      return <EstimatorRecommendations {...defaults} mode="probable" view={{ ...directView, decisions: [unavailable] }}
+        optionalContextByTarget={new Map([[`unavailable:${unavailable.key}`, "lead:living:unavailable:version1"]])}
+        completion={{ contextKey: "lead:living", selectedTargetIds: new Set() }}
+        popup={{ open, onOpenChange: setOpen, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } }} />;
+    }
+    render(<Popup />);
+    expect(await screen.findByRole("button", { name: "Add Accent finish" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ignore Accent finish" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Ignore Accent finish" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Probable items \(1\)/ })).toHaveFocus();
+  });
+});
 
 describe("inline staff recommendations", () => {
   it("shows unavailable required items and empty groups without allowing Add", async () => {

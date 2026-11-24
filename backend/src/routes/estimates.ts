@@ -1,3 +1,7 @@
+import { buildEstimatePmcPayments, estimatePmcPaymentsAreValid } from "../domain/estimate-pmc-payment-split.js";
+import { readSavedQuotationPdf } from "../services/quotation-draft-pdf.service.js";
+import { calculateEstimatePmcPayable } from "../domain/estimate-pmc-payable.js";
+import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
 import { presentEstimateInHouseResponse } from "../services/estimate-in-house-presentation.js";
 import { toEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { compareLeadEstimateTiers, estimateTierComparisonSchema, renderEstimateTierComparisonPdf } from "../services/estimate-tier-comparison.service.js";
@@ -26,7 +30,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { normalizeEmail } from "../domain/email.js";
-import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimateConfigurationRateMatches,
+import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, currentEstimateLineRateMatches, estimateConfigurationRateMatches,
   estimatePricingMetadataIsValid, type EstimatePricingMode, type EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
@@ -39,7 +43,7 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
-import { estimatorCatalogueTierPricing, resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
+import { applicableRowsForEstimateSubmission, estimatorCatalogueTierPricing, resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
@@ -297,7 +301,9 @@ export function createEstimatesRouter(
   });
   router.get("/estimates/:estimateId/revisions/:revisionId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/revisions/:revisionId/pdf"), async (req, res, next) => {
     try {
-      const download = await revisions.readPdf(req.authenticatedUser!, String(req.params.estimateId), String(req.params.revisionId));
+      const audience = req.query.audience;
+      if (audience !== undefined && audience !== "client") throw new ApiError(400, "VALIDATION_ERROR", "Unknown revision PDF audience.");
+      const download = await revisions.readPdf(req.authenticatedUser!, String(req.params.estimateId), String(req.params.revisionId), audience);
       res.set("Cache-Control", "private, no-store").set("X-Content-Type-Options", "nosniff");
       sendDownload(res, download);
     } catch (error) { next(error); }
@@ -330,12 +336,19 @@ export function createEstimatesRouter(
       const latest = await resolveEstimatorCatalogueLines(savedLines.filter((line) =>
         line.source === "configuration" && typeof line.mainLineId === "string")
         .map((line) => String(line.mainLineId)));
+      const savedRooms: Array<{ id: string; typeId?: string }> = Array.isArray(estimate.rooms) ? estimate.rooms : [];
+      const roomTypes = new Map(savedRooms.map(room => [room.id, room.typeId]));
       const lineItems = savedLines.map((line) => {
         if (line.source !== "configuration") return line;
         const source = latest.get(String(line.mainLineId));
         if (!source) return { ...line, configurationSourceUnavailable: true };
+        if (!isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(String(line.roomId)))) {
+          return { ...line, roomMismatch: true };
+        }
         const modeTier = line.modeTier ?? "signature";
-        const configurationTierUnavailable = estimatorCatalogueTierPricing(source.line, modeTier) === null;
+        const currentPricing = estimatorCatalogueTierPricing(source.line, modeTier);
+        const configurationTierUnavailable = !currentPricing || line.included === true && line.pricingMode === "pmc" &&
+          !calculateEstimatePmcPayable(currentPricing.pmcPricing, Number(line.quantity), source.line.uom.decimalScale);
         const configurationDimensionsChanged = (line.dimensionsMandatory === true) !== source.line.dimensionsMandatory ||
           source.line.dimensionsMandatory && !estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) ||
           line.included === true && !estimateLineDimensionsValid({ ...line, dimensionsMandatory: source.line.dimensionsMandatory,
@@ -354,9 +367,9 @@ export function createEstimatesRouter(
         };
       });
       estimate = { ...estimate, lineItems,
-        isIncomplete: estimate.isIncomplete === true || lineItems.some((line) =>
+        isIncomplete: estimate.isIncomplete === true || !estimatePmcPaymentsAreValid(estimate as any, { requirePmcSplit: true }) || lineItems.some((line) =>
           line.source === "configuration" &&
-          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true ||
+          (line.roomMismatch === true && line.included === true || line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true ||
             line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !estimateComponentLineAmountIsValid(line))) };
     }
     const [clientReview, clientFeedback] = await Promise.all([
@@ -389,10 +402,10 @@ export function createEstimatesRouter(
       ...(isCollaborativeEstimate(estimate) ? { preApprovedReview, changesFromPre: preApprovedReview
         ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) });
   };
-  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimate = await EstimateModel.findOne({ leadId: lead.id, ...estimateStaffReadFilter(req.authenticatedUser!) }).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate, lead) }); } catch (error) { next(error); } });
+  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimate = await EstimateModel.findOne({ leadId: lead.id, ...estimateStaffReadFilter(req.authenticatedUser!) }).select("+lineItems.pmcMarginSnapshot").lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate, lead) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
     const estimateFilter = req.authenticatedUser!.role === "super_admin" ? {} : req.authenticatedUser!.role === "designer" ? { "estimation.workflowVersion": { $in: [2, 3] }, "estimation.phase": "post", designPlanDesignerId: req.authenticatedUser!.id } : { ownerId: req.authenticatedUser!.id };
-    const estimates = await EstimateModel.find(estimateFilter).sort({ updatedAt: -1 }).lean();
+    const estimates = await EstimateModel.find(estimateFilter).select("+lineItems.pmcMarginSnapshot").sort({ updatedAt: -1 }).lean();
     const leadFilter = ["super_admin", "designer"].includes(req.authenticatedUser!.role)
       ? { _id: { $in: estimates.map((estimate) => estimate.leadId) } }
       : { _id: { $in: estimates.map((estimate) => estimate.leadId) }, ownerId: req.authenticatedUser!.id };
@@ -460,7 +473,7 @@ export function createEstimatesRouter(
       const storedLead = await LeadModel.findById(authorizedLead.id).session(session).lean();
       if (!storedLead) throw estimateNotFound();
       const lead = { ...storedLead, id: String(storedLead._id) };
-      let estimate = await EstimateModel.findOne({ leadId: lead.id }).session(session);
+      let estimate = await EstimateModel.findOne({ leadId: lead.id }).select("+lineItems.pmcMarginSnapshot").session(session);
       if (estimate && (estimate.ownerId !== lead.ownerId || estimate.projectId != null && estimate.projectId !== (lead.projectId ?? null))) {
         throw new ApiError(409, "ESTIMATE_PROJECT_CONFLICT", "The estimate and lead no longer share the same owner and project.");
       }
@@ -529,7 +542,11 @@ export function createEstimatesRouter(
       // Design obligations also apply to configured lines with a manual selling price.
       await fenceEstimateConfigurationDependencies(inputLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
-      const preservedExcludedLineIds = new Set<string>();
+      const commandRooms = req.body.rooms as Array<{ id: string; typeId?: string | null }>;
+      const roomTypes = new Map(commandRooms.map(room => [room.id, room.typeId]));
+      const previousRooms = (estimate?.rooms ?? []) as Array<{ id: string; typeId?: string | null }>;
+      const previousRoomTypes = new Map(previousRooms.map(room => [room.id, room.typeId]));
+      const preservedSnapshotIds = new Set<string>();
       const lineItems = await mapSequential(inputLines, async (line, index) => {
         if (line.source !== "configuration") {
           const candidates = previousLines.filter((prior) => line.id !== undefined && prior.id === line.id);
@@ -569,6 +586,28 @@ export function createEstimatesRouter(
         }
         if (prior) savedConfiguredSnapshot(prior);
         const snapshot = firstSave!;
+        const roomType = roomTypes.get(line.roomId);
+        const previousRoomType = previousRoomTypes.get(line.roomId);
+        if (snapshot.line.applicableRoomCategories?.length && previousRoomTypes.has(line.roomId) &&
+          (previousRoomType ?? null) !== (roomType ?? null)) {
+          throw new ApiError(400, "ESTIMATE_ROOM_TYPE_CHANGED", "Keep the saved room type or choose a new room.");
+        }
+        if (!isMainLineApplicableToRoom(snapshot.line.applicableRoomCategories, roomType)) {
+          if (!prior || prior.included !== true && line.included) {
+            throw new ApiError(400, "ESTIMATE_ROOM_NOT_APPLICABLE", "This Main Line is not configured for the selected room or place.");
+          }
+          // Retain the persisted financial snapshot until the estimator removes this assignment.
+          if (!unchangedSavedEstimatePrice({ ...line, roomName: prior.roomName }, prior, snapshot.line) ||
+            line.included && line.quantity !== prior.quantity) {
+            throw new ApiError(409, "ESTIMATE_ROOM_NOT_APPLICABLE", "Review or remove this saved Main Line before changing it in this room.");
+          }
+          const savedId = String(prior.id);
+          preservedSnapshotIds.add(savedId);
+          return { ...prior, id: savedId, source: "configuration" as const, roomName: line.roomName,
+            ratePaise: prior.ratePaise as number | null, included: line.included,
+            amountPaise: line.included ? prior.amountPaise as number | null : 0, amount: line.included ? prior.amount as number | null : 0,
+            recommendationSourceMainLineIds: line.included ? prior.recommendationSourceMainLineIds : [] };
+        }
         if (prior && snapshot.line.uom.id !== line.uomId) {
           throw new ApiError(409, "ESTIMATE_UOM_CHANGED",
             "The configured UOM changed. Review this line's quantity before saving.");
@@ -596,9 +635,11 @@ export function createEstimatesRouter(
         const unchangedSavedPrice = savedIdMatches && unchangedSavedEstimatePrice({ ...line, ...pricing }, prior, snapshot.line);
         const positiveCurrentPrice = pricingMode !== undefined && snapshot.line.basePriceAvailability[modeTier as KnowledgeModeTier][pricingMode] &&
           (pricingMode === "in_house" && tierPricing?.inHouseComponents !== undefined || (tierPricing?.modeBaseRatesPaise[pricingMode] ?? 0) > 0);
-        const preserveSavedPrice = unchangedSavedPrice && (!line.included || rateSource !== "configuration" || prior?.ratePaise === 0 || !positiveCurrentPrice);
+        const historicalZeroPmc = pricingMode === "pmc" && rateSource === "configuration" &&
+          prior?.ratePaise === 0 && tierPricing?.pmcPricing?.baseRatePaise === 0;
+        const preserveSavedPrice = unchangedSavedPrice && (!line.included || pricingMode !== "pmc" || historicalZeroPmc) && (!line.included || rateSource !== "configuration" || prior?.ratePaise === 0 || !positiveCurrentPrice);
         const preserveExcludedPrice = preserveSavedPrice && !line.included;
-        if (preserveExcludedPrice) preservedExcludedLineIds.add(line.id!);
+        if (preserveExcludedPrice) preservedSnapshotIds.add(line.id!);
         if (!preserveSavedPrice && (rateSource !== "configuration" || line.rateSource !== "configuration" && !unchangedSavedPrice)) throw estimatePriceReadOnly();
         if (!tierPricing && !preserveSavedPrice) throw new ApiError(409, "ESTIMATE_MODE_TIER_UNAVAILABLE", "This tier is no longer applicable or configured for this Main Line. Refresh the catalogue and choose an available tier.");
         if (!preserveExcludedPrice && tierPricing && !estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
@@ -607,6 +648,13 @@ export function createEstimatesRouter(
         const preserveComponentPricing = preserveSavedPrice && prior?.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS;
         const componentCalculated = !preserveComponentPricing && line.included && pricingMode === "in_house" && rateSource === "configuration" && tierPricing?.inHouseComponents !== undefined;
         if (line.included && line.pricingBasis !== undefined && !componentCalculated && !preserveComponentPricing) throw estimatePriceReadOnly();
+        const quantityScale = snapshot.line.uom.decimalScale;
+        const measurements = configuredLineMeasurements(line, prior, snapshot.line);
+        const quantityUnits = scaledQuantity(measurements.quantity, quantityScale, line.included);
+        const pmcPayable = pricingMode === "pmc" ? calculateEstimatePmcPayable(tierPricing?.pmcPricing, measurements.quantity, quantityScale) : null;
+        if (line.included && pricingMode === "pmc" && !pmcPayable) {
+          throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED", "PMC vendor pricing is unavailable. Review the current Configuration before saving.");
+        }
         if (rateSource === "configuration" && !preserveSavedPrice) {
           // Only older callers preserving a saved origin may reuse its saved version metadata.
           const itemVersion = line.itemVersion ?? (line.rateSource === undefined ? prior?.sourceItemVersion : undefined);
@@ -620,17 +668,14 @@ export function createEstimatesRouter(
           if (!snapshot.line.basePriceAvailability[modeTier as KnowledgeModeTier][pricingMode as EstimatePricingMode] ||
             componentCalculated && (line.ratePaise !== null || (selectedInHouseBaseRate(tierPricing!.inHouseComponents!, selectedInHouseComponentIds) ?? 0) <= 0) ||
             !componentCalculated && (line.ratePaise === null || line.ratePaise <= 0 ||
-              !estimateConfigurationRateMatches(pricing, tierPricing!.modeBaseRatesPaise, tierPricing!.inHouseComponents))) throw estimatePriceReadOnly();
+              !estimateConfigurationRateMatches(pricing, pricingMode === "pmc" ? { ...tierPricing!.modeBaseRatesPaise, pmc: pmcPayable?.revisedUnitRatePaise ?? null } : tierPricing!.modeBaseRatesPaise, tierPricing!.inHouseComponents))) throw estimatePriceReadOnly();
         }
-        const quantityScale = snapshot.line.uom.decimalScale;
-        const measurements = configuredLineMeasurements(line, prior, snapshot.line);
-        const quantityUnits = scaledQuantity(measurements.quantity, quantityScale, line.included);
         if (preserveComponentPricing && measurements.quantity !== prior?.quantity) throw estimatePriceReadOnly();
         const componentPricing = preserveComponentPricing ? prior!.componentPricing as EstimateComponentPricing : componentCalculated ? await resolveEstimateComponentPricing(snapshot, modeTier as KnowledgeModeTier, measurements.quantity, selectedInHouseComponentIds, session) : undefined;
         if (componentPricing && !preserveComponentPricing && (line.pricingBasis !== ESTIMATE_COMPONENT_PRICING_BASIS || line.ratePaise !== null || line.componentPricingFingerprint !== componentPricing.inputFingerprint)) {
           throw new ApiError(409, "ESTIMATE_COMPONENT_PRICING_CHANGED", "Review the current component calculation before saving this In-house line.");
         }
-        const amountPaise = componentPricing ? line.included ? componentPricing.totalPaise : 0 : line.included && line.ratePaise === null
+        const amountPaise = line.included && pmcPayable ? pmcPayable.finalVendorChargesPaise : componentPricing ? line.included ? componentPricing.totalPaise : 0 : line.included && line.ratePaise === null
           ? null : line.included
             ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
             : 0;
@@ -645,6 +690,7 @@ export function createEstimatesRouter(
           ...(line.recommendationSourceMainLineIds !== undefined
             ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
           ...currentConfiguredFields(snapshot, modeTier as KnowledgeModeTier),
+          ...(line.included && pmcPayable ? { pmcVendorPayable: true as const, pmcMarginSnapshot: { pmcMarginBps: pmcPayable.pmcMarginBps, pmcMarginAmountPaise: pmcPayable.pmcMarginAmountPaise } } : {}),
           ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing } : {}),
           specification: null, unit: snapshot.line.uom.name,
           ratePaise: line.ratePaise, rate: line.ratePaise === null ? null : line.ratePaise / 100,
@@ -653,7 +699,7 @@ export function createEstimatesRouter(
           amountPaise, amount: amountPaise === null ? null : amountPaise / 100
         };
       });
-      await fenceEstimateInHouseComponentReferences(lineItems.filter(line => !preservedExcludedLineIds.has(line.id)), configured, session);
+      await fenceEstimateInHouseComponentReferences(lineItems.filter(line => !preservedSnapshotIds.has(line.id)), configured, session);
       const subtotalPaise = lineItems.reduce((sum, line) => {
         const next = sum + (line.amountPaise ?? 0);
         if (!Number.isSafeInteger(next)) throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
@@ -669,6 +715,9 @@ export function createEstimatesRouter(
         throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
       }
       const { totalPaise, roundOffPaise } = rounded;
+      let pmcPayments: ReturnType<typeof buildEstimatePmcPayments>;
+      try { pmcPayments = buildEstimatePmcPayments(lineItems, { subtotalPaise, gstPaise, totalPaise, roundOffPaise }); }
+      catch { throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Refresh and save the PMC pricing before continuing."); }
       const isIncomplete = lineItems.some((line) => line.source === "configuration" && line.included && line.ratePaise === null && !estimateComponentLineAmountIsValid(line));
       const leadProjectId = lead.projectId ?? null;
       const estimateProjectId = estimate?.projectId ?? null;
@@ -696,7 +745,8 @@ export function createEstimatesRouter(
       estimate.scopes = req.body.scopes;
       estimate.selectedMainBasketIds = selectedMainBasketIds;
       estimate.selectedMainBasketClassifications = selectedMainBasketClassifications;
-      estimate.lineItems = lineItems;
+      estimate.lineItems = pmcPayments.lineItems;
+      estimate.pmcPaymentSummary = pmcPayments.pmcPaymentSummary;
       estimate.subtotalPaise = subtotalPaise;
       estimate.gstPaise = gstPaise;
       estimate.totalPaise = totalPaise;
@@ -705,7 +755,7 @@ export function createEstimatesRouter(
       estimate.gst = gstPaise / 100;
       estimate.total = totalPaise / 100;
       estimate.isIncomplete = isIncomplete;
-      if (effectiveCommercialStatus(estimate) !== "draft" || (configuredDraft || collaborativeDraft) && updatingExistingEstimate) estimate.version += 1;
+      if (updatingExistingEstimate) estimate.version += 1;
       if (isCollaborativeEstimate(estimate)) {
         if (previousEstimate && estimatePhysicalScopeChanged(previousEstimate, estimate.toObject())) estimate.estimation.designScopeRevision += 1;
         if (estimate.estimation.workflowVersion === 3 && previousEstimate && estimateQuotationContentChanged(previousEstimate, estimate.toObject())) {
@@ -783,6 +833,14 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.get("/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/pdf"), async (req, res, next) => { try {
+    if (req.query.audience !== undefined || req.query.expectedVersion !== undefined || req.query.stage !== undefined) {
+      const preview = z.object({ audience: z.literal("client"), expectedVersion: z.coerce.number().int().positive().safe(), stage: z.literal("internal-review").optional() }).strict().safeParse(req.query);
+      if (!preview.success) throw new ApiError(400, "VALIDATION_ERROR", "A client preview requires the saved estimate version.");
+      const file = await readSavedQuotationPdf(req.authenticatedUser!, null, String(req.params.estimateId), preview.data.expectedVersion, estimatePdf, preview.data.stage);
+      res.set("Cache-Control", "private, no-store").set("X-Content-Type-Options", "nosniff");
+      sendDownload(res, file);
+      return;
+    }
     const filter = { _id: req.params.estimateId, ...estimateStaffReadFilter(req.authenticatedUser!) };
     const estimate = await EstimateModel.findOne(filter).lean();
     if (!estimate || !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
@@ -790,7 +848,10 @@ export function createEstimatesRouter(
       line.source === "configuration" && line.included && line.ratePaise == null && !estimateComponentLineAmountIsValid(line))) {
       throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter all selected selling rates before downloading a proposal PDF.");
     }
-    if (isEditableEstimateStatus(effectiveCommercialStatus(estimate))) await assertEstimateCurrentConfiguration(estimate);
+    if (isEditableEstimateStatus(effectiveCommercialStatus(estimate))) {
+      if (!estimatePmcPaymentsAreValid(estimate as any, { requirePmcSplit: true })) throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Refresh and save the PMC payment breakdown before viewing the estimate.");
+      await assertEstimateCurrentConfiguration(estimate);
+    }
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (!lead) throw estimateNotFound();
     const proposal = createEstimateProposal({
@@ -1007,7 +1068,7 @@ function currentConfiguredFields(source: {
 }
 
 async function assertEstimateCurrentConfiguration(
-  estimate: { lineItems?: unknown },
+  estimate: { lineItems?: unknown; rooms?: unknown },
   session?: mongoose.ClientSession
 ): Promise<void> {
   const saved = Array.isArray(estimate.lineItems)
@@ -1015,8 +1076,9 @@ async function assertEstimateCurrentConfiguration(
       line && typeof line === "object" && line.source === "configuration") : [];
   if (saved.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(saved.map((line) => String(line.mainLineId)), session);
-  if (session) await fenceEstimateInHouseComponentReferences(saved, current, session);
-  for (const line of saved) {
+  const currentRows = applicableRowsForEstimateSubmission(saved, estimate.rooms, current);
+  if (session) await fenceEstimateInHouseComponentReferences(currentRows, current, session);
+  for (const line of currentRows) {
     const source = current.get(String(line.mainLineId));
     if (!source) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
@@ -1024,6 +1086,7 @@ async function assertEstimateCurrentConfiguration(
     }
     const modeTier = line.modeTier ?? "signature";
     const tierPricing = estimatorCatalogueTierPricing(source.line, modeTier);
+    const currentPmc = line.included !== false && line.pricingMode === "pmc" ? calculateEstimatePmcPayable(tierPricing?.pmcPricing, Number(line.quantity), source.line.uom.decimalScale) : null;
     const fields = currentConfiguredFields(source, modeTier as KnowledgeModeTier);
     if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes", "dimensionRule"].includes(field) &&
       (field === "clientVisible" ? line[field] !== false : field === "dimensionsMandatory" ? line[field] === true : field === "modeTier" ? line[field] ?? "signature" : line[field]) !== value) ||
@@ -1031,9 +1094,12 @@ async function assertEstimateCurrentConfiguration(
       line.included === true && !estimateLineDimensionsValid(line) ||
       designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
+      line.included !== false && line.pricingMode === "pmc" && (!currentPmc ||
+        (line.pmcPaymentSplit as { marginBps?: number; lisnoAmountPaise?: number } | undefined)?.marginBps !== currentPmc.pmcMarginBps ||
+        (line.pmcPaymentSplit as { lisnoAmountPaise?: number } | undefined)?.lisnoAmountPaise !== currentPmc.pmcMarginAmountPaise) ||
       !tierPricing || (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS
         ? !await currentEstimateComponentPricingMatches(line, source, session)
-        : line.included !== false && !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
+        : line.included !== false && !currentEstimateLineRateMatches(line, tierPricing, source.line.uom.decimalScale))) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
     }
@@ -1091,7 +1157,7 @@ function estimatePriceReadOnly(): ApiError {
 }
 
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise" | "applicableTiers" | "tierPricing" | "dimensionsMandatory" | "dimensionRule" | "hasConfiguredBasePrice" | "basePriceAvailability">;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise" | "applicableTiers" | "tierPricing" | "dimensionsMandatory" | "dimensionRule" | "hasConfiguredBasePrice" | "basePriceAvailability" | "showByDefault">;
   mainBasketName: string; subBasketName: string | null;
 } {
   const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",
@@ -1237,6 +1303,7 @@ function toEstimatePdfInput(
     gstPaise?: number;
     totalPaise?: number;
     roundOffPaise?: number;
+    pmcPaymentSummary?: EstimatePdfInput["pmcPaymentSummary"];
     lineItems: EstimatePdfInput["lineItems"];
   },
   lead: {
@@ -1260,6 +1327,7 @@ function toEstimatePdfInput(
     ...(estimate.gstPaise !== undefined ? { gstPaise: estimate.gstPaise } : {}),
     ...(estimate.totalPaise !== undefined ? { totalPaise: estimate.totalPaise } : {}),
     ...(estimate.roundOffPaise !== undefined ? { roundOffPaise: estimate.roundOffPaise } : {}),
+    ...(estimate.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: estimate.pmcPaymentSummary }),
     lineItems: estimate.lineItems,
     lead: {
       clientName: lead.clientName,

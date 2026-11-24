@@ -6,7 +6,7 @@ import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
 const living = { id: "room-living", label: "Living & Dining", sqft: 20000 };
 const kitchen = { id: "room-kitchen", label: "Kitchen", sqft: 680 };
 const line = (id: string, basketId = "pop", subBasketId = "ceiling"): EstimationCatalogueMainLine => ({
-  id, mainLineId: id, basketId, subBasketId, name: `Item ${id}`, displayOrder: 0, revisionId: `revision-${id}`,
+  id, mainLineId: id, basketId, subBasketId, name: `Item ${id}`, displayOrder: 0, revisionId: `revision-${id}`, showByDefault: true,
   uom: { id: "area", code: "SQFT", name: "sq ft", decimalScale: 2 },
   modeBaseRatesPaise: { pmc: 1000, sub_vendor: 1250, in_house: 1500 }
 });
@@ -34,6 +34,42 @@ const draft = (current: EstimationCatalogue, room = living) => createConfiguredL
   { mainLineId: "gypsum", basketId: "pop", subBasketId: "ceiling" })!;
 
 describe("Sales active-room catalogue presentation", () => {
+  it("shows only explicit defaults across normal, temporary and direct items without filtering source data", () => {
+    const current = catalogue();
+    current.items[0]!.directTemporaryItems![0]!.showByDefault = false;
+    delete current.items[0]!.subBaskets[0]!.temporaryItems![0]!.showByDefault;
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
+    const before = structuredClone(current);
+    expect(project(current).map(row => row.target.mainLineId)).toEqual(["gypsum"]);
+    expect(createConfiguredLine(current, living, { mainLineId: "paint", basketId: "painting", subBasketId: "wall" }))
+      .toMatchObject({ mainLineId: "paint", included: false });
+    expect(current).toEqual(before);
+  });
+
+  it.each([undefined, false, null, "true", 1])("does not interpret %j as a default", showByDefault => {
+    const current = catalogue();
+    Object.assign(current.items[0]!.subBaskets[0]!.mainLines[0]!, { showByDefault });
+    expect(project(current).some(row => row.target.mainLineId === "gypsum")).toBe(false);
+  });
+
+  it("retains explicit saved and unsaved room edits when defaults are switched off", () => {
+    const current = catalogue();
+    const saved = { ...draft(current), persistedId: "saved-living", included: true, quantity: 3, rateInput: "79" };
+    const unsaved = { ...draft(current, kitchen), included: false, quantity: 7, rateInput: "44" };
+    const before = structuredClone([saved, unsaved]);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
+    expect(project(current).some(row => row.target.mainLineId === "gypsum")).toBe(false);
+    expect(project(current, [saved, unsaved]).find(row => row.target.mainLineId === "gypsum"))
+      .toEqual({ line: saved, target: { mainLineId: "gypsum", basketId: "pop", subBasketId: "ceiling" }, isPreview: false });
+    expect(project(current, [saved, unsaved], kitchen).find(row => row.target.mainLineId === "gypsum")?.line).toBe(unsaved);
+    expect(configuredLineAmountPaise(saved)).toBe(23_700);
+    expect(configuredLineAmountPaise(unsaved)).toBe(0);
+    expect([saved, unsaved]).toEqual(before);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.showByDefault = true;
+    expect(project(current).find(row => row.target.mainLineId === "gypsum"))
+      .toMatchObject({ isPreview: true, line: { included: false } });
+  });
+
   it("hides authoritative zero-only choices across direct, normal and temporary paths", () => {
     const current = catalogue();
     for (const source of [current.items[0]!.directTemporaryItems![0]!, current.items[0]!.subBaskets[0]!.mainLines[0]!,

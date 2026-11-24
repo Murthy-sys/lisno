@@ -7,6 +7,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { Select, Textarea } from "../../components/ui/Field";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import { ClientSubmittedQuotationPdf } from "../client/ClientSubmittedQuotationPdf";
 import {
   assignEstimateDesigner,
   decideEstimateAsDesigner,
@@ -18,7 +19,8 @@ import {
   getEstimateReviewQueue
 } from "./estimateWorkflowApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
-import { ClientPublishedEstimate, clientEstimateMoney } from "./ClientPublishedEstimate";
+import { ClientPublishedEstimate } from "./ClientPublishedEstimate";
+import { clientEstimateMoney, clientEstimateTotal } from "./estimatePmcPaymentPresentation";
 import { ClientEstimateDesignReview } from "./ClientEstimateDesignReview";
 import { clientEstimateWorkflowVersion } from "./clientEstimateWorkflow";
 import "./clientPublishedEstimate.css";
@@ -147,7 +149,7 @@ function EstimateReviewCard({
     return <article className="estimate-review-card estimate-review-card--client">
       <div className={`estimate-review-card__client-header${clientExpanded ? " estimate-review-card__client-header--expanded" : ""}`}>
         <h3 id={headingId}>{clientTitle}</h3>
-        <strong className="estimate-review-card__total">{publishedReview ? clientEstimateMoney(publishedReview.snapshot.total) : "Estimate unavailable"}</strong>
+        <strong className="estimate-review-card__total">{publishedReview ? clientEstimateMoney(clientEstimateTotal(publishedReview.snapshot)) : "Estimate unavailable"}</strong>
         {clientExpanded && publishedReview ? <DownloadButton
           className="button button--secondary estimate-review-card__export"
           label="Export as PDF"
@@ -162,6 +164,7 @@ function EstimateReviewCard({
         <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><span aria-hidden="true">{clientExpanded ? "Hide details" : "View estimate"}</span><span aria-hidden="true">{clientExpanded ? "−" : "+"}</span></button>
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
+        {publishedReview ? <ClientSubmittedQuotationPdf estimate={estimate} onVerificationError={() => setPdfNeedsRefresh(true)} /> : null}
         {pdfNeedsRefresh ? <div className="client-commercial-state" role="status"><p>Refresh the submitted estimate before trying the PDF or making a decision.</p><Button variant="secondary" onClick={async () => { await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }); setPdfNeedsRefresh(false); }}>Refresh estimate</Button></div> : null}
         {decisionBlocked ? <p role="status">Save or discard your quotation changes before approving a submitted version.</p> : null}
         <ClientPublishedEstimate estimate={estimate} decisionBlocked={pdfNeedsRefresh || decisionBlocked} />

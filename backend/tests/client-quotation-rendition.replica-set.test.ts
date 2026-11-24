@@ -85,6 +85,18 @@ describe("immutable client quotation renditions", () => {
       sourceDigest: sha256Hex(JSON.stringify(source)) });
     expect(round).toEqual(original);
   });
+  it("preserves each visible line's share of tax when an earlier line is hidden", async () => {
+    const h = harness();
+    const full = { ...source, subtotal: 0.06, gst: 0.01, total: 0.07, subtotalPaise: 6, gstPaise: 1, totalPaise: 7,
+      lineItems: [true, false].map((hidden, index) => ({ ...source.lineItems[index]!, included: true, rate: 0.03,
+        amount: 0.03, quantity: 1, clientVisible: !hidden })) };
+    const safe = await h.renditions.readForRound({ ...round, estimateSnapshot: full });
+    const rendered = JSON.parse(safe.bytes.toString());
+    expect(rendered.lineItems).toHaveLength(1);
+    expect(rendered.includedPayablesPaise).toEqual([3]);
+    expect(rendered.totalPaise).toBe(7);
+  });
+
   it("deduplicates concurrent generation and removes only losing blobs", async () => {
     const h = harness();
     const results = await Promise.all([h.renditions.readForRound(round), h.renditions.readForRound(round), h.renditions.readForRound(round)]);

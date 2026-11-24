@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -75,7 +76,7 @@ describe("client screen visibility projection", () => {
     estimate.lineItems = [{ ...line, rate: 5, ratePaise: 500, amount: 10, amountPaise: 1000 }] as EstimateQueueItem["lineItems"];
     renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
     expect(screen.getByText("2 sq ft × Calculated from components")).toBeVisible();
-    expect(screen.getByText("Component selling amounts for Wall painting · ₹783.33")).toBeVisible();
+    expect(screen.getByText("Component selling amounts for Wall painting · ₹783.33 before GST")).toBeVisible();
     expect(screen.queryByText(/Rate unavailable/)).not.toBeInTheDocument();
   });
 
@@ -157,4 +158,68 @@ it("displays recorded dimensions from the frozen snapshot without adopting worki
   renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
   expect(screen.getByText("Dimensions: 2 × 3 × 4 ft (L × W × H) · Quantity = L × W")).toBeVisible();
   expect(screen.queryByText(/9 × 9 × 9/)).not.toBeInTheDocument();
+});
+
+function splitEstimate(otherWorkPayablePaise = 29500): EstimateQueueItem {
+  const estimate = projectedEstimate(true);
+  const snapshot = estimate.publishedReview!.snapshot;
+  const subtotalPaise = 10000 + (otherWorkPayablePaise ? 25000 : 0);
+  Object.assign(snapshot, {
+    subtotalPaise, gstPaise: subtotalPaise * 0.18, totalPaise: subtotalPaise * 1.18,
+    subtotal: subtotalPaise / 100, gst: subtotalPaise * 0.18 / 100, total: subtotalPaise * 1.18 / 100,
+    pmcPaymentSummary: { version: 1, vendorPayablePaise: 11800, lisnoPayablePaise: 2950,
+      pmcTotalPayablePaise: 14750, otherWorkPayablePaise, roundOffPaise: 0,
+      customerTotalPayablePaise: 14750 + otherWorkPayablePaise, nonPmcMilestoneBasisPaise: otherWorkPayablePaise }
+  });
+  Object.assign(snapshot.lineItems[0]!, { pricingMode: "pmc", pmcVendorPayable: true,
+    pmcPaymentSplit: { version: 1, marginBps: 2000, vendorAmountPaise: 10000, lisnoAmountPaise: 2500,
+      estimatedValuePaise: 12500, vendorPayablePaise: 11800, lisnoPayablePaise: 2950,
+      totalPayablePaise: 14750, taxBasis: { subtotalPaise, gstPaise: subtotalPaise * 0.18 } } });
+  return estimate;
+}
+
+it.each([0, 29500])("shows the frozen PMC obligation and recipients in approval confirmation, other work %s", async otherWork => {
+  const estimate = splitEstimate(otherWork);
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("PMC payable to Lisno").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(screen.getByText("PMC payable to vendors").nextElementSibling).toHaveTextContent("₹118");
+  expect(screen.getByText("Payable to Lisno · 20% of estimated value before tax").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(screen.getByText("Total including GST").nextElementSibling).toHaveTextContent(otherWork ? "₹442.5" : "₹147.5");
+  await userEvent.click(screen.getByRole("button", { name: "Approve estimate" }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.getByText("Total including GST").nextElementSibling).toHaveTextContent(otherWork ? "₹442.5" : "₹147.5");
+  expect(dialog.getByText("PMC payable to Lisno").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(dialog.getByRole("button", { name: "Confirm approval" })).toBeEnabled();
+});
+
+it("retains authorized PMC recipient totals when all item details are hidden", () => {
+  const estimate = splitEstimate();
+  estimate.publishedReview!.snapshot.lineItems = [];
+  renderWithQuery(<ClientQuotationSubmittedView estimate={estimate} workspace={false} canDecide refreshing={false}
+    onEdit={() => {}} onRefresh={async () => true} />);
+  expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹442.5");
+  expect(screen.getByText("PMC payable to Lisno").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(screen.queryByText("Wall painting")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve quotation" })).toBeEnabled();
+});
+
+it.each(["malformed-summary", "missing-summary", "missing-split"])("does not approve a vendor-only fallback for %s", condition => {
+  const estimate = splitEstimate();
+  const snapshot = estimate.publishedReview!.snapshot;
+  if (condition === "malformed-summary") snapshot.pmcPaymentSummary!.customerTotalPayablePaise = 1;
+  if (condition === "missing-summary") delete snapshot.pmcPaymentSummary;
+  if (condition === "missing-split") delete snapshot.lineItems[0]!.pmcPaymentSplit;
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("Total including GST").nextElementSibling).toHaveTextContent("Estimate unavailable");
+  expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
+});
+
+it("keeps a legacy approved amount separate from a later split-bearing revision", () => {
+  const estimate = splitEstimate();
+  estimate.publishedReview!.phase = "post";
+  estimate.preApprovedReview = { reviewRoundId: "historic-round", estimateVersion: 1, snapshot: projectedEstimate(false).publishedReview!.snapshot };
+  estimate.changesFromPre = { addedLineIds: [], removedLineIds: [], changedLineIds: ["visible-line"], scopeChanged: false, noChanges: false, beforeTotal: 413, afterTotal: 442.5 };
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("Pre-estimate ₹413 · Final submitted estimate ₹442.5")).toBeVisible();
+  expect(within(screen.getByLabelText("Changes from pre-estimate")).getByText("₹413")).toBeInTheDocument();
 });

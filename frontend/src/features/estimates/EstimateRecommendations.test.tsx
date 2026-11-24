@@ -99,6 +99,33 @@ function PopupHarness({ overrides = {}, initiallyOpen, allItems, onOpenChange = 
 
 const popupRegion = () => screen.getByRole("region", { name: "Non-negotiable recommendations for Bedroom" });
 
+describe("probable recommendation presentation", () => {
+  it("does not complete or announce an ignored item when its decision is rejected", async () => {
+    const user = userEvent.setup();
+    const onIgnore = vi.fn(() => false), onOpenChange = vi.fn();
+    render(<PopupHarness onOpenChange={onOpenChange} overrides={{ mode: "probable", onIgnore,
+      ignoredTargetIds: new Set(), selectionFeedback: { contextKey: "bedroom" },
+      completion: { contextKey: "bedroom", selectedTargetIds: new Set(), remainingCount: 0, blocked: false }
+    }} initiallyOpen />);
+    await user.click(screen.getByRole("button", { name: "Ignore Wall primer" }));
+    expect(onIgnore).toHaveBeenCalledExactlyOnceWith("primer");
+    expect(screen.getByRole("dialog", { name: "Probable items" })).toBeVisible();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.queryByText("Ignored Wall primer. Your estimate is unchanged.")).not.toBeInTheDocument();
+  });
+
+  it("shows selected probable items without offering removal and keeps the dialog accessible", async () => {
+    const onRemove = vi.fn();
+    render(<PopupHarness initiallyOpen overrides={{ mode: "probable", items: [{ ...row, selected: true }], onRemove }} />);
+    const dialog = screen.getByRole("dialog", { name: "Probable items" });
+    expect(within(dialog).getByRole("button", { name: "Added Wall primer" })).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: "Remove Wall primer" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Ignore Wall primer" })).not.toBeInTheDocument();
+    expect((await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+});
+
 function RefreshingSalesPopup({ ready = false, initiallySelected = false, overrides = {} }: {
   ready?: boolean;
   initiallySelected?: boolean;

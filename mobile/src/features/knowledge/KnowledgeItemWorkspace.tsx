@@ -1,3 +1,4 @@
+import type { MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -26,7 +27,7 @@ import { KnowledgeQualityEditor } from "./KnowledgeQualityEditor";
 import { KnowledgeDesignEditor, type KnowledgeDesignSaveHandle } from "./KnowledgeDesignEditor";
 import type { KnowledgeSaveHandle } from "./knowledgeEditorContracts";
 import { allKnowledgePages, useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
-import { changedPayloadFields, MOBILE_SECTION_KEYS, rebaseKnowledgeDraft, saveKnowledgeDrafts, type KnowledgeDrafts, type MobileSectionKey } from "./knowledgeWorkspaceDraft";
+import { changedPayloadFields, MOBILE_SECTION_KEYS, nativeMarginEdits, rebaseKnowledgeDraft, saveKnowledgeDrafts, type KnowledgeDrafts, type MobileSectionKey } from "./knowledgeWorkspaceDraft";
 import { Button, Field, DetailIcon, IconButton, KnowledgeCard, KnowledgeDetailProvider, KnowledgeDisclosure, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as styles } from "./knowledgeDetailUi";
 
 interface Props {
@@ -125,11 +126,14 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Omit<Props, "ses
     if (command) { setCommand(null); return true; }
     requestNavigation(onBack); return true;
   });
-  function change(key: MobileSectionKey, payload: KnowledgeJsonObject) {
+  function change(key: MobileSectionKey, payload: KnowledgeJsonObject, editedMargin?: MarginEditField) {
     if (!editable || busyRef.current) return;
     const base = draftsRef.current[key]?.base ?? saved[key];
     if (!base) return;
-    const next = { ...draftsRef.current, [key]: { base, payload } };
+    const previous = draftsRef.current[key];
+    const next = { ...draftsRef.current, [key]: { ...previous, base, payload,
+      ...(editedMargin ? { marginEdits: nativeMarginEdits(previous?.marginEdits ?? [], editedMargin) } : {})
+    } };
     if (!changedPayloadFields(next[key]!).length) delete next[key];
     if (aggregateBase.current === null && Object.keys(next).length) aggregateBase.current = item!.version;
     if (!Object.keys(next).length) aggregateBase.current = null;
@@ -289,7 +293,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Omit<Props, "ses
         : loading ? <BrandLoader label={`Loading ${WORKSPACE_LABELS[active]}`} tone="dark" />
           : failed ? <StateView title="Section could not be loaded" message="Your saved configuration is retained. Retry before editing." actionLabel="Retry section" onAction={() => { keys.forEach(key => void sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.refetch()); }} />
             : active === "overview" ? <KnowledgeOverviewEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("overview")} onChange={value => change("overview", value)} />
-              : active === "mode" ? <KnowledgeModeEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("advanced")} onChange={value => change("advanced", value)} pricingPayload={sectionPayload("pricing")} onPricingChange={value => change("pricing", value)} overviewPayload={saved.overview?.payload ?? {}} referencedSpecificationIds={saved.pricing?.referenceState?.specificationIds ?? []} inHouseSummary={summary.mode.details.filter(row => row.key.startsWith("in-house-component"))} />
+              : active === "mode" ? <KnowledgeModeEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("advanced")} onChange={(value, margin) => change("advanced", value, margin)} pricingPayload={sectionPayload("pricing")} onPricingChange={value => change("pricing", value)} overviewPayload={saved.overview?.payload ?? {}} referencedSpecificationIds={saved.pricing?.referenceState?.specificationIds ?? []} inHouseSummary={summary.mode.details.filter(row => row.key.startsWith("in-house-component"))} />
                 : <KnowledgeRecommendationsEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("recommendations")} onChange={value => change("recommendations", value)} />}
     <KnowledgeDisclosure title="Quick summary" summary="Saved configuration details">
       {[["Main Basket", item.basketName], ["Sub-Basket", item.subBasketName ?? "Not assigned"], ["Main Line", item.mainLineName]].map(([label, value]) => <View key={label} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{label}</Text><Text style={[styles.subtitle, { flex: 1 }]}>{value}</Text></View>)}

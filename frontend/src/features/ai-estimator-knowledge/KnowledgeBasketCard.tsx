@@ -32,6 +32,10 @@ export function KnowledgeBasketCard({
       aria-controls={panelId}
       onClick={onToggle}
     >
+      {variant === "sub" && <svg className="knowledge-basket-card__sub-icon" viewBox="0 0 24 24" width="19" height="19"
+        fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+        <path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5" />
+      </svg>}
       <span>{name}</span>
       <svg className="knowledge-basket-card__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
     </button>

@@ -120,6 +120,20 @@ async function seedConfiguration() {
 }
 
 describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
+  it("retains required and optional non-default recommendation targets", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["source-ceiling", "target-paint"] }, sectionKey: "overview" },
+      { $set: { "payload.showByDefault": false } });
+    await recommendations("source-ceiling", [
+      rule("required-non-default", "target-paint", "basket-paint", "sub-paint"),
+      rule("optional-unmarked", "target-light", "basket-light", "sub-light", { requirement: "can" })
+    ]);
+    const response = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    expect(response.body.data.sources).toMatchObject([{ mainLineId: "source-ceiling", available: true, rules: [
+      { id: "required-non-default", requirement: "must", targetMainLineId: "target-paint", available: true },
+      { id: "optional-unmarked", requirement: "can", targetMainLineId: "target-light", available: true }
+    ] }]);
+  });
+
   it("does not offer PMC-only targets to new Standard rows while preserving selected source obligations", async () => {
     await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["source-ceiling", "target-paint", "target-temp"] }, sectionKey: "advanced" },
       { $set: { payload: { pmcMarginBps: 2000, modeCalculations: { pmc: { baseRatePaise: 1000 } } } } });

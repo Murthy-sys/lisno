@@ -15,6 +15,9 @@ import { createEnterpriseEstimateModes } from "./enterpriseEstimateModesData";
 import { chatTestPage, chatTestPolicy, chatTestSummary } from "../../features/messages/projectChatFixtures";
 import { createEnterpriseMessages } from "./enterpriseMessagesData";
 import { createEnterpriseProjectManager } from "./enterpriseProjectManagerData";
+import * as knowledge from "./enterpriseKnowledgeData";
+import type { KnowledgeSectionUpdate } from "../../features/ai-estimator-knowledge/knowledgeApi";
+import type { KnowledgeJsonObject } from "../../features/ai-estimator-knowledge/knowledgeTypes";
 
 export type EnterpriseState = "populated" | "empty" | "error" | "denied" | "loading" | "mutation-error";
 export interface EnterpriseScenario { route: string; role: Role; state: EnterpriseState; }
@@ -152,6 +155,10 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
   const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const overviewDefaults = scenarioParams.get("qaOverview") === "defaults";
+  const overviewPath = "/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/overview";
+  let overviewSection = knowledge.section("overview", { uomId: knowledge.squareFoot.id, surfaceIds: [knowledge.wallSurface.id], clientVisible: true, applicableTiers: ["signature"] });
+  let overviewAggregateVersion = knowledge.item.version;
   const projectManager = scenario.role === "site_manager" && scenarioParams.get("qaProjectDashboard") === "ready"
     ? createEnterpriseProjectManager({ empty: scenario.state === "empty", paging: scenarioParams.get("qaProjectDashboardPaging") === "ready", detail: scenarioParams.get("qaProjectDetail") === "ready" }) : null;
   const pmEstimates = scenario.role === "site_manager" && scenarioParams.get("qaPMEstimates") === "ready"
@@ -337,6 +344,17 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         return data instanceof Response ? data : Response.json({ data });
       }
     }
+    if (overviewDefaults && scenario.state === "populated" && method === "PUT" && path === overviewPath) {
+      if (scenario.role !== "super_admin") { log(method, path, 403); return failure(403, "FORBIDDEN", "Configuration access is required."); }
+      const body = await jsonBody(input, init) as KnowledgeSectionUpdate<KnowledgeJsonObject>;
+      if (body.expectedVersion !== overviewSection.version || body.expectedAggregateVersion !== overviewAggregateVersion) {
+        log(method, path, 409); return failure(409, "VERSION_CONFLICT", "Refresh the Overview before saving.");
+      }
+      if (typeof body.payload?.showByDefault !== "boolean") { log(method, path, 422); return failure(422, "VALIDATION_ERROR", "Choose Yes or No."); }
+      overviewSection = { ...overviewSection, payload: structuredClone(body.payload), version: overviewSection.version + 1 };
+      overviewAggregateVersion += 1;
+      log(method, path, 200); return Response.json({ data: { ...overviewSection, aggregateVersion: overviewAggregateVersion } });
+    }
     if (method !== "GET") { log(method, path, 422); return failure(422, "SYNTHETIC_MUTATION_FAILURE", "Synthetic QA: the change was not saved. Your values remain available to review."); }
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
@@ -387,7 +405,9 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         ? { items: [], unreadCount: 0, pagination: { limit: 20, offset: Number(url.searchParams.get("offset") ?? 0), total: 0, hasMore: false } }
         : failure(403, "FORBIDDEN", "Super Admin access is required.")
       : undefined;
-    const data = componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path, url.searchParams) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const overviewData = overviewDefaults ? path === overviewPath ? overviewSection
+      : path === "/admin/ai-estimator-knowledge/main-lines/line-1" ? { ...knowledge.item, version: overviewAggregateVersion } : undefined : undefined;
+    const data = overviewData ?? componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path, url.searchParams) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }

@@ -12,7 +12,7 @@ export function details(pdf: ProposalDocument, groups: ProposalGroup[]) {
     pdf.addPage();
     pdf.label("Estimate", page.left, 53);
     pdf.text(pageIndex++ ? "Detailed estimate, continued" : "Detailed estimate", page.left, 71, page.widthInside, 20, { font: "heading", lineHeight: 24 });
-    pdf.text("Itemised scope, quantities and recorded prices. All amounts are in Indian rupees, excluding GST.", page.left, 101, page.widthInside, 8.5, { color: palette.muted, lineHeight: 13 });
+    pdf.text("Itemised scope, quantities and recorded prices. All unit rates and amounts are in Indian rupees and include all taxes.", page.left, 101, page.widthInside, 8.5, { color: palette.muted, lineHeight: 13 });
     y = 128;
   };
   const groupHeader = (group: ProposalGroup, index: number, continued: boolean) => {
@@ -40,7 +40,8 @@ export function details(pdf: ProposalDocument, groups: ProposalGroup[]) {
       const row = group.lines[ri];
       const title = pdf.lines(row.title, descriptionWidth, 8.7, "medium");
       const description = row.description ? pdf.lines(row.description, descriptionWidth, 7.3) : [];
-      const body = [...title.map(text => ({ text, title: true })), ...description.map(text => ({ text, title: false }))];
+      const paymentBreakdown = row.paymentBreakdown?.flatMap(text => pdf.lines(text, descriptionWidth, 7.3)) ?? [];
+      const body = [...title.map(text => ({ text, title: true })), ...description.map(text => ({ text, title: false })), ...paymentBreakdown.map(text => ({ text, title: false }))];
       const numeric = [ [row.unit, cols.unit, 35], [row.quantity, cols.quantity, 28], [row.rate, cols.rate, 51], [money(row.amountPaise, false), cols.amount, 58] ] as const;
       const numericHeight = Math.max(...numeric.map(([text,,width]) => pdf.lines(text, width, 8.1).length * 11));
       const rowHeight = Math.max(30, body.length * 9.5 + 12, numericHeight + 12);

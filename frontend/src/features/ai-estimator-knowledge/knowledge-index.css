@@ -755,22 +755,24 @@
 
 @container knowledge-basket-layout (min-width: 44rem) {
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header {
-    grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) fit-content(65%) auto;
   }
-
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__content {
-    max-inline-size: 26ch;
-  }
-
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__details {
     grid-column: 2;
     grid-row: 1;
   }
-
+  .knowledge-basket-card--sub .knowledge-margin-controls {
+    container-type: normal;
+  }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__actions {
     grid-column: 3;
   }
 }
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header {
+  background: #f8f2e8;
+}
+.knowledge-basket-card--sub .knowledge-basket-card__chevron { order: -1; }
+.knowledge-basket-card__sub-icon { flex: none; }
 
 /* ------------------------------------------------------------- item cards */
 

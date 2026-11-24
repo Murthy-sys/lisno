@@ -217,9 +217,30 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.clientVisible.default", true);
     expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.clientVisible");
   });
+  it("documents optional Overview defaults and required catalogue discovery metadata without changing saved estimate inputs", () => {
+    const schemas = componentSchemas();
+    const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find((entry) =>
+      (entry.properties as OpenApiObject)?.showByDefault !== undefined);
+    expect(overview).toHaveProperty("properties.closurePriority.enum", ["P1", "P2", "P3"]);
+    expect(overview?.required ?? []).not.toContain("closurePriority");
+    expect(overview).toHaveProperty("properties.showByDefault.type", "boolean");
+    expect(overview).toHaveProperty("properties.showByDefault.default", false);
+    expect(overview?.required ?? []).not.toContain("showByDefault");
+    expect(schemas.EstimatorCatalogueLine!.required).toContain("showByDefault");
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.showByDefault", expect.objectContaining({
+      type: "boolean", default: false, readOnly: true
+    }));
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.showByDefault");
+    expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.lineItems.items.properties.showByDefault");
+  });
 
   it("documents optional current-line margin application and saved source prices without weakening bulk commands", () => {
     const schemas = componentSchemas();
+    expect(schemas.KnowledgeSectionUpdateRequest).toHaveProperty("properties.marginEdits.items.$ref", "#/components/schemas/KnowledgeMarginEditField");
+    expect(schemas.KnowledgeSectionUpdateRequest!.required).not.toContain("marginEdits");
+    const fieldShapes = schemas.KnowledgeMarginEditField!.oneOf as OpenApiObject[];
+    expect(fieldShapes[0]).toHaveProperty("properties.mode.enum", ["pmc", "sub_vendor"]);
+    expect(fieldShapes[1]).toHaveProperty("required", ["mode", "component", "key", "bound"]);
     expect(schemas.KnowledgeApplySubBasketMarginsRequest!.required).toEqual(["mode", "versionToken"]);
     expect(schemas.KnowledgeApplySubBasketMarginsRequest).toHaveProperty("properties.targetMainLineId.maxLength", 128);
     expect(schemas.KnowledgeApplySubBasketMarginsRequest!.additionalProperties).toBe(false);
@@ -231,6 +252,21 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.impactBps.nullable", true);
     expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.component.required", ["id", "basketId", "subBasketId"]);
     expect(schemas.KnowledgeDefaultModeCalculation!.additionalProperties).toBe(false);
+  });
+  it("documents shared In-house defaults, grouped evidence and per-component impact", () => {
+    const schemas = componentSchemas();
+    for (const name of ["KnowledgeMarginPreviewInput", "KnowledgeMarginDefaultsInput", "KnowledgeMarginApprovalInput"]) {
+      expect(schemas[name]).toHaveProperty("properties.inHouseScope.enum", ["sub_basket"]);
+      expect(schemas[name]!.required).not.toContain("inHouseScope");
+    }
+    expect(schemas.KnowledgeMarginDefault).toHaveProperty("properties.resolution.enum", ["shared", "suggested", "choose", "unset"]);
+    expect(schemas.KnowledgeMarginCandidate).toHaveProperty("properties.proposals.items.properties.component");
+    expect(schemas.KnowledgeMarginPreview).toHaveProperty("properties.impacts.items.properties.componentChanges.items.properties.previous.items.$ref", "#/components/schemas/KnowledgeMarginObservedPair");
+    expect(schemas.KnowledgeMarginObservedPair).toHaveProperty("properties.minimumBps.nullable", true);
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const margin = "/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}/margins";
+    for (const path of [margin, margin + "/matrix"]) expect(paths[path]!.get!.parameters)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ name: "inHouseScope", in: "query", required: false })]));
   });
   it("documents vendor-independent proposals and authenticated request filters without loosening legacy creation", () => {
     const schemas = componentSchemas();
@@ -1404,7 +1440,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 530 routes without versioning paths twice", () => {
+  it("contains all 534 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1413,7 +1449,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(530);
+    expect(operationCount).toBe(534);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1423,7 +1459,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(76);
+    expect(knowledgeOperations).toHaveLength(80);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);

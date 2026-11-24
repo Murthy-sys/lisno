@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { KnowledgeSubBasketMarginRange, KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import type { KnowledgeModeConfigurationScope } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
+import { componentLabel, defaultLabel, rangeText, scopeKey, scopeLabel, sharedTierDefaults } from "./knowledgeMarginFields";
 import { getKnowledgeSubBasketMargins } from "./knowledgeApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgeItemDetail } from "./knowledgeTypes";
@@ -23,20 +24,46 @@ export interface KnowledgeModeDefaultsProps {
 
 export function KnowledgeModeDefaults({ item, modeTier = "signature" }: KnowledgeModeDefaultsProps) {
   const query = useQuery({
-    queryKey: knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? "", modeTier),
-    queryFn: () => getKnowledgeSubBasketMargins(item.basketId, item.subBasketId!, { modeTier }),
+    queryKey: modeTier === "default" ? knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? "", modeTier)
+      : knowledgeQueryKeys.sharedSubBasketTierMargins(item.basketId, item.subBasketId ?? "", modeTier),
+    queryFn: async () => {
+      const saved = await getKnowledgeSubBasketMargins(item.basketId, item.subBasketId!,
+        modeTier === "default" ? { modeTier } : { modeTier, inHouseScope: "sub_basket" });
+      if (saved.basketId !== item.basketId || saved.subBasketId !== item.subBasketId) {
+        throw new Error("Could not verify the Sub-Basket margin summary.");
+      }
+      if (modeTier === "default") return saved;
+      const defaults = sharedTierDefaults(saved.defaults ?? [], modeTier);
+      if (!defaults) throw new Error("Could not load shared margins for this tier.");
+      return { ...saved, defaults };
+    },
     enabled: Boolean(item.subBasketId)
   });
   const summary = item.subBasketId && !query.isError ? query.data : undefined;
   const unavailable = query.isError ? "Unavailable" : item.subBasketId && query.isPending ? "Loading…" : "Not configured";
-  const modeValue = (mode: "pmc" | "sub_vendor") => summary?.source ? marginValue(summary.modes[mode].ranges[0]) : unavailable;
+  const hasDefaults = summary && (summary.ownedMargins || summary.source);
+  const exceptions = summary?.exceptions?.filter((entry) => entry.mainLineId === item.mainLineId && entry.tier === modeTier) ?? [];
+  const configured = summary?.defaults?.filter((entry) => entry.tier === modeTier);
+  const modeValue = (mode: "pmc" | "sub_vendor") => hasDefaults ? marginValue(summary.modes[mode].ranges[0]) : unavailable;
 
   return <Surface as="section" className="knowledge-mode-defaults" data-knowledge-rail-header aria-label="Sub-basket defaults" aria-busy={query.isFetching || undefined}>
-    <dl className="knowledge-mode-defaults__list">
+    {configured ? <dl className="knowledge-mode-defaults__list">{configured.map((entry) => <div key={scopeKey(entry)}>
+      <dt>{scopeLabel(entry, configured)}</dt><dd>{entry.ranges.length
+        ? <>{rangeText(entry.ranges)}<small> · {defaultLabel(entry)}</small></> : defaultLabel(entry)}</dd>
+    </div>)}</dl> : <dl className="knowledge-mode-defaults__list">
       <div><dt>PMC margin:</dt><dd>{modeValue("pmc")}</dd></div>
       <div><dt>Sub-vendor margin:</dt><dd>{modeValue("sub_vendor")}</dd></div>
-      <div><dt>In-house margin:</dt><dd>{summary?.source ? <InHouseMargins summary={summary} /> : unavailable}</dd></div>
-    </dl>
+      <div><dt>In-house margin:</dt><dd>{hasDefaults ? <InHouseMargins summary={summary} /> : unavailable}</dd></div>
+    </dl>}
+    {exceptions.length > 0 && <section aria-label="Saved margin exceptions">
+      <strong>Awaiting Sub-Basket review</strong><p>These saved margins apply to this Main Line.</p>
+      <ul>{exceptions.map((entry) => <li key={scopeKey(entry)}>{scopeLabel(entry, configured ?? [])}
+        {entry.requiresDefault && <p>Choose a shared default to compare these margins.</p>}
+        {entry.proposals ? <ul>{entry.proposals.map((proposal) => <li key={scopeKey(proposal)}>
+          {[componentLabel(proposal), rangeText(proposal.ranges)].filter(Boolean).join(" · ")}
+        </li>)}</ul> : <>: {rangeText(entry.ranges)}</>}
+      </li>)}</ul>
+    </section>}
   </Surface>;
 }
 

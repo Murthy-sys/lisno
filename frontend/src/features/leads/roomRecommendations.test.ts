@@ -40,6 +40,26 @@ const recommendations: EstimationCatalogueRecommendations = { sources: [
 ] };
 
 describe("room recommendations", () => {
+  it("explains incompatible required targets and filters incompatible children before building room choices", () => {
+    const current = structuredClone(catalogue);
+    const group = current.items[1]!.subBaskets[0]!;
+    group.mainLines[0]!.applicableRoomCategories = ["bedroom"];
+    const children = [...group.mainLines, ...group.temporaryItems!].map(item => ({
+      mainLineId: item.mainLineId, revisionId: item.revisionId, revisionVersion: item.revisionVersion!, itemVersion: item.itemVersion!,
+      name: item.name, available: true as const, completionRequired: false, itemType: item.itemType ?? "main_line" as const
+    }));
+    const groupRule = rule({ id: "whole-group", targetKind: "sub_basket", targetMainLineId: null, children });
+    const response = { sources: recommendations.sources.map(source => ({ ...source, rules: [...source.rules, groupRule,
+      rule({ id: "optional-paint", requirement: "can" })] })) };
+    const view = buildRoomRecommendations({ catalogue: current, lines: sourceLines, recommendations: response, roomId: "room-one", roomTypeId: "kitchen" });
+    expect(view.stale).toBe(false);
+    expect(view.decisions.find(item => item.kind === "main_line")).toMatchObject({ available: false, target: null, unavailableReason: "room_incompatible" });
+    expect(view.decisions.find(item => item.kind === "sub_basket")).toMatchObject({ unavailableChildCount: 1, unavailableReason: "room_incompatible" });
+    expect(recommendationLines(view.decisions).map(line => line.target.mainLineId)).toEqual(["line-accent"]);
+    const bedroom = buildRoomRecommendations({ catalogue: current, lines: sourceLines, recommendations: response, roomId: "room-one", roomTypeId: "bedroom2" });
+    expect(recommendationLines(bedroom.decisions).map(line => line.target.mainLineId)).toContain("line-paint");
+  });
+
   it("retains the same verified unavailable recommendations across every tier and PMC state", () => {
     const current = structuredClone(catalogue);
     const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
@@ -154,6 +174,46 @@ describe("room recommendations", () => {
       recommendations: { sources: recommendations.sources.map(source => ({ ...source, rules: source.rules.map(rule => ({ ...rule, requirement: "can" as const })) })) } });
     expect(result.decisions).toEqual([]);
     expect(result.stale).toBe(false);
+  });
+
+  it("includes probable rules only when opted in and preserves required precedence for shared targets", () => {
+    const response = { sources: recommendations.sources.map((source, index) => ({ ...source,
+      rules: [rule({ id: `optional-${source.mainLineId}`, requirement: "can" }),
+        ...(index ? [rule({ id: "required-accent", targetMainLineId: "line-accent", targetRevisionId: "rev-accent" })] : [])]
+    })) };
+    const optional = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one",
+      recommendations: response, includeProbable: true });
+    expect(optional.stale).toBe(false);
+    expect(recommendationLines(optional.decisions).map(line => [line.target.mainLineId, line.requirement])).toEqual([
+      ["line-accent", "must"], ["line-paint", "can"]
+    ]);
+    expect(optional.decisions.find(decision => decision.requirement === "can")!.reasons).toHaveLength(2);
+
+    response.sources[0]!.rules.push(rule({ id: "mandatory-paint" }));
+    const mixed = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one",
+      recommendations: response, includeProbable: true });
+    expect(recommendationLines(mixed.decisions).filter(line => line.target.mainLineId === "line-paint")).toEqual([
+      expect.objectContaining({ requirement: "must", reasons: expect.arrayContaining([
+        expect.objectContaining({ requirement: "can" }), expect.objectContaining({ requirement: "must" })
+      ]) })
+    ]);
+  });
+
+  it("checks version and room evidence for probable targets just as for required targets", () => {
+    const response = { sources: recommendations.sources.map(source => ({ ...source,
+      rules: [rule({ requirement: "can", targetItemVersion: 0 })]
+    })) };
+    const stale = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one",
+      recommendations: response, includeProbable: true });
+    expect(stale.stale).toBe(true);
+    const current = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.applicableRoomCategories = ["bedroom"];
+    response.sources.forEach(source => { source.rules[0]!.targetItemVersion = 1; });
+    const incompatible = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", roomTypeId: "kitchen",
+      recommendations: response, includeProbable: true });
+    expect(incompatible.stale).toBe(false);
+    expect(incompatible.decisions[0]).toMatchObject({ requirement: "can", available: false, unavailableReason: "room_incompatible" });
+    expect(recommendationLines(incompatible.decisions)).toEqual([]);
   });
 
   it("flattens direct and group targets once with stable location identity and required precedence", () => {

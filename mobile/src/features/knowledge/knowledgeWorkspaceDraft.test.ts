@@ -1,4 +1,4 @@
-import { saveKnowledgeDrafts, rebaseKnowledgeDraft, type KnowledgeDrafts } from "./knowledgeWorkspaceDraft";
+import { saveKnowledgeDrafts, rebaseKnowledgeDraft, nativeMarginEdits, type KnowledgeDrafts } from "./knowledgeWorkspaceDraft";
 import type { KnowledgeSectionEnvelope, KnowledgeSectionMutationEnvelope } from "../../../../shared/knowledge/knowledgeTypes";
 
 const section = (version: number, payload: KnowledgeSectionEnvelope["payload"]) => ({ version, payload, applicability: "configured" } as KnowledgeSectionEnvelope);
@@ -9,8 +9,21 @@ it("preserves saved In-house policy and subset during an unrelated native Mode e
   await saveKnowledgeDrafts({ api: { updateKnowledgeSection }, mainLineId: "line-a", revisionId: "rev-a", aggregateVersion: 2,
     drafts: { advanced: { base, payload: { ...base.payload, modeDescription: "After" } } }, onSaved: jest.fn() });
   expect(updateKnowledgeSection).toHaveBeenCalledWith("line-a", "rev-a", "advanced", expect.objectContaining({
-    payload: { inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], modeDescription: "After" }
+    marginEdits: [], payload: { inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], modeDescription: "After" }
   }));
+});
+
+it("keeps authored fields through conflict review, deduplicates edits and omits reverted generated defaults", async () => {
+  const base = section(2, { pmcMarginBps: 1600 });
+  const pmc = { mode: "pmc", key: "margin", bound: "maximumBps" } as const;
+  const gross = { mode: "in_house", key: "labor", bound: "minimumBps", component: { basketId: "basket-a", subBasketId: "sub-a" } } as const;
+  const draft = { base, marginEdits: nativeMarginEdits([pmc, gross], pmc), payload: { pmcMarginBps: 1800,
+    modeCalculations: { in_house_labor: { baseRatePaise: 2000, lowQuantityLimit: "15", impactBps: 1000, minimumMarkupBps: 2500, startingMarkupBps: 3500 } } } };
+  const reviewed = rebaseKnowledgeDraft(draft, section(3, { pmcMarginBps: 1700 }));
+  const updateKnowledgeSection = jest.fn().mockResolvedValue({ aggregateVersion: 5 });
+  await saveKnowledgeDrafts({ api: { updateKnowledgeSection }, mainLineId: "line-a", revisionId: "rev-a", aggregateVersion: 4,
+    drafts: { advanced: reviewed }, onSaved: jest.fn() });
+  expect(updateKnowledgeSection.mock.calls[0][3]).toMatchObject({ expectedVersion: 3, marginEdits: [pmc] });
 });
 
 it("saves Mode sections in order with each acknowledged aggregate version", async () => {

@@ -4,6 +4,8 @@ import { Button } from "../../components/ui/Button";
 import { KnowledgeModeCalculationTable, type KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
 import { KnowledgeModeCalculationSimulator } from "./KnowledgeModeCalculationSimulator";
 import { modeCalculationDraft, parseModeCalculationDraft, type ModeCalculationScope, type ModeCalculationSettings } from "./knowledgeModeCalculation";
+import type { MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
+import { parseRupeeInputToPaise } from "./knowledgePresentation";
 import type { KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
 import "./knowledge-mode-calculation-reference.css";
@@ -35,12 +37,13 @@ interface Props {
   readonly issues: readonly { readonly path: string; readonly message: string }[];
   readonly onChange: (settings: ModeCalculationSettings) => void;
   readonly onDirty: () => void;
+  readonly onMarginEdit?: (bound: MarginEditField["bound"], changed: boolean) => void;
   readonly onValidationChange: (valid: boolean) => void;
   readonly pendingSaveVersion?: number;
   readonly onPendingInputChange?: (pending: KnowledgePendingCalculation | null) => void;
 }
 
-export function KnowledgeModeCalculationEditor({ emptyDefaults = false, value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
+export function KnowledgeModeCalculationEditor({ emptyDefaults = false, value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onMarginEdit, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
   const draftForValue = () => value == null && emptyDefaults
     ? { baseRate: "", lowQuantityLimit: "", impactRate: "",
         // PMC and Sub-Vendor use their separate margin controls; these required legacy fields are hidden.
@@ -98,6 +101,12 @@ export function KnowledgeModeCalculationEditor({ emptyDefaults = false, value, u
     setLocallyEdited(true);
     setTouched(true);
     onDirty();
+    if (onMarginEdit && (field === "minimumRate" || field === "startingRate")) {
+      const original = parseRupeeInputToPaise(baselineDraft.current[field]);
+      const edited = parseRupeeInputToPaise(text);
+      const changed = edited.status === "valid" && (original.status !== "valid" || original.paise !== edited.paise);
+      onMarginEdit(field === "minimumRate" ? "minimumBps" : "maximumBps", changed);
+    }
     const settings = parseModeCalculationDraft(next, scale, enforceGrossMargin).settings;
     if (settings) {
       previousValue.current = JSON.stringify(settings);

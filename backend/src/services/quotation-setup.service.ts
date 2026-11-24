@@ -256,6 +256,9 @@ export async function configureQuotation(estimate: Row, operation: Configure, se
   const lineItems = (estimate.lineItems ?? []).filter((line: Row) => !removedRoomIds.has(line.roomId)).map((line: Row) => {
     if (!removedBasketIds.has(line.mainBasketId) || !line.included) return line;
     const next: Row = { ...line, included: false, amountPaise: 0, amount: 0 };
+    delete next.pmcVendorPayable;
+    delete next.pmcMarginSnapshot;
+    delete next.pmcPaymentSplit;
     delete next.componentPricing; delete next.pricingBasis;
     return next;
   });

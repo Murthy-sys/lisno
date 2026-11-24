@@ -1,3 +1,4 @@
+import { matrixFixture } from "./knowledgeMarginMatrix.test-fixture";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -59,6 +60,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeMarginMatrix: vi.fn(async (basketId: string, subBasketId: string) => matrixFixture(basketId, subBasketId)),
     getKnowledgeSubBasketMargins: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     getKnowledgeBasketDeletionImpact: vi.fn(),
@@ -329,7 +331,7 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
-  it("shows only tier names beside the Sub-Basket name and opens margins without expanding its item disclosure", async () => {
+  it("shows light tier controls and opens the chosen editor independently from the Sub-Basket disclosure", async () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
@@ -349,11 +351,16 @@ describe("Knowledge Base index page", () => {
     const header = sub.querySelector<HTMLElement>(".knowledge-basket-card__header")!;
     expect(within(header).getByRole("button", { name: `Premium margins for ${panelGroup.name}` })).toHaveTextContent(/^Premium$/);
     expect(within(header).getByRole("button", { name: `Functional margins for ${panelGroup.name}` })).toHaveTextContent(/^Functional$/);
-    expect(header).not.toHaveTextContent(/Configured margins|Sub-Basket|on this page|%|mismatched|Delete/);
+    expect(await within(header).findByRole("button", { name: /Review exceptions/ })).toBeVisible();
+    expect(within(header).queryByText(/%/)).not.toBeInTheDocument();
     expect(vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mock.calls.every(([id]) => id === carpentry.id)).toBe(true);
-    expect(new Set(vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mock.calls.map(([, , options]) => options?.modeTier))).toEqual(new Set(["signature", "premium", "functional"]));
+    expect(knowledgeApi.getKnowledgeMarginMatrix).toHaveBeenCalledWith(carpentry.id, panelGroup.id);
+    expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
     await user.click(control);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const editor = await screen.findByRole("dialog", { name: "Signature tier margins" });
+    expect(within(editor).getByRole("spinbutton", { name: "Signature · PMC Maximum (%)" })).toHaveValue(15);
+    await user.click(within(editor).getByRole("button", { name: "Compare saved Main Line margins" }));
     const dialog = await screen.findByRole("dialog", { name: "Signature PMC margins" });
     expect(dialog).toHaveTextContent("First configured line");
     expect(dialog).toHaveTextContent("12% / Max. 18%");

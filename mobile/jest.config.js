@@ -1,6 +1,9 @@
 /** @type {import('jest').Config} */
 module.exports = {
   preset: "jest-expo",
+  moduleNameMapper: {
+    "^(?:\\.\\./\\.\\./backend/src/domain/|\\./)(estimate-pmc-payment-split|estimate-pmc-payable|estimate-gst-presentation|ai-estimator-knowledge-mode-calculation|ai-estimator-knowledge-calculation|knowledge-pricing-constants)\\.js$": "<rootDir>/../backend/src/domain/$1.ts"
+  },
   modulePaths: ["<rootDir>/node_modules"],
   setupFilesAfterEnv: ["<rootDir>/test-support/setup.ts"],
   testMatch: ["<rootDir>/**/*.test.ts", "<rootDir>/**/*.test.tsx"],

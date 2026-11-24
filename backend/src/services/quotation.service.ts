@@ -1,3 +1,6 @@
+import { buildEstimatePmcPayments } from "../domain/estimate-pmc-payment-split.js";
+import { isMainLineApplicableToRoom } from "../domain/estimate-room-options.js";
+import { calculateEstimatePmcPayable } from "../domain/estimate-pmc-payable.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
@@ -165,6 +168,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
   const quotationApproval = await resolveCurrentQuotationApproval(estimate, session);
   const current = await resolveEstimatorCatalogueLines(detail.lines.map(line => line.mainLineId), session);
   const visible = await visibleQuotationSources(estimate, session);
+  const roomTypes = new Map((estimate.rooms ?? []).map((room: Row) => [room.id, room.typeId] as const));
   const presented = [];
   for (const line of detail.lines) {
     const source = current.get(line.mainLineId);
@@ -176,6 +180,9 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     const classification = saved?.classification ?? quotationClassification(estimate, line.mainLineId, saved?.mainBasketId);
     const pricingModeChoices = saved ? await quotationPricingModeChoices({ ...saved, classification }, source, session) : [];
     presented.push({ ...line, roomId: saved?.roomId ?? null, included: saved?.included === true,
+      ...(detail.editingAllowed && saved && source &&
+        !isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(saved.roomId) as string | undefined)
+        ? { roomMismatch: true } : {}),
       classification, pricingModeChoices,
       choices: pricingModeChoices.find(option => option.pricingMode === line.pricingMode)?.choices ?? line.choices,
       ...(safeOrigins === undefined ? {} : { recommendationSourceMainLineIds: safeOrigins }),
@@ -191,7 +198,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     baskets: quotationBaskets(estimate, visible), groups: quotationGroups(estimate, groupMembers(estimate, visible)),
     setup, workflowVersion: 3 as const, phase: estimate.estimation.phase as "pre" | "post",
     status, pricedRevision: Number(estimate.estimation.pricedRevision),
-    rooms: (estimate.rooms ?? []).map((room: Row) => ({ id: String(room.id), name: String(room.label ?? room.name ?? room.id) })),
+    rooms: (estimate.rooms ?? []).map((room: Row) => ({ id: String(room.id), typeId: room.typeId ?? null, name: String(room.label ?? room.name ?? room.id) })),
     reviewState: estimate.estimation.editClosedAt ? "approved" as const : status === "sent_to_client" ? "ready_for_approval" as const :
       (estimate.reviews ?? []).at(-1)?.action === "client_quotation_saved" ? "awaiting_staff_review" as const : "draft" as const };
 }
@@ -207,6 +214,9 @@ async function supersedePending(estimate: Row, actor: PublicUser, session: Clien
 
 async function pricedLine(prior: Row, source: Source, operation: LineOperation, session: ClientSession): Promise<Row> {
   const next: Row = { ...prior, ...currentFields(source) };
+  delete next.pmcPaymentSplit;
+  delete next.pmcMarginSnapshot;
+  delete next.pmcVendorPayable;
   if (operation.pricingMode !== undefined) next.pricingMode = operation.pricingMode;
   if (next.classification !== "special" && next.pricingMode !== undefined && next.pricingMode !== "sub_vendor") {
     throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Standard items use Sub-Vendor pricing.");
@@ -249,6 +259,15 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
     next.componentPricing = calculation;
     next.ratePaise = null;
     next.amountPaise = next.included ? calculation.totalPaise : 0;
+  } else if (next.pricingMode === "pmc") {
+    if (operation.selectedInHouseComponentIds?.length || !pricing.pmcPricing) return unavailable();
+    const payable = calculateEstimatePmcPayable(pricing.pmcPricing, next.quantity, source.line.uom.decimalScale);
+    if (!payable || selectingPrice && payable.revisedUnitRatePaise <= 0) return unavailable();
+    delete next.selectedInHouseComponentIds;
+    next.ratePaise = payable.revisedUnitRatePaise;
+    next.amountPaise = payable.finalVendorChargesPaise;
+    next.pmcVendorPayable = true;
+    next.pmcMarginSnapshot = { pmcMarginBps: payable.pmcMarginBps, pmcMarginAmountPaise: payable.pmcMarginAmountPaise };
   } else {
     if (operation.selectedInHouseComponentIds?.length) return unavailable();
     delete next.selectedInHouseComponentIds;
@@ -279,7 +298,11 @@ async function reconcileRecommendationOrigins(estimate: Row, lineItems: Row[],
   for (const change of requested) for (const originId of change.operation.recommendationSourceMainLineIds!) {
     const origin = current.get(key(change.roomId, originId));
     const source = sources.get(originId);
-    if (originId === change.mainLineId || !origin?.included || !source || origin.clientVisible === false || !sameParent(origin, source)) {
+    const room = estimate.rooms.find((entry: Row) => entry.id === change.roomId);
+    const previousTarget = estimate.lineItems.find((line: Row) => line.roomId === change.roomId && line.mainLineId === change.mainLineId);
+    const savedOrigin = previousTarget?.included && previousTarget.recommendationSourceMainLineIds?.includes(originId);
+    if (originId === change.mainLineId || !origin?.included || !source || origin.clientVisible === false || !sameParent(origin, source) ||
+      !savedOrigin && !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room?.typeId)) {
       throw new ApiError(400, "QUOTATION_RECOMMENDATION_SOURCE_INVALID", "Choose a current recommendation source in the same room.");
     }
   }
@@ -311,6 +334,8 @@ async function reconcileRecommendationOrigins(estimate: Row, lineItems: Row[],
         line.included = false;
         line.amountPaise = 0;
         line.amount = 0;
+        delete line.pmcVendorPayable;
+        delete line.pmcMarginSnapshot;
         delete line.componentPricing;
         delete line.pricingBasis;
         removed.add(key(line.roomId, line.mainLineId));
@@ -339,16 +364,21 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       const context = await contextFor(actor, projectId);
       return readQuotationRecommendations(context.estimate!, parsed.data);
     },
-    async items(actor: PublicUser, projectId: string, input: { search?: string; limit?: number; offset?: number;
+    async items(actor: PublicUser, projectId: string, input: { roomId?: string; search?: string; limit?: number; offset?: number;
       mainBasketId?: string; subBasketId?: string } = {}) {
       const context = await contextFor(actor, projectId);
       const estimate = context.estimate!;
       const limit = Math.min(50, Math.max(1, input.limit ?? 20));
       const offset = Math.max(0, input.offset ?? 0);
       const sources = await visibleQuotationSources(estimate, undefined, true);
+      const rooms: Row[] = estimate.rooms ?? [];
+      const destinations = input.roomId ? rooms.filter(room => room.id === input.roomId) : rooms;
+      if (input.roomId && !destinations.length) return missing();
       const candidates = [];
       for (const source of sources.values()) {
         if (!source.line.hasConfiguredBasePrice) continue;
+        if (source.line.applicableRoomCategories?.length &&
+          !destinations.some(room => isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId))) continue;
         if (input.mainBasketId && source.line.basketId !== input.mainBasketId ||
           input.subBasketId && source.line.subBasketId !== input.subBasketId) continue;
         if (input.search && ![source.line.name, source.mainBasketName, source.subBasketName ?? ""].join(" ")
@@ -380,7 +410,7 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           const setupOperation = parsed.data.operations.find(operation => operation.kind === "configure");
           if (setupOperation && !context.client) return missing();
           const setupChanges = setupOperation ? await configureQuotation(estimate, setupOperation, session) : null;
-          const lineItems: Row[] = structuredClone(setupChanges?.lineItems ?? estimate.lineItems);
+          let lineItems: Row[] = structuredClone(setupChanges?.lineItems ?? estimate.lineItems);
           const addedBasketIds = new Set<string>();
           const touched = new Set<string>();
           const groupOperations = parsed.data.operations.filter(operation => operation.kind === "exclude_group");
@@ -470,6 +500,10 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             const roomId = operation.kind === "add" ? operation.roomId : prior!.roomId;
             const room = estimate.rooms.find((row: Row) => row.id === roomId);
             if (!room || operation.kind !== "add" && !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) return missing();
+            if ((operation.kind === "add" || operation.included !== false) &&
+              !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId)) {
+              throw new ApiError(400, "ESTIMATE_ROOM_NOT_APPLICABLE", "This Main Line is not configured for the selected room or place.");
+            }
             const key = `${roomId}\u0000${mainLineId}`;
             if (touched.has(key)) throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "Change each quotation item once per save.");
             touched.add(key);
@@ -482,7 +516,15 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
               await fenceEstimateTierSource({ ...base, ...currentFields(source) }, session);
               fenced.add(mainLineId);
             }
-            const next = await pricedLine(base, source, operation, session);
+            const removingRestricted = operation.kind === "update" && operation.included === false &&
+              !isMainLineApplicableToRoom(source.line.applicableRoomCategories, room.typeId);
+            const next = removingRestricted
+              ? { ...prior, included: false, amountPaise: 0, amount: 0 } as Row
+              : await pricedLine(base, source, operation, session);
+            if (removingRestricted) {
+              delete next.pmcVendorPayable;
+              delete next.pmcMarginSnapshot;
+            }
             if (!next.included || operation.kind === "add" || operation.included === true && !prior?.included) {
               next.recommendationSourceMainLineIds = next.included ? operation.recommendationSourceMainLineIds ?? [] : [];
             } else if (operation.recommendationSourceMainLineIds !== undefined) {
@@ -507,10 +549,6 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             ]
           } : null;
           const membershipChanges = { ...setupChanges, ...scopeChanges };
-          if (isDeepStrictEqual(lineItems, estimate.lineItems) && Object.entries(membershipChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key]))) {
-            result = await present(context, session);
-            return;
-          }
           let subtotalPaise = 0;
           for (const line of lineItems.filter(line => line.included)) {
             const amount = line.amountPaise ?? (line.source === "configuration" ? null : Math.round(line.amount * 100));
@@ -522,6 +560,16 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
           if (!rounded) return unavailable();
           const { totalPaise, roundOffPaise } = rounded;
+          let pmcPayments: ReturnType<typeof buildEstimatePmcPayments>;
+          try { pmcPayments = buildEstimatePmcPayments(lineItems, { subtotalPaise, gstPaise, totalPaise, roundOffPaise }); }
+          catch { return unavailable(); }
+          lineItems = pmcPayments.lineItems;
+          if (isDeepStrictEqual(lineItems, estimate.lineItems) &&
+            isDeepStrictEqual(pmcPayments.pmcPaymentSummary, estimate.pmcPaymentSummary) &&
+            Object.entries(membershipChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key]))) {
+            result = await present(context, session);
+            return;
+          }
           // Persist the first-actionable anchor before this material save
           // invalidates the current quotation approval. The task upsert keeps
           // its original opened/due dates across later revisions.
@@ -529,11 +577,12 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           await supersedePending(estimate, actor, session, now);
           const physicalChange = estimatePhysicalScopeChanged(estimate, { ...estimate, ...membershipChanges, lineItems });
           const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: parsed.data.expectedVersion, "estimation.editClosedAt": null },
-            { $set: { ...membershipChanges, lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+            { $set: { ...membershipChanges, ...(pmcPayments.pmcPaymentSummary ? { pmcPaymentSummary: pmcPayments.pmcPaymentSummary } : {}), lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
               isIncomplete: lineItems.some(line => line.included && line.source === "configuration" &&
                 (!estimateLineDimensionsValid(line) || !estimateComponentLineAmountIsValid(line) && (!money(line.ratePaise) || !money(line.amountPaise)))),
               status: estimate.estimation.preApproval ? "client_approved" : "draft", "estimation.status": "draft", "estimation.pendingReviewRoundId": null,
               "estimation.salesApproval": null, "estimation.designScopeRevision": estimate.estimation.designScopeRevision + (physicalChange ? 1 : 0) },
+              ...(pmcPayments.pmcPaymentSummary ? {} : { $unset: { pmcPaymentSummary: "" } }),
               $inc: { version: 1, "estimation.pricedRevision": 1 },
               $push: { reviews: { actorId: actor.id, action: context.client ? "client_quotation_saved" : "quotation_saved", note: "", occurredAt: now } } },
             { session, returnDocument: "after", runValidators: true }).lean() as Row | null;

@@ -1,3 +1,4 @@
+import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "../../../../shared/estimation/estimatePmcPaymentSplit";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import type { EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
@@ -13,6 +14,7 @@ export interface EstimateTierSource {
 }
 
 export interface EstimateTierChoice {
+  vendorRateSchedule?: { lowQuantityLimit: string; standardRatePaise: number; lowQuantityRatePaise: number };
   aggregatePricing?: EstimateAggregatePricing;
   inHouseUsage?: "estimator" | "execution" | null;
   inHousePricingState?: "ready" | "incomplete" | "invalid";
@@ -30,6 +32,8 @@ export interface EstimateTierChoice {
 }
 
 export interface EstimateTierLine {
+  pmcPaymentSplit?: EstimatePmcPaymentSplit;
+  taxInclusiveAmountPaise?: number | null;
   aggregatePricing?: EstimateAggregatePricing;
   inHouseUsage?: "estimator" | "execution" | null;
   inHousePricingState?: "ready" | "incomplete" | "invalid";
@@ -61,6 +65,7 @@ export interface EstimateTierLine {
 }
 
 export interface EstimateTiersDetail {
+  pmcPaymentSummary?: EstimatePmcPaymentSummary;
   readonly projectNumber?: string | null;
   projectId: string;
   estimateId: string | null;

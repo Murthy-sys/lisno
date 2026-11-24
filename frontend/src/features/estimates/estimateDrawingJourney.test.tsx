@@ -465,7 +465,7 @@ describe("estimate drawing review journey", () => {
       },
     );
     const user = userEvent.setup();
-    const initialClient = renderApp(["/client"]);
+    const initialClient = renderApp(["/client?estimate="]);
     const card = (await screen.findByRole("heading", {
       name: "Estimate Drawing Journey",
       level: 3,
@@ -862,7 +862,7 @@ describe("estimate drawing review journey", () => {
       throw new Error(`Unhandled approved request: ${url}`);
     });
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
-    renderApp(["/client"]);
+    renderApp(["/client?estimate="]);
     const approvedCard = (await screen.findByRole("heading", {
       name: "Estimate Drawing Journey",
       level: 3,
@@ -905,10 +905,10 @@ describe("estimate drawing review journey", () => {
     expect(await within(approvedCard).findByText(
       "Estimate approved",
     )).toBeVisible();
-    expect(await screen.findByRole("heading", {
-      name: "Estimate Drawing Journey",
-      level: 2,
-    })).toBeVisible();
+    const projects = await screen.findByRole("table", { name: "Projects" });
+    expect(within(projects).getByRole("link", {
+      name: "Open project: Estimate Drawing Journey",
+    })).toHaveAttribute("href", "/client/projects/project-journey");
     expect(approvalRequests.some(({ url, init }) =>
       url.endsWith(
         "/api/v1/client/estimate-design-revisions/revision-bedroom-3/decision",

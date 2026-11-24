@@ -103,7 +103,7 @@ describe("SubmittedEstimateBuilder", () => {
       componentPricing: componentPricingFixture(), ratePaise: null, rate: null, amountPaise: 78333, amount: 783.33 })]);
     const item = screen.getByRole("article", { name: "Submitted oak cabinet in Kitchen" });
     expect(within(item).getByText("Calculated from saved components")).toBeVisible();
-    const disclosure = within(item).getByText("Component selling amounts for Submitted oak cabinet · ₹783.33");
+    const disclosure = within(item).getByText("Component selling amounts for Submitted oak cabinet · ₹783.33 before GST");
     await userEvent.click(disclosure);
     expect(within(item).getByText("Finishes / Ceiling")).toBeVisible();
     expect(within(item).getByText("₹250.00")).toBeVisible();
@@ -139,4 +139,17 @@ describe("SubmittedEstimateBuilder", () => {
     expect(screen.getByRole("button", { name: "Refresh submitted items" })).toBeDisabled();
     expect(screen.queryByText(/Choose By Section to add items/)).not.toBeInTheDocument();
   });
+});
+
+it("shows saved PMC value and recipient amounts without changing the vendor rate", () => {
+  setup([line({ pricingMode: "pmc", amountPaise: 10000, ratePaise: 5000, pmcVendorPayable: true,
+    pmcPaymentSplit: { version: 1, marginBps: 2000, vendorAmountPaise: 10000, lisnoAmountPaise: 2500,
+      estimatedValuePaise: 12500, vendorPayablePaise: 11800, lisnoPayablePaise: 2950, totalPayablePaise: 14750,
+      taxBasis: { subtotalPaise: 45000, gstPaise: 8100 } } })]);
+  const item = within(screen.getByRole("article", { name: "Submitted oak cabinet in Kitchen" }));
+  expect(item.getByText("₹125.00")).toBeVisible();
+  expect(item.getByText("Vendor rate before GST").nextElementSibling).toHaveTextContent("₹50.00");
+  expect(item.getByText("Payable to Lisno · 20% of estimated value before tax").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(item.getByText("Payable to vendor · remaining share").nextElementSibling).toHaveTextContent("₹118");
+  expect(screen.getAllByText("Subtotal ₹125.00").length).toBeGreaterThan(0);
 });

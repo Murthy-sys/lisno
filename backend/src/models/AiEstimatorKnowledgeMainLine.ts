@@ -4,7 +4,25 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT,
   normalizeKnowledgeIdentity
 } from "../domain/ai-estimator-knowledge.js";
+import { validMarginChange, marginScopeKey, type PendingMarginEdit } from "../domain/ai-estimator-knowledge-margin-matrix.js";
 import { model, models, Schema } from "./mongoose.js";
+
+const nested = { _id: false, strict: "throw" as const };
+const marginPair = new Schema({
+    key: { type: String, required: true, enum: ["margin", "labor", "material"] },
+    minimumBps: { type: Number, required: true, validate: Number.isSafeInteger },
+    maximumBps: { type: Number, required: true, validate: Number.isSafeInteger }
+  }, nested);
+const pendingMargin = new Schema({
+  tier: { type: String, required: true, enum: ["signature", "premium", "functional"] },
+  mode: { type: String, required: true, enum: ["pmc", "sub_vendor", "in_house"] },
+  component: new Schema({ basketId: { type: String, required: true }, subBasketId: { type: String, default: null } }, nested),
+  ranges: { type: [marginPair], required: true },
+  originalRanges: { type: [marginPair], default: undefined },
+  revisionId: { type: String, required: true },
+  sectionVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+  actorId: { type: String, required: true }
+}, nested);
 
 const mainLineSchema = new Schema(
   {
@@ -21,6 +39,8 @@ const mainLineSchema = new Schema(
     activeRevisionId: { type: String, ref: "AiEstimatorKnowledgeRevision", default: null },
     draftRevisionId: { type: String, ref: "AiEstimatorKnowledgeRevision", default: null },
     version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+    pendingMarginEdits: { type: [pendingMargin], default: undefined,
+      validate: (rows: PendingMarginEdit[]) => rows.every(row => validMarginChange(row) && (!row.originalRanges || validMarginChange({ tier: row.tier, mode: row.mode, component: row.component, ranges: row.originalRanges }))) && new Set(rows.map(marginScopeKey)).size === rows.length },
     dependencyEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
     createdById: { type: String, ref: "User", required: true, immutable: true },
     updatedById: { type: String, ref: "User", required: true },

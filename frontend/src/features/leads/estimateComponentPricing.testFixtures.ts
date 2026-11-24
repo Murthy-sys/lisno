@@ -1,3 +1,4 @@
+import { pmcPricingFixture } from "./configuredEstimate.test-fixture";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import type { ConfiguredLineDraft } from "./configuredEstimate";
 
@@ -16,5 +17,5 @@ export const componentDraftFixture = (mainLineId = "line-a", quantity = 2, total
   componentPricing: componentPricingFixture(mainLineId, quantity, totalPaise), selectedInHouseComponentIds: ["component-a"], modeTier: "signature",
   inHouseComponents: [{ id: "component-a", basketId: "basket-target", subBasketId: "sub-target", basketName: "Finishes", subBasketName: "Ceiling", baseRatePaise: 30000 }],
   revisionId: `revision-${mainLineId}`, itemVersion: 2, revisionVersion: 3, uomId: "uom-a", uomName: "sq ft", uomDecimalScale: 2,
-  quantity, rateInput: "", included: true, sourceMissing: false, modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null }
+  quantity, rateInput: "", included: true, sourceMissing: false, pmcPricing: pmcPricingFixture(1000), modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null }
 });

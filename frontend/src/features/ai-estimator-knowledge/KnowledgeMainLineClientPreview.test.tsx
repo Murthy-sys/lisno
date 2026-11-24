@@ -78,6 +78,7 @@ describe("KnowledgeMainLineClientPreview", () => {
       expect(screen.getByLabelText("Amount including GST for POP false ceiling")).toHaveTextContent("After save");
     }
     await user.click(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" }));
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByText("Functional ceiling finish.")).not.toBeInTheDocument();
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
     for (const write of writes) expect(write).not.toHaveBeenCalled();
@@ -157,13 +158,39 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.queryByRole("button", { name: /save|submit|approve/i })).not.toBeInTheDocument();
   });
 
+  it("toggles Standard PMC by keyboard and shows the selected tier’s saved rate", async () => {
+    const user = userEvent.setup();
+    const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
+    mount();
+    await user.click(screen.getByRole("button", { name: "Client view" }));
+    const pmc = await screen.findByRole("switch", { name: "PMC pricing mode for POP false ceiling" });
+    const price = screen.getByLabelText("Price including GST for POP false ceiling");
+    expect(screen.getByRole("combobox", { name: "Preview type" })).toHaveValue("standard");
+    expect(screen.queryByRole("radio", { name: /In-house pricing mode/ })).not.toBeInTheDocument();
+    expect(pmc).not.toBeChecked();
+    expect(price).toHaveTextContent("₹119.48");
+
+    pmc.focus();
+    await user.keyboard(" ");
+    expect(pmc).toBeChecked();
+    expect(price).toHaveTextContent("₹141.60");
+    await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
+    expect(pmc).toBeChecked();
+    expect(price).toHaveTextContent("Pending");
+    expect(screen.getByText(/Price is unavailable for the selected mode and tier/)).toBeVisible();
+    await user.click(pmc);
+    expect(pmc).not.toBeChecked();
+    expect(price).toHaveTextContent("₹184.08");
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+  });
+
   it("keeps tier, quantity, PMC and component interactions local without exposing costs", async () => {
     const user = userEvent.setup();
     const post = vi.spyOn(apiClient, "post");
     const patch = vi.spyOn(apiClient, "patch");
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "PMC pricing mode for POP false ceiling" })).not.toBeChecked();
     await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
     expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹184.08");
     await user.click(screen.getByRole("radio", { name: "Signature tier for POP false ceiling" }));
@@ -183,7 +210,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.getByRole("radio", { name: "In-house pricing mode for POP false ceiling" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Labor / Installation" })).not.toBeChecked();
     await user.selectOptions(screen.getByRole("combobox", { name: "Preview type" }), "standard");
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "PMC pricing mode for POP false ceiling" })).not.toBeChecked();
     expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹119.48");
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
     expect(post).not.toHaveBeenCalled();
@@ -198,6 +225,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     await user.click(trigger);
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(screen.getByText("Original finish.")).toBeVisible();
+    await user.click(screen.getByRole("switch", { name: "PMC pricing mode for POP false ceiling" }));
     await user.click(screen.getByRole("button", { name: "Increase quantity for POP false ceiling" }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -209,6 +237,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("spinbutton")).toHaveValue(1);
+    expect(screen.getByRole("switch", { name: "PMC pricing mode for POP false ceiling" })).not.toBeChecked();
     expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹271.40");
     expect(screen.getByText("Updated saved finish.")).toBeVisible();
     expect(screen.queryByText("Original finish.")).not.toBeInTheDocument();
@@ -285,6 +314,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine, clientVisible: false }));
     mount({ initiallyOpen: true });
     expect(await screen.findByText("This Main Line is hidden from clients.")).toBeVisible();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Price including GST for POP false ceiling")).not.toBeInTheDocument();
   });

@@ -1,3 +1,4 @@
+import type { MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { modeSelectionForPayload } from "../../../../shared/knowledge/knowledgeModeSelection";
 export { modeSelectionForPayload } from "../../../../shared/knowledge/knowledgeModeSelection";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
@@ -36,6 +37,7 @@ import { inHouseScopeStarterItems, subVendorScopeStarterItems, PMC_SCOPE_LISTS, 
 import type {
   KnowledgeItemDetail,
   KnowledgeJsonObject,
+  KnowledgeJsonValue,
   KnowledgeMaster
 } from "./knowledgeTypes";
 
@@ -59,6 +61,7 @@ export interface KnowledgeModeConfigurationBuilderProps {
   readonly readOnly: boolean;
   readonly validationAttempt: number;
   readonly onChange: (payload: KnowledgeJsonObject) => void;
+  readonly onMarginEdit?: (field: MarginEditField, value: KnowledgeJsonValue) => void;
   readonly onDirty: () => void;
   readonly onValidationChange: (valid: boolean) => void;
 }
@@ -90,6 +93,7 @@ export function KnowledgeModeConfigurationBuilder({
   readOnly,
   validationAttempt,
   onChange,
+  onMarginEdit,
   onDirty,
   onValidationChange
 }: KnowledgeModeConfigurationBuilderProps) {
@@ -256,6 +260,7 @@ export function KnowledgeModeConfigurationBuilder({
     }}
     onChange={(field, value) => {
       onDirty();
+      onMarginEdit?.({ mode: "pmc", key: "margin", bound: field === "minimum" ? "minimumBps" : "maximumBps" }, value);
       onChange(withPmcMargin(payload, field, value));
     }} />;
 
@@ -302,6 +307,7 @@ export function KnowledgeModeConfigurationBuilder({
     }}
     onChange={(field, value) => {
       onDirty();
+      onMarginEdit?.({ mode: "sub_vendor", key: "margin", bound: field === "minimum" ? "minimumBps" : "maximumBps" }, value);
       onChange(withSubVendorMargin(payload, field, value));
     }} />;
 

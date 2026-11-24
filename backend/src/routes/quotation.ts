@@ -8,11 +8,16 @@ import { createQuotationService, quotationPatchSchema, quotationRecommendationQu
 import type { AuthService } from "../services/auth.service.js";
 import type { AuditService } from "../services/audit.service.js";
 
-const candidatesQuery = z.object({ search: z.string().trim().max(200).optional(),
+import { createEstimatePdfService, type EstimatePdfService } from "../services/estimate-pdf.service.js";
+import { readSavedQuotationPdf } from "../services/quotation-draft-pdf.service.js";
+import { sendDownload } from "./estimate-client-responses.js";
+
+const draftPdfQuery = z.object({ estimateId: z.string().trim().min(1).max(500), expectedVersion: z.coerce.number().int().positive().safe() }).strict();
+const candidatesQuery = z.object({ roomId: z.string().trim().min(1).max(500).optional(), search: z.string().trim().max(200).optional(),
   mainBasketId: z.string().trim().min(1).max(500).optional(), subBasketId: z.string().trim().min(1).max(500).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20), offset: z.coerce.number().int().min(0).max(100_000).default(0) }).strict();
 
-export function createQuotationRouter(auth: AuthService, audit: AuditService) {
+export function createQuotationRouter(auth: AuthService, audit: AuditService, pdf: EstimatePdfService = createEstimatePdfService()) {
   const router = Router();
   const service = createQuotationService({ audit });
   const privateResponse = (_req: unknown, res: { setHeader(name: string, value: string): unknown }, next: () => void) => {
@@ -20,6 +25,14 @@ export function createQuotationRouter(auth: AuthService, audit: AuditService) {
   };
   router.get("/projects/:projectId/quotation", authenticate(auth), requireOperation("GET /projects/:projectId/quotation"), privateResponse,
     async (req, res, next) => { try { res.json({ data: await service.detail(req.authenticatedUser!, String(req.params.projectId)) }); } catch (error) { next(error); } });
+  router.get("/projects/:projectId/quotation/draft/pdf", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/draft/pdf"), privateResponse,
+    async (req, res, next) => { try {
+      const query = draftPdfQuery.safeParse(req.query);
+      if (!query.success) throw new ApiError(400, "VALIDATION_ERROR", "A saved estimate and version are required.");
+      const file = await readSavedQuotationPdf(req.authenticatedUser!, String(req.params.projectId), query.data.estimateId, query.data.expectedVersion, pdf);
+      res.set("X-Content-Type-Options", "nosniff");
+      sendDownload(res, file);
+    } catch (error) { next(error); } });
   router.get("/projects/:projectId/quotation/revision", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/revision"), privateResponse,
     async (req, res, next) => { try { res.json({ data: await service.revision(req.authenticatedUser!, String(req.params.projectId)) }); } catch (error) { next(error); } });
   router.get("/projects/:projectId/quotation/setup", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/setup"), privateResponse,

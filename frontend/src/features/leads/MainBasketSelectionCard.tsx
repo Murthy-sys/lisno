@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { EstimationCatalogueBasket } from "./estimationCatalogueApi";
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
+import type { EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueTemporaryItem } from "./estimationCatalogueApi";
 import { resolveMainBasketImage } from "./mainBasketImages";
 import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 
@@ -15,19 +16,23 @@ export interface MainBasketSelectionSummary {
 }
 
 type MainBasketSelectionCardProps = ({ basket: EstimationCatalogueBasket; summary?: never } | { summary: MainBasketSelectionSummary; basket?: never }) & {
+  roomTypeIds?: readonly string[];
   selected: boolean;
   disabled: boolean;
   onToggle: () => void;
 };
 
-export function MainBasketSelectionCard({ basket, summary, selected, disabled, onToggle }: MainBasketSelectionCardProps) {
+export function MainBasketSelectionCard({ basket, summary, roomTypeIds, selected, disabled, onToggle }: MainBasketSelectionCardProps) {
+  const visibleDefault = (line: EstimationCatalogueMainLine | EstimationCatalogueTemporaryItem) =>
+    line.showByDefault === true && isEstimationLinePriceVisible(line) &&
+    (!roomTypeIds?.length || roomTypeIds.some(type => isMainLineApplicableToRoom(line.applicableRoomCategories, type)));
   const presentation = summary ?? {
     id: basket.id,
     name: basket.name,
     subBaskets: basket.subBaskets.map((item) => ({ id: item.id, name: item.name,
-      mainLineCount: item.mainLines.filter(line => isEstimationLinePriceVisible(line)).length,
-      temporaryItemCount: (item.temporaryItems ?? []).filter(line => isEstimationLinePriceVisible(line)).length })),
-    directTemporaryItemCount: (basket.directTemporaryItems ?? []).filter(line => isEstimationLinePriceVisible(line)).length
+      mainLineCount: item.mainLines.filter(visibleDefault).length,
+      temporaryItemCount: (item.temporaryItems ?? []).filter(visibleDefault).length })),
+    directTemporaryItemCount: (basket.directTemporaryItems ?? []).filter(visibleDefault).length
   };
   const [expanded, setExpanded] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);
@@ -35,6 +40,7 @@ export function MainBasketSelectionCard({ basket, summary, selected, disabled, o
   const detailsId = `estimate-basket-details-${presentation.id}`;
   const headingId = `estimate-basket-heading-${presentation.id}`;
   const temporaryCount = presentation.directTemporaryItemCount + presentation.subBaskets.reduce((sum, item) => sum + item.temporaryItemCount, 0);
+  const defaultLabel = basket ? "default " : "";
 
   return <article className={`configured-estimate-chooser__item${selected ? " configured-estimate-chooser__item--selected" : ""}`} aria-labelledby={headingId}>
     {selected ? <span className="configured-estimate-chooser__selected-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 10 3 3 7-7" /></svg></span> : null}
@@ -58,9 +64,9 @@ export function MainBasketSelectionCard({ basket, summary, selected, disabled, o
       </div>
     </div>
     <div id={detailsId} className="configured-estimate-chooser__details" hidden={!expanded}>
-      {presentation.subBaskets.map((subBasket) => <div key={subBasket.id} className="configured-estimate-chooser__detail"><strong>{subBasket.name}</strong><span>{basketCount(subBasket.mainLineCount, "Main Line", "Main Lines")} · {basketCount(subBasket.temporaryItemCount, "Temporary Item", "Temporary Items")}</span></div>)}
-      {presentation.directTemporaryItemCount ? <div className="configured-estimate-chooser__detail"><strong>Directly under Main Basket</strong><span>{basketCount(presentation.directTemporaryItemCount, "Temporary Item", "Temporary Items")}</span></div> : null}
-      {!presentation.subBaskets.length && !temporaryCount ? <p>No available items in this basket yet.</p> : null}
+      {presentation.subBaskets.map((subBasket) => <div key={subBasket.id} className="configured-estimate-chooser__detail"><strong>{subBasket.name}</strong><span>{basketCount(subBasket.mainLineCount, `${defaultLabel}Main Line`, `${defaultLabel}Main Lines`)} · {basketCount(subBasket.temporaryItemCount, `${defaultLabel}Temporary Item`, `${defaultLabel}Temporary Items`)}</span></div>)}
+      {presentation.directTemporaryItemCount ? <div className="configured-estimate-chooser__detail"><strong>Directly under Main Basket</strong><span>{basketCount(presentation.directTemporaryItemCount, `${defaultLabel}Temporary Item`, `${defaultLabel}Temporary Items`)}</span></div> : null}
+      {!presentation.subBaskets.length && !temporaryCount ? <p>{basket ? "No default items in this basket." : "No available items in this basket yet."}</p> : null}
     </div>
   </article>;
 }

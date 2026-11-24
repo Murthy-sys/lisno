@@ -1,3 +1,4 @@
+import { vendorOnly } from "../estimate-pdf-pricing.js";
 import type { EstimatePdfInput } from "../estimate-pdf.service.js";
 import type { EstimateProposalMetadata } from "../../domain/estimate-proposal.js";
 import { proposalPayments } from "../../domain/estimate-proposal.js";
@@ -54,12 +55,13 @@ export function cover(pdf: ProposalDocument, input: Input) {
 }
 
 export function welcome(pdf: ProposalDocument, input: Input, total: number) {
+  const pmc = input.pmcPaymentSummary;
   pdf.addPage();
   pdf.label("Welcome", page.left, page.top);
   fitted(pdf, `Dear ${input.lead.clientName},`, page.left, 85, 312, 60, 24);
   const paragraphs = [
     `Thank you for meeting us. Your home at ${input.lead.projectName} is about to start its next chapter, and we are glad to be part of it.`,
-    "This estimate sets out the scope we will build, what it costs, how payments are staged and how the project will run, so you can plan with confidence before the design work begins.",
+    pmc ? "This estimate sets out the selected scope, its total cost and the separate amounts payable to Lisno and vendors, so you can plan with confidence before the design work begins." : "This estimate sets out the scope we will build, what it costs, how payments are staged and how the project will run, so you can plan with confidence before the design work begins.",
     "Once you confirm, our designers will measure the site, build a concept with you and develop every unit in 2D and 3D. The sizes here will be refined against the final design and agreed with you before anything goes into production.",
     "We look forward to designing your home with you."
   ];
@@ -71,7 +73,8 @@ export function welcome(pdf: ProposalDocument, input: Input, total: number) {
   pdf.text(`Prepared by ${input.proposal.preparedBy}`, page.left, y, 285, 8.7, { color: palette.muted });
   pdf.photo("welcome-detail", 368, 136, 176, 426);
   pdf.line("FROM OUR COMPLETED WORK", 368, 570, 176, 6.4, { color: palette.faint, spacing: 1.4 });
-  const cells = [ [String(input.proposal.terms.designWorkingDays), "WORKING DAYS\nFOR DESIGN"], [String(input.proposal.terms.executionWorkingDays), "WORKING DAYS\nFOR EXECUTION"], [String(input.proposal.terms.paymentStages.length), "PAYMENT\nSTAGES"], [money(total), "PROJECT PRICE\nINCLUDING GST"] ];
+  const paymentCell = pmc && !pmc.nonPmcMilestoneBasisPaise ? ["2", "PMC PAYMENT\nRECIPIENTS"] : [String(input.proposal.terms.paymentStages.length), pmc ? "NON-PMC PAYMENT\nSTAGES" : "PAYMENT\nSTAGES"];
+  const cells = [ [String(input.proposal.terms.designWorkingDays), "WORKING DAYS\nFOR DESIGN"], [String(input.proposal.terms.executionWorkingDays), "WORKING DAYS\nFOR EXECUTION"], paymentCell, [money(total), pmc ? "TOTAL CUSTOMER PAYABLE\nINCLUDING ALL TAXES" : "PROJECT PRICE\nINCLUDING ALL TAXES"] ];
   const bandY = Math.max(676, y + 42);
   if (bandY + 104 > 790) { pdf.addPage(); pdf.heading("Welcome", "Your project at a glance"); }
   const actualY = bandY + 104 > 790 ? 155 : bandY;
@@ -145,35 +148,76 @@ export function investment(pdf: ProposalDocument, input: Input, groups: Proposal
     y += height; pdf.rule(page.left, y, 244);
   }
   y += 12;
-  pdf.text("Estimate subtotal", 74, y, 137, 9.5, { font: "medium" }); pdf.text(money(totals.subtotal, false), 211, y, 83, 9.5, { font: "medium", align: "right" });
+  const visiblePayable = groups.reduce((sum, group) => sum + group.amountPaise, 0);
+  pdf.text("Visible scope total", 74, y, 137, 9.5, { font: "medium" }); pdf.text(money(visiblePayable, false), 211, y, 83, 9.5, { font: "medium", align: "right" });
   const panelX = 323, panelY = 137, panelW = 221;
-  const roundOffHeight = totals.roundOff ? 29 : 0;
-  pdf.rect(panelX, panelY, panelW, 207 + roundOffHeight, palette.ink);
-  pdf.label("Your project price", panelX + 19, panelY + 23, panelW - 38, palette.goldLight);
-  fitted(pdf, money(totals.total), panelX + 19, panelY + 49, panelW - 38, 57, 28, palette.white);
-  const entries: Array<[string, number]> = [["Subtotal", totals.subtotal], ["GST", totals.gst]];
-  if (totals.roundOff) entries.push(["Round off", totals.roundOff]);
-  entries.push(["Total payable", totals.total]);
-  entries.forEach(([label, value], index) => {
-    const rowY = panelY + 106 + index * 29;
-    const final = index === entries.length - 1;
-    const amount = label === "Round off" ? `${value < 0 ? "-" : "+"}${money(Math.abs(value))}` : money(value, final);
-    pdf.rule(panelX + 19, rowY - 7, panelW - 38, final ? palette.goldLight : "#4e4763");
-    pdf.text(label, panelX + 19, rowY, 84, 9, { color: palette.white, font: final ? "medium" : "body" });
-    pdf.text(amount, panelX + 102, rowY, panelW - 121, 9, { color: palette.white, align: "right", font: final ? "medium" : "body" });
-  });
-  pdf.text(groups.reduce((sum, group) => sum + BigInt(group.amountPaise), 0n) === BigInt(totals.subtotal) ? "This price applies to the selected scope above. Payment stages are calculated on the total payable including GST. Any changes are quoted separately for your approval." : "Area subtotals cover the item details in this view. The project price is the recorded total for the complete estimate, including GST. Payment stages use that full total.", panelX, panelY + 222 + roundOffHeight, panelW, 8.6, { color: palette.muted, lineHeight: 12.6 });
+  if (input.pmcPaymentSummary) {
+    const pmc = input.pmcPaymentSummary;
+    const entries: Array<[string, string]> = [
+      ["PMC payable to Lisno", money(pmc.lisnoPayablePaise)],
+      ["PMC payable to vendors", money(pmc.vendorPayablePaise)],
+      ["Total PMC estimated value", money(pmc.pmcTotalPayablePaise)]
+    ];
+    if (pmc.otherWorkPayablePaise) entries.push(["Non-PMC work", money(pmc.otherWorkPayablePaise)]);
+    if (pmc.roundOffPaise) entries.push(["Round off", `${pmc.roundOffPaise < 0 ? "-" : "+"}${money(Math.abs(pmc.roundOffPaise))}`]);
+    const panelHeight = 114 + entries.length * 34;
+    pdf.rect(panelX, panelY, panelW, panelHeight, palette.ink);
+    pdf.text("Total customer payable", panelX + 19, panelY + 23, panelW - 38, 9, { font: "medium", color: palette.goldLight });
+    fitted(pdf, money(totals.total), panelX + 19, panelY + 45, panelW - 38, 44, 28, palette.white);
+    pdf.text("Inclusive of all taxes", panelX + 19, panelY + 90, panelW - 38, 9, { color: palette.white });
+    entries.forEach(([label, amount], index) => {
+      const rowY = panelY + 115 + index * 34;
+      pdf.rule(panelX + 19, rowY - 6, panelW - 38, "#4e4763");
+      pdf.text(label, panelX + 19, rowY, 105, 8, { color: palette.white, lineHeight: 11 });
+      fitted(pdf, amount, panelX + 125, rowY, panelW - 144, 23, 8, palette.white);
+    });
+    const visibility = visiblePayable !== totals.total - totals.roundOff ? "Area totals cover visible items; these payables cover the complete estimate. " : "";
+    pdf.text(`${visibility}${pmc.nonPmcMilestoneBasisPaise ? "Milestones apply only to non-PMC work. PMC recipient payments are separate." : "PMC payments are split by recipient. No PMC milestone dates are specified here."}`, panelX, panelY + panelHeight + 15, panelW, 8.6, { color: palette.muted, lineHeight: 12.6 });
+    pdf.photo("price-living", 0, 507, page.width, 284);
+    return;
+  }
+  const panelHeight = totals.roundOff ? 146 : 116;
+  pdf.rect(panelX, panelY, panelW, panelHeight, palette.ink);
+  pdf.text(vendorOnly(input) ? "Payable to vendor" : "Total payable", panelX + 19, panelY + 23, panelW - 38, 9, { font: "medium", color: palette.goldLight });
+  fitted(pdf, money(totals.total), panelX + 19, panelY + 45, panelW - 38, 44, 28, palette.white);
+  pdf.text("Inclusive of all taxes", panelX + 19, panelY + 90, panelW - 38, 9, { color: palette.white });
+  if (totals.roundOff) {
+    pdf.rule(panelX + 19, panelY + 110, panelW - 38, palette.goldLight);
+    pdf.text("Round off", panelX + 19, panelY + 121, 78, 9, { color: palette.white });
+    pdf.text(`${totals.roundOff < 0 ? "-" : "+"}${money(Math.abs(totals.roundOff))}`, panelX + 102, panelY + 121, panelW - 121, 9, { color: palette.white, align: "right" });
+  }
+  pdf.text(visiblePayable === totals.total - totals.roundOff ? "Payment stages use the total payable above. Any changes are quoted separately for your approval." : "Area totals cover the items in this view. Payment stages use the total payable for the complete estimate.", panelX, panelY + panelHeight + 15, panelW, 8.6, { color: palette.muted, lineHeight: 12.6 });
   pdf.photo("price-living", 0, 507, page.width, 284);
 }
 
 export function payments(pdf: ProposalDocument, input: Input, total: number) {
-  const stages = proposalPayments(total, input.proposal.terms.paymentStages);
+  const pmc = input.pmcPaymentSummary;
+  if (pmc) {
+    pdf.addPage();
+    pdf.heading("Payments", "PMC payment breakdown", "PMC amounts are payable to the recipients below. All amounts include taxes; the configured percentage is applied before tax.");
+    const entries: Array<[string, number]> = [["PMC payable to Lisno", pmc.lisnoPayablePaise], ["PMC payable to vendors", pmc.vendorPayablePaise], ["Total PMC estimated value", pmc.pmcTotalPayablePaise]];
+    let y = 180;
+    entries.forEach(([label, amount], index) => {
+      pdf.rule(page.left, y, page.widthInside, index === 2 ? palette.ink : palette.rule);
+      pdf.text(label, page.left, y + 18, 300, 12, { font: index === 2 ? "medium" : "body" });
+      pdf.text(money(amount), 363, y + 18, 181, 12, { font: "medium", align: "right" });
+      y += 62;
+    });
+    pdf.text("No PMC payment dates are specified in this proposal. The recipient amounts above are separate from any non-PMC milestone schedule.", page.left, y + 16, page.widthInside, 9, { color: palette.muted, lineHeight: 14 });
+    if (pmc.roundOffPaise) pdf.text(`Estimate round off: ${pmc.roundOffPaise < 0 ? "-" : "+"}${money(Math.abs(pmc.roundOffPaise))}. This adjustment is shown separately in the total customer payable.`, page.left, y + 65, page.widthInside, 9, { color: palette.muted, lineHeight: 14 });
+    if (!pmc.nonPmcMilestoneBasisPaise) return;
+  }
+  const milestoneBasis = pmc?.nonPmcMilestoneBasisPaise ?? total;
+  const stages = proposalPayments(milestoneBasis, input.proposal.terms.paymentStages);
+  const title = pmc ? "Non-PMC payment schedule" : "Payment schedule";
   if (stages.some(stage => measure(pdf, stage.trigger, 270, 7.2, 11) + measure(pdf, stage.description, 270, 8.6, 13) > 450)) {
-    flowSections(pdf, "Payments", "Payment schedule", stages.map(stage => ({ title: `${stage.basisPoints / 100}% · ${stage.title} · ${money(stage.amountPaise)}`, body: `${stage.trigger}\n${stage.description}\nPayment due within ${input.proposal.terms.paymentDueWorkingDays} working days.` })));
+    const blocks = stages.map(stage => ({ title: `${stage.basisPoints / 100}% · ${stage.title} · ${money(stage.amountPaise)}`, body: `${stage.trigger}\n${stage.description}\nPayment due within ${input.proposal.terms.paymentDueWorkingDays} working days.` }));
+    if (pmc) blocks.unshift({ title: "Non-PMC milestone basis", body: `${money(milestoneBasis)} for non-PMC work only. PMC recipient payments and estimate round off are separate.` });
+    flowSections(pdf, "Payments", title, blocks);
     return;
   }
   pdf.addPage();
-  pdf.heading("Payments", "Payment schedule", `Five stages, each tied to a clear milestone. Amounts are on the project price of ${money(total)}.`);
+  pdf.heading("Payments", title, pmc ? `Five stages apply only to non-PMC work of ${money(milestoneBasis)}. PMC payments and estimate round off are separate.` : `Five stages, each tied to a clear milestone. Amounts are on the project price of ${money(total)}.`);
   let x = page.left;
   const colors = [palette.pale, palette.ink, "#302750", "#50466f", palette.goldLight];
   stages.forEach((stage, index) => {
@@ -187,7 +231,7 @@ export function payments(pdf: ProposalDocument, input: Input, total: number) {
     const triggerH = measure(pdf, stage.trigger.toUpperCase(), 270, 7.2, 11);
     const descriptionH = measure(pdf, stage.description, 270, 8.6, 13);
     const height = Math.max(83, 29 + titleH + triggerH + descriptionH);
-    if (y + height > page.bottom - 45) { pdf.addPage(); pdf.heading("Payments", "Payment schedule, continued"); y = 145; }
+    if (y + height > page.bottom - 45) { pdf.addPage(); pdf.heading("Payments", `${title}, continued`); y = 145; }
     pdf.text(String(index + 1).padStart(2, "0"), page.left, y + 25, 23, 6.7, { color: palette.faint, spacing: 1 });
     pdf.text(`${stage.basisPoints / 100}%`, 91, y + 15, 64, 26, { font: "heading" });
     pdf.text(stage.title, 170, y + 19, 255, 11.3, { font: "medium", lineHeight: 16 });
@@ -205,7 +249,7 @@ export function workflow(pdf: ProposalDocument, input: Input) {
     return;
   }
   pdf.addPage();
-  pdf.heading("How we work", "From first sketch to handover", "Four phases, with your sign-off at each step. Execution begins once the production drawings are signed and stage 02 is received.");
+  pdf.heading("How we work", "From first sketch to handover", input.pmcPaymentSummary ? "Four phases, with your sign-off at each step. Production drawings require your approval. Any non-PMC payment stages apply only to that work." : "Four phases, with your sign-off at each step. Execution begins once the production drawings are signed and stage 02 is received.");
   const top = 178, col = page.widthInside / 4;
   pdf.rule(page.left, top, page.widthInside, palette.ink);
   let maxY = top;
@@ -266,14 +310,19 @@ export function exclusions(pdf: ProposalDocument, input: Input) {
 }
 
 export function terms(pdf: ProposalDocument, input: Input) {
+  const clauses = input.proposal.terms.clauses.map(clause => input.pmcPaymentSummary && clause.id === "payments" ? {
+    ...clause,
+    body: input.pmcPaymentSummary.nonPmcMilestoneBasisPaise
+      ? `The milestone terms apply only to non-PMC work. ${clause.body} PMC recipient amounts are separate; no PMC payment dates are specified here.`
+      : "PMC amounts are payable separately to Lisno and vendors as shown in the payment breakdown. No PMC payment dates are specified in this proposal."
+  } : clause);
   const materialHeight = input.proposal.terms.materials.reduce((height, row) => height + Math.max(measure(pdf, row.area, 111, 8.4, 13), measure(pdf, row.specification, 147, 8.6, 13, "medium")) + 14, 33);
-  if (materialHeight > 600 || input.proposal.terms.clauses.some(row => measure(pdf, row.body, 232, 8.4, 13) > 460)) {
-    flowSections(pdf, "Fine print", "Terms & specifications", [...input.proposal.terms.clauses.map(clause => ({ ...clause, body: clause.id === "validity" ? `Valid until ${dateLabel(input.proposal.validUntil, true)}. ${clause.body}` : clause.body })), ...input.proposal.terms.materials.map(row => ({ title: row.area, body: row.specification }))]);
+  if (materialHeight > 600 || clauses.some(row => measure(pdf, row.body, 232, 8.4, 13) > 460)) {
+    flowSections(pdf, "Fine print", "Terms & specifications", [...clauses.map(clause => ({ ...clause, body: clause.id === "validity" ? `Valid until ${dateLabel(input.proposal.validUntil, true)}. ${clause.body}` : clause.body })), ...input.proposal.terms.materials.map(row => ({ title: row.area, body: row.specification }))]);
     return;
   }
   pdf.addPage(); pdf.heading("Fine print", "Terms & specifications");
   let y = 137; pdf.rule(page.left, y, page.widthInside, palette.ink);
-  const clauses = input.proposal.terms.clauses;
   for (let i = 0; i < clauses.length; i += 2) {
     const pair = clauses.slice(i, i + 2).map(clause => ({ ...clause, body: clause.id === "validity" ? `This estimate is valid until ${dateLabel(input.proposal.validUntil, true)}. ${clause.body}` : clause.body }));
     const height = Math.max(...pair.map(row => 23 + measure(pdf, row.title, 232, 10, 14, "medium") + measure(pdf, row.body, 232, 8.4, 13)), 68);
@@ -304,18 +353,30 @@ export function terms(pdf: ProposalDocument, input: Input) {
 }
 
 export function acceptance(pdf: ProposalDocument, input: Input, total: number) {
+  const pmc = input.pmcPaymentSummary;
   pdf.addPage(false);
-  pdf.heading("Acceptance", "Let's begin", "Signing below confirms the scope, price and payment schedule in this estimate. Our design team is assigned once the booking advance is received.");
+  pdf.heading("Acceptance", "Let's begin", pmc ? "Signing below confirms the selected scope, total customer payable and the separate PMC amounts payable to Lisno and vendors. Any milestone schedule applies only to non-PMC work." : "Signing below confirms the scope, price and payment schedule in this estimate. Our design team is assigned once the booking advance is received.");
   pdf.rule(page.left, 248, 226, palette.ink);
   pdf.rule(317, 248, 227, palette.ink);
   fitted(pdf, input.lead.clientName, page.left, 258, 226, 35, 10);
   pdf.label("Client · signature & date", page.left, 288, 226, palette.faint);
   fitted(pdf, input.proposal.signatoryName, 317, 258, 227, 35, 10);
   pdf.label(`For ${input.proposal.terms.company.name} · signature & date`, 317, 288, 227, palette.faint);
-  const booking = proposalPayments(total, input.proposal.terms.paymentStages)[0];
   pdf.rect(page.left, 317, page.widthInside, 41, palette.pale);
-  pdf.text(`${booking.title} (stage 01)`, 71, 332, 300, 8.6, { color: palette.gold });
-  pdf.text(money(booking.amountPaise), 390, 332, 136, 10.3, { font: "medium", align: "right" });
+  if (pmc) {
+    pdf.text("Total customer payable, including all taxes", 71, 332, 300, 8.6, { color: palette.gold });
+    pdf.text(money(total), 390, 332, 136, 10.3, { font: "medium", align: "right" });
+    if (pmc.nonPmcMilestoneBasisPaise) {
+      const booking = proposalPayments(pmc.nonPmcMilestoneBasisPaise, input.proposal.terms.paymentStages)[0];
+      pdf.rect(page.left, 365, page.widthInside, 41, palette.pale);
+      pdf.text(`${booking.title} (non-PMC stage 01)`, 71, 380, 300, 8.6, { color: palette.gold });
+      pdf.text(money(booking.amountPaise), 390, 380, 136, 10.3, { font: "medium", align: "right" });
+    }
+  } else {
+    const booking = proposalPayments(total, input.proposal.terms.paymentStages)[0];
+    pdf.text(`${booking.title} (stage 01)`, 71, 332, 300, 8.6, { color: palette.gold });
+    pdf.text(money(booking.amountPaise), 390, 332, 136, 10.3, { font: "medium", align: "right" });
+  }
   pdf.photo("closing-kitchen", 0, 438, 204, page.height - 438);
   pdf.rect(204, 438, page.width - 204, page.height - 438, palette.ink);
   pdf.logo(243, 481, 107);

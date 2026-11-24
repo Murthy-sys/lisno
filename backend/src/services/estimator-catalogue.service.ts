@@ -1,3 +1,5 @@
+import { readEstimatePmcPricing, type EstimatePmcPricing } from "../domain/estimate-pmc-payable.js";
+import { isMainLineApplicableToRoom, isRoomCategoryId, type RoomCategoryId } from "../domain/estimate-room-options.js";
 import { readInHouseUsagePolicy, type InHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -24,23 +26,28 @@ import { UserModel } from "../models/User.js";
 import type { PublicUser } from "./auth.service.js";
 
 export interface EstimatorCatalogueTierPricing {
+  pmcPricing?: EstimatePmcPricing;
   /** Internal selection authority. Never serialize this member to an estimator. */
   inHousePolicy?: InHouseUsagePolicy;
   inHouseUsage?: "estimator" | "execution" | null;
   inHousePricingState?: "ready" | "incomplete" | "invalid";
-  /** Legacy wire name: unit-rate modes contain final selling rates, including their configured maximum. */
+  /** PMC is a vendor base rate. Execution modes expose selling rates. */
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
     basketName: string; subBasketName: string | null; baseRatePaise: number | null; unavailableReason?: string | null }>;
 }
 
 export interface EstimatorCatalogueLine {
+  pmcPricing?: EstimatePmcPricing;
   id: string;
   mainLineId: string;
   basketId: string;
   subBasketId: string | null;
   itemType: "main_line" | "temporary";
   clientVisible: boolean;
+  /** Discovery metadata only; non-default sources remain available to explicit selection and saved estimates. */
+  showByDefault: boolean;
+  applicableRoomCategories?: RoomCategoryId[];
   /** Current saved base presence across all four Configuration scopes; discovery only. */
   hasConfiguredBasePrice: boolean;
   /** Validated positive bases for each exact current Configuration scope and method. */
@@ -146,7 +153,7 @@ export interface EstimatorCatalogueRecommendationSource {
   guidance: RecommendationGuidance[];
 }
 
-/** Project estimation rates only; margin percentages and source cost details stay in Configuration. */
+/** Internal Sales catalogue includes the PMC inputs needed for a quantity-specific estimate preview. */
 export async function listEstimatorCatalogue(
   actor: PublicUser,
   pagination: { limit: number; offset: number },
@@ -443,6 +450,22 @@ function withoutTargetType(rule: SavedRecommendationRule): Omit<RecommendationRu
   return projected;
 }
 
+export function applicableRowsForEstimateSubmission<T extends { mainLineId?: unknown; roomId?: unknown; included?: unknown }>(
+  rows: readonly T[],
+  rooms: unknown,
+  current: ReadonlyMap<string, ResolvedEstimatorCatalogueLine>
+): T[] {
+  const savedRooms: Array<{ id: string; typeId?: string }> = Array.isArray(rooms) ? rooms : [];
+  const roomTypes = new Map(savedRooms.map(room => [room.id, room.typeId]));
+  return rows.filter(line => {
+    const source = current.get(String(line.mainLineId));
+    if (!source || isMainLineApplicableToRoom(source.line.applicableRoomCategories, roomTypes.get(String(line.roomId)))) return true;
+    if (line.included !== false) throw new ApiError(409, "ESTIMATE_ROOM_NOT_APPLICABLE",
+      "Remove Main Lines that no longer apply to their room before continuing.");
+    return false;
+  });
+}
+
 /** Resolve current Configuration values for Main Lines on reads and estimate saves. */
 export async function resolveEstimatorCatalogueLines(
   mainLineIds: readonly string[],
@@ -584,6 +607,8 @@ async function projectLines(
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
   const clientVisibilityByRevision = new Map<string, boolean>();
+  const showByDefaultByRevision = new Map<string, boolean>();
+  const roomCategoriesByRevision = new Map<string, RoomCategoryId[]>();
   const dimensionsMandatoryByRevision = new Map<string, boolean>();
   const applicableTiersByRevision = new Map<string, KnowledgeModeTier[]>();
   for (const overview of overviews) {
@@ -591,8 +616,14 @@ async function projectLines(
     const payload = overview.payload as Record<string, unknown> | null;
     if (String(revisionById.get(revisionId)?.mainLineId) !== String(overview.mainLineId) ||
         typeof payload?.uomId !== "string" || !payload.uomId) continue;
+    const categories = payload.applicableRoomCategories;
+    // Invalid stored restrictions cannot safely be projected as unrestricted.
+    if (categories !== undefined && (!Array.isArray(categories) || !categories.every(isRoomCategoryId) ||
+      new Set(categories).size !== categories.length)) continue;
+    roomCategoriesByRevision.set(revisionId, categories ?? []);
     uomIdByRevision.set(revisionId, payload.uomId);
     clientVisibilityByRevision.set(revisionId, payload.clientVisible !== false);
+    showByDefaultByRevision.set(revisionId, payload.showByDefault === true);
     dimensionsMandatoryByRevision.set(revisionId, payload.dimensionsMandatory === true);
     applicableTiersByRevision.set(revisionId, !Object.hasOwn(payload, "applicableTiers") ? ["signature"]
       : Array.isArray(payload.applicableTiers) ? KNOWLEDGE_MODE_TIERS.filter(tier => (payload.applicableTiers as unknown[]).includes(tier)) : []);
@@ -641,9 +672,11 @@ async function projectLines(
       const selected = components?.filter(component => policy.componentIds.includes(component.id));
       const inHousePricingState = policy.state === "legacy" ? undefined : policy.state !== "ready" ? policy.state
         : !configured || !selected?.length || selected.length !== policy.componentIds.length || selected.some(component => !componentIsAvailable(component) || !component.labor || !component.material || (inHouseComponentBaseRate(component) ?? 0) <= 0) ? "incomplete" : "ready";
+      const pmcPricing = configured ? readEstimatePmcPricing(section!.payload, Number(uom.decimalScale)) : undefined;
       return {
+        ...(pmcPricing ? { pmcPricing } : {}),
         ...(policy.state === "legacy" ? {} : { inHousePolicy: policy, inHouseUsage: policy.usage, inHousePricingState }),
-        modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null),
+        modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null, pmcPricing ?? null),
         ...(components === undefined && policy.state === "legacy" ? {} : { inHouseComponents: (components ?? []).map(component => {
           const basket = componentBaskets.get(component.basketId);
           const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;
@@ -672,6 +705,8 @@ async function projectLines(
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
       clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
+      applicableRoomCategories: roomCategoriesByRevision.get(revisionId),
+      showByDefault: showByDefaultByRevision.get(revisionId) === true,
       basePriceAvailability,
       hasConfiguredBasePrice: Object.values(basePriceAvailability).some(methods => Object.values(methods).some(Boolean)),
       name: String(raw.name), displayOrder: Number(raw.displayOrder), revisionId,

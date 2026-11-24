@@ -1,254 +1,183 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
 import { tokenStorage } from "../../api/client";
+import type { ClientProjectSummary } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
-
-const projects = [
-  { id: "project-villa", name: "Aurora Villa", clientId: "client-1", initiatingDesignerId: "designer-1", assignedDesignerIds: ["designer-1"], managerId: "manager-1", status: "active", location: "Bengaluru", plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-09-30T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" },
-  { id: "project-loft", name: "Cedar Loft", clientId: "client-1", initiatingDesignerId: "designer-1", assignedDesignerIds: ["designer-1"], managerId: "manager-1", status: "planning", location: "Mysuru", plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-10-30T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" }
+const summaries: ClientProjectSummary[] = [
+  {
+    id: "project-villa", name: "Aurora Villa", projectNumber: "Lisno000021",
+    status: "active", location: "Bengaluru", progress: 64, floorCount: 3,
+    plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-09-30T00:00:00.000Z",
+    actualStartAt: null, actualEndAt: null,
+    createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z"
+  },
+  {
+    id: "project-loft", name: "Cedar Loft", projectNumber: "Lisno000083",
+    status: "on_hold", location: "Mysuru", progress: 17, floorCount: 1,
+    plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-10-30T00:00:00.000Z",
+    actualStartAt: null, actualEndAt: null,
+    createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z"
+  }
 ];
-const summaries = projects.map((project, index) => ({
-  id: project.id,
-  name: project.name,
-  status: project.status,
-  location: project.location,
-  plannedStartAt: project.plannedStartAt,
-  plannedEndAt: project.plannedEndAt,
-  actualStartAt: project.actualStartAt,
-  actualEndAt: project.actualEndAt,
-  createdAt: project.createdAt,
-  updatedAt: project.updatedAt,
-  progress: index === 0 ? 64 : 0,
-  floorCount: index === 0 ? 3 : 1
-}));
 
-describe("ClientDashboard", () => {
-  it("keeps generated IDs attached to same-named projects and their selected quick view", async () => {
-    tokenStorage.set("client-token");
-    const rows: Array<(typeof summaries)[number] & { projectNumber: string | null }> = summaries.map((project, index) => ({ ...project, name: "Shared home", projectNumber: index === 0 ? "Lisno000021" : "Lisno000083" }));
-    rows.push({ ...rows[0]!, id: "project-new", name: "New home", projectNumber: null });
-    const requests: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
-      const url = String(input); requests.push(url);
-      if (url.endsWith("/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: rows, pagination: { limit: 100, offset: 0, total: rows.length, hasMore: false } } });
-      if (url.endsWith("/client/latest-approved-versions") || url.endsWith("/client/estimates")) return Response.json({ data: [] });
-      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared home", serverNow: new Date().toISOString(), floors: [] } });
-      throw new Error(`Unhandled request: ${url}`);
+function projectPage(items: readonly unknown[], offset = 0, total = items.length) {
+  return Response.json({ data: { items, pagination: { limit: 100, offset, total, hasMore: offset + 100 < total } } });
+}
+
+function installApi(projectResponse: (url: string) => Response | Promise<Response> = () => projectPage(summaries)) {
+  tokenStorage.set("client-token");
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const url = String(input);
+    if (url.endsWith("/auth/me")) return Response.json({ data: client });
+    if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
+    if (url.includes("/client/project-summaries?")) return projectResponse(url);
+    if (url.endsWith("/client/estimates")) return Response.json({ data: [] });
+    throw new Error(`Unhandled request: ${url}`);
+  });
+}
+
+describe("ClientDashboard project table", () => {
+  it("shows each project's existing values with direct links and no dashboard-only reads", async () => {
+    const api = installApi();
+    renderApp(["/client"]);
+
+    const table = await screen.findByRole("table", { name: "Projects" });
+    expect(screen.getByRole("heading", { name: "My projects", level: 1 })).toBeVisible();
+    expect(screen.getByText("2 projects")).toBeVisible();
+    expect(within(table).getAllByRole("columnheader").map(header => header.textContent)).toEqual([
+      "Project", "Location", "Status", "Progress", "Expected completion", "Action"
+    ]);
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    const expected = [
+      ["Bengaluru", "Active", "64%", "30 Sept 2026"],
+      ["Mysuru", "On hold", "17%", "30 Oct 2026"]
+    ];
+    rows.forEach((row, index) => {
+      const project = summaries[index]!;
+      const cells = within(row).getAllByRole("cell");
+      expect(cells).toHaveLength(5);
+      expect(within(within(row).getByRole("rowheader")).getByText(`Project ID: ${project.projectNumber}`)).toBeVisible();
+      expected[index]!.forEach((value, column) => expect(cells[column]).toHaveTextContent(value));
+      const name = within(row).getByRole("link", { name: project.name });
+      const open = within(row).getByRole("link", { name: `Open project: ${project.name}` });
+      expect(name).toHaveAttribute("href", `/client/projects/${project.id}`);
+      expect(open).toHaveAttribute("href", name.getAttribute("href"));
+      expect(open).toHaveTextContent("Open project");
+    });
+    expect(screen.queryByRole("region", { name: "Client overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Estimate review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Project details:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.mock.calls.map(([input]) => String(input)).filter(url => !url.includes("/auth/"))).toEqual([
+      "/api/v1/client/project-summaries?limit=100&offset=0"
+    ]);
+  });
+
+  it("keeps public numbers and encoded destinations attached to stable IDs for same-named projects", async () => {
+    const rows = [
+      { ...summaries[0]!, id: "project/villa ?#1", name: "Shared home" },
+      { ...summaries[1]!, id: "project loft%2", name: "Shared home" },
+      { ...summaries[0]!, id: "project-new", name: "New home", projectNumber: null }
+    ];
+    installApi(() => projectPage(rows));
+    renderApp(["/client"]);
+
+    const table = await screen.findByRole("table", { name: "Projects" });
+    const displayed = within(table).getAllByRole("row").slice(1);
+    rows.forEach((project, index) => {
+      const row = within(displayed[index]!);
+      expect(row.getByRole("link", { name: project.name })).toHaveAttribute("href", `/client/projects/${encodeURIComponent(project.id)}`);
+      expect(row.getByRole("link", { name: `Open project: ${project.name}` })).toHaveAttribute("href", `/client/projects/${encodeURIComponent(project.id)}`);
+      expect(row.getByText(project.projectNumber ? `Project ID: ${project.projectNumber}` : "Project ID not assigned")).toBeVisible();
+    });
+    expect(within(displayed[0]!).queryByText("Project ID: Lisno000083")).not.toBeInTheDocument();
+    expect(within(displayed[1]!).queryByText("Project ID: Lisno000021")).not.toBeInTheDocument();
+  });
+
+  it("loads every summary page and preserves the returned project ordering", async () => {
+    const projects = Array.from({ length: 201 }, (_, index) => ({
+      ...summaries[index % 2]!, id: `project-${201 - index}`, name: `Home ${201 - index}`,
+      projectNumber: `Lisno${String(index + 1).padStart(6, "0")}`
+    }));
+    const api = installApi(url => {
+      const offset = Number(url.match(/offset=(\d+)/)?.[1]);
+      return projectPage(projects.slice(offset, offset + 100), offset, projects.length);
     });
     renderApp(["/client"]);
+
+    const table = await screen.findByRole("table", { name: "Projects" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(201);
+    expect(screen.getByText("201 projects")).toBeVisible();
+    expect(rows.map(row => within(row).getAllByRole("link")[0]!.textContent)).toEqual(projects.map(project => project.name));
+    expect(api.mock.calls.map(([input]) => String(input)).filter(url => url.includes("project-summaries"))).toEqual([
+      "/api/v1/client/project-summaries?limit=100&offset=0",
+      "/api/v1/client/project-summaries?limit=100&offset=100",
+      "/api/v1/client/project-summaries?limit=100&offset=200"
+    ]);
+  });
+
+  it.each([undefined, null, "", "not-a-date"])("shows unavailable completion for an absent or invalid date (%s)", async plannedEndAt => {
+    installApi(() => projectPage([{ ...summaries[0]!, plannedEndAt }]));
+    renderApp(["/client"]);
+    const table = await screen.findByRole("table", { name: "Projects" });
+    expect(within(within(table).getAllByRole("row")[1]!).getAllByRole("cell")[3]).toHaveTextContent("Not available");
+    expect(screen.queryByText(/Invalid Date|1970/)).not.toBeInTheDocument();
+  });
+
+  it("keeps loading distinct from the empty state until projects arrive", async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    installApi(() => pending);
+    renderApp(["/client"]);
+    try {
+      expect(await screen.findByText("Loading your projects…")).toBeVisible();
+      expect(screen.queryByText("No projects shared yet.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("table", { name: "Projects" })).not.toBeInTheDocument();
+    } finally {
+      await act(async () => release(projectPage(summaries)));
+    }
+    expect(await screen.findByRole("table", { name: "Projects" })).toBeVisible();
+    expect(screen.queryByText("Loading your projects…")).not.toBeInTheDocument();
+  });
+
+  it("shows a clear empty account without fabricated project data", async () => {
+    installApi(() => projectPage([]));
+    renderApp(["/client"]);
+    expect(await screen.findByText("No projects shared yet.")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "My projects" })).toBeVisible();
+    expect(screen.getByText("0 projects")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Open project:/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
-    const headings = await screen.findAllByRole("heading", { name: "Shared home" });
-    const first = headings[0]!.closest("article")!, second = headings[1]!.closest("article")!;
-    expect(within(first).getByText("Project ID: Lisno000021")).toBeVisible();
-    expect(within(first).queryByText("Project ID: Lisno000083")).not.toBeInTheDocument();
-    expect(within(second).getByText("Project ID: Lisno000083")).toBeVisible();
-    expect(screen.getByText("Project ID not assigned")).toBeVisible();
-    await userEvent.click(within(second).getByRole("button", { name: "Project details: Shared home" }));
-    const dialog = screen.getByRole("dialog", { name: "Shared home" });
-    expect(within(dialog).getByText("Project ID: Lisno000083")).toBeVisible();
-    expect(within(dialog).getByRole("link", { name: "Open full project" })).toHaveAttribute("href", "/client/projects/project-loft");
-    expect(requests.some(url => /\/projects\/[^/]+$/.test(url))).toBe(false);
   });
 
-  it("surfaces an active Client task without expanding the project or waiting for approved plans", async () => {
-    tokenStorage.set("client-token");
-    const workflowReads: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
-      if (url.endsWith("/client/latest-approved-versions")) return Response.json({ error: { code: "UNAVAILABLE", message: "Plans unavailable" } }, { status: 503 });
-      if (url.endsWith("/client/estimates")) return Response.json({ data: [] });
-      if (url.endsWith("/design-workflow")) {
-        const projectId = url.split("/").at(-2)!;
-        workflowReads.push(projectId);
-        const forClient = projectId === "project-villa";
-        return Response.json({ data: { projectId, projectName: forClient ? "Aurora Villa" : "Cedar Loft", serverNow: new Date().toISOString(), floors: [], projectStages: [{
-          id: `${projectId}:current`, name: forClient ? "Client Kick off" : "Internal Kick off", type: forClient ? "client_kickoff" : "internal_kickoff", order: 1,
-          status: "in_progress", progress: 0, dependencyStageIds: [], deadlineAt: null, deadlineTaskId: null, tasks: [],
-          operational: { status: "in_progress", availableActions: forClient ? [{ id: "client_kickoff_complete", label: "Complete Client Kick off", actor: "client", requiresProof: false }] : [] }
-        }] } });
-      }
-      throw new Error(`Unhandled request: ${url}`);
-    });
-    renderApp(["/client"]);
-    const task = await screen.findByRole("region", { name: "Aurora Villa current task" });
-    expect(await within(task).findByText("Complete Client Kick off")).toBeVisible();
-    expect(within(task).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/client/projects/project-villa");
-    const other = screen.getByRole("region", { name: "Cedar Loft current task" });
-    expect(await within(other).findByText("Internal Kick off")).toBeVisible();
-    expect(within(other).queryByRole("link", { name: "Open task" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
-    const toggle = screen.getByRole("button", { name: "Aurora Villa" });
-    const approvedMetric = within(screen.getByRole("region", { name: "Client overview" })).getByLabelText("Unavailable");
-    expect(approvedMetric).toHaveTextContent("—");
-    expect(screen.getByRole("button", { name: "Retry approved plans" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Project details: Aurora Villa" }));
-    const projectDetails = screen.getByRole("dialog", { name: "Aurora Villa" });
-    expect(within(projectDetails).getByText("Latest approved update unavailable.")).toBeVisible();
-    expect(within(projectDetails).queryByText("No approved plan available yet.")).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(toggle);
-    await userEvent.click(toggle);
-    await waitFor(() => expect(workflowReads.slice().sort()).toEqual(["project-loft", "project-villa"]));
-  });
-
-  it("shows a retryable task failure instead of assuming that the Client has nothing to do", async () => {
-    tokenStorage.set("client-token");
-    let workflowRequests = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: summaries.slice(0, 1), pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } });
-      if (url.endsWith("/client/latest-approved-versions") || url.endsWith("/client/estimates")) return Response.json({ data: [] });
-      if (url.endsWith("/design-workflow")) {
-        workflowRequests += 1;
-        return workflowRequests === 1 ? Response.json({ error: { code: "UNAVAILABLE", message: "Workflow unavailable" } }, { status: 503 }) : Response.json({ data: { projectId: "project-villa", projectName: "Aurora Villa", serverNow: new Date().toISOString(), floors: [] } });
-      }
-      throw new Error(`Unhandled request: ${url}`);
-    });
-    renderApp(["/client"]);
-    expect(await screen.findByText("The current project task could not be refreshed.")).toBeVisible();
-    expect(screen.queryByText("No action is needed from you at this stage.")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Retry project task" }));
-    expect(await screen.findByText("Stage information is not available yet.")).toBeVisible();
-    expect(workflowRequests).toBe(2);
-  });
-
-  it("shows an approved estimate as completed history without decision buttons", async () => {
-    tokenStorage.set("client-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
-      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: [withPublishedReview({
-        id: "estimate-approved",
-        leadId: "lead-1",
-        propertyType: "2BHK",
-        rooms: [],
-        scopes: [],
-        lineItems: [],
-        subtotal: 100000,
-        gst: 18000,
-        total: 118000,
-        status: "client_approved",
-        approvalRequired: false,
-        projectId: "project-1",
-        lead: { _id: "lead-1", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Aurora Villa", location: "Bengaluru" }
-      })] });
-      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
-      throw new Error(`Unhandled request: ${url}`);
-    });
-
-    renderApp(["/client"]);
-
-    expect(await screen.findByText("Aurora Villa")).toBeVisible();
-    expect(screen.getByText("₹1,18,000")).toBeVisible();
-    expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Aurora Villa" }));
-    expect(await screen.findByText("Estimate approved")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
-  });
-
-  it("shows multiple client projects with their latest approved update and no internal metrics", async () => {
-    tokenStorage.set("client-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
-      if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [
-        { id: "version-villa", projectId: "project-villa", floorId: "floor-1", stageId: "stage-1", taskId: null, versionNumber: 2, originalFilename: "Villa floor plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" },
-        { id: "draft-never-show", projectId: "project-loft", floorId: "floor-2", stageId: "stage-2", taskId: null, versionNumber: 1, originalFilename: "Internal draft.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "draft", approvedAt: null, clientVisible: false, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-12T00:00:00.000Z" }
-      ] });
-      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
-      throw new Error(`Unhandled request: ${url}`);
-    });
-
-    renderApp(["/client"]);
-
-    expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Your design plans", level: 1 })).toBeVisible();
-    const overview = screen.getByRole("region", { name: "Client overview" });
-    expect(overview.querySelectorAll("dl > div")).toHaveLength(3);
-    expect(within(overview).getByText("Shared projects")).toBeVisible();
-    expect(within(overview).getByText("2", { selector: "dd" })).toBeVisible();
-    expect(within(overview).getByText("Average progress")).toBeVisible();
-    expect(within(overview).getByText("32%", { selector: "dd" })).toBeVisible();
-    expect(within(overview).getByText("Approved plans")).toBeVisible();
-    expect(within(overview).getByText("1", { selector: "dd" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Your design plans" })).not.toHaveClass("client-page--project");
-    expect(screen.getByText("Aurora Villa")).toBeVisible();
-    expect(screen.getByText("Active")).toBeVisible();
-    expect(screen.getByText("Cedar Loft")).toBeVisible();
-    expect(screen.getByText("64% complete")).toBeVisible();
-    expect(screen.getByText("3 floors")).toBeVisible();
-    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
-    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
-    expect(await screen.findByText("Villa floor plan.pdf")).toBeVisible();
-    expect(screen.getByText(/No approved plan available yet/)).toBeVisible();
-    expect(screen.queryByText("Internal draft.pdf")).not.toBeInTheDocument();
-    expect(screen.queryByText(/KPI|evaluation|internal note|draft/i)).not.toBeInTheDocument();
-  });
-
-  it("shows a retryable error per project when the bounded latest-update request fails", async () => {
-    tokenStorage.set("client-token");
+  it("retries an initial failed project read and shows the recovered table", async () => {
     let attempts = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
-      if (url.endsWith("/api/v1/client/latest-approved-versions")) {
-        attempts += 1;
-        return attempts === 1 ? Response.json({ error: { code: "REQUEST_FAILED", message: "Unavailable" } }, { status: 503 }) : Response.json({ data: [] });
-      }
-      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
-      throw new Error(`Unhandled request: ${url}`);
-    });
-
+    installApi(() => ++attempts === 1
+      ? Response.json({ error: { code: "UNAVAILABLE", message: "Projects unavailable" } }, { status: 503 })
+      : projectPage(summaries));
     renderApp(["/client"]);
-    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
-    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
-    expect(await screen.findAllByText("Latest approved update unavailable.")).toHaveLength(2);
-    expect(screen.queryByText("No approved plan available yet.")).not.toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole("button", { name: "Retry approved updates" })[0]!);
-    expect(await screen.findAllByText("No approved plan available yet.")).toHaveLength(2);
+    expect(await screen.findByText("We couldn't load your projects.")).toBeVisible();
+    expect(screen.queryByText("No projects shared yet.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Projects" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Projects" })).toBeVisible();
+    expect(attempts).toBe(2);
   });
 
-  it("distinguishes an account with no projects from plans still being prepared", async () => {
-    tokenStorage.set("client-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
-      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
-      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
-      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
-      throw new Error(`Unhandled request: ${url}`);
-    });
-
-    renderApp(["/client"]);
-
-    // The Projects section is dropped entirely for an empty account; the
-    // overview tile is what still separates "none shared" from "still loading".
-    const overview = await screen.findByRole("region", { name: "Client overview" });
-    const sharedProjects = within(overview).getByText("Shared projects").parentElement!;
-    expect(within(sharedProjects).getByText("0", { selector: "dd" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Projects", level: 2 })).not.toBeInTheDocument();
-    expect(screen.queryByText("No projects have been shared with you yet.")).not.toBeInTheDocument();
+  it.each(["missing-estimate", ""])("retains estimate review only for an explicit estimate query parameter (%s)", async estimateId => {
+    const api = installApi();
+    renderApp([`/client?estimate=${estimateId}`]);
+    const review = await screen.findByRole("region", { name: "Estimate review" });
+    expect(await within(review).findByText("No estimates are available yet. Your team will share them here when ready.")).toBeVisible();
+    expect(screen.getByRole("table", { name: "Projects" })).toBeVisible();
+    if (estimateId) expect(within(review).getByText(/The estimate in this link is unavailable/)).toBeVisible();
+    expect(api.mock.calls.map(([input]) => String(input)).filter(url => url.endsWith("/client/estimates"))).toHaveLength(1);
   });
 });

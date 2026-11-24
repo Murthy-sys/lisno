@@ -1,3 +1,4 @@
+import { roomCategorySummary } from "./KnowledgeRoomCategorySelect";
 import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
@@ -243,19 +244,25 @@ function definitionConflictValues(
   ];
 }
 
-export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "applicableTiers" | "dimensionsMandatory";
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "showByDefault" | "applicableTiers" | "dimensionsMandatory" | "closurePriority" | "applicableRoomCategories";
 
 function overviewValues(
   payload: KnowledgeJsonObject,
   masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
-  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "applicableTiers", "dimensionsMandatory"]
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory", "applicableRoomCategories"]
 ): readonly ConflictReviewValue[] {
   const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
+    applicableRoomCategories: { label: "Applicable rooms / places", value: roomCategorySummary(payload.applicableRoomCategories) },
+    closurePriority: { label: "Closure priority", value: payload.closurePriority === undefined ? "Unselected" : ["P1", "P2", "P3"].includes(String(payload.closurePriority)) ? String(payload.closurePriority) : "Saved configuration needs review" },
     dimensionsMandatory: { label: "Dimensions mandatory", value: payload.dimensionsMandatory === true ? "Yes · Length × Width" : payload.dimensionsMandatory === undefined || payload.dimensionsMandatory === false ? "No" : "Saved configuration needs review" },
     applicableTiers: { label: "Applicable tiers", value: applicableKnowledgeTiers(payload).map(tier => KNOWLEDGE_MODE_TIER_LABELS[tier]).join(", ") || "None" },
     clientVisible: {
       label: "Client estimate screen",
       value: payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : "Saved configuration needs review"
+    },
+    showByDefault: {
+      label: "Show this Main Line by default?",
+      value: payload.showByDefault === true ? "Yes" : payload.showByDefault === undefined || payload.showByDefault === false ? "No" : "Saved configuration needs review"
     },
     uomId: {
       label: "Unit of measure (UOM)",

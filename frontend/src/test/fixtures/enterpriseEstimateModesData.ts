@@ -6,8 +6,8 @@ const initialCatalogue: EstimationCatalogueBasket[] = [{
   id: "basket-ceiling", name: "False ceiling", displayOrder: 1, directTemporaryItems: [],
   subBaskets: [{ id: "sub-ceiling", basketId: "basket-ceiling", name: "Ceiling finishes", displayOrder: 1, temporaryItems: [],
     mainLines: [
-      { id: "line-ceiling", name: "False ceiling", modeBaseRatesPaise: { pmc: 12_000, sub_vendor: 15_000, in_house: 18_000 } },
-      { id: "line-missing", name: "Ceiling detail with missing PMC price", modeBaseRatesPaise: { pmc: null, sub_vendor: 4_000, in_house: 5_000 } },
+      { id: "line-ceiling", name: "False ceiling", showByDefault: true, modeBaseRatesPaise: { pmc: 12_000, sub_vendor: 15_000, in_house: 18_000 } },
+      { id: "line-missing", name: "Ceiling detail with missing PMC price", showByDefault: false, modeBaseRatesPaise: { pmc: null, sub_vendor: 4_000, in_house: 5_000 } },
       { id: "line-zero", name: "Ceiling allowance with zero PMC price", modeBaseRatesPaise: { pmc: 0, sub_vendor: 1_000, in_house: 2_000 } }
     ].map((line, index) => ({ ...line, mainLineId: line.id, basketId: "basket-ceiling", subBasketId: "sub-ceiling", itemType: "main_line" as const,
       displayOrder: index + 1, revisionId: `revision-${line.id}`, itemStatus: "active" as const, revisionStatus: "draft" as const,
@@ -210,15 +210,20 @@ export function createEnterpriseEstimateModes(options: { basketCards?: boolean; 
       return structuredClone(draft);
     },
     updateConfiguration(detail: unknown) {
-      const change = detail as { mainLineId?: string; modeBaseRatesPaise?: EstimationModeBaseRatesPaise } | null;
+      const change = detail as { mainLineId?: string; modeBaseRatesPaise?: EstimationModeBaseRatesPaise; showByDefault?: boolean } | null;
       const line = sources().find(({ line }) => line.mainLineId === change?.mainLineId)?.line;
       const rates = change?.modeBaseRatesPaise;
-      if (!line || !rates || !["pmc", "sub_vendor", "in_house"].every((mode) => {
+      if (!line || !rates && typeof change?.showByDefault !== "boolean" ||
+        change?.showByDefault !== undefined && typeof change.showByDefault !== "boolean") return;
+      if (rates && !["pmc", "sub_vendor", "in_house"].every((mode) => {
         const value = rates[mode as keyof EstimationModeBaseRatesPaise];
         return value === null || Number.isSafeInteger(value) && value >= 0;
       })) return;
-      line.modeBaseRatesPaise = { ...rates };
-      line.inHouseBaseRatePaise = rates.in_house;
+      if (rates) {
+        line.modeBaseRatesPaise = { ...rates };
+        line.inHouseBaseRatePaise = rates.in_house;
+      }
+      if (change?.showByDefault !== undefined) line.showByDefault = change.showByDefault;
       line.revisionVersion = (line.revisionVersion ?? 0) + 1;
     }
   };

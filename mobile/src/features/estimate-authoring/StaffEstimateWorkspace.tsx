@@ -21,7 +21,7 @@ import { EstimateRoomSetup } from "./EstimateRoomSetup";
 import { StaffEstimateLifecycle } from "./StaffEstimateLifecycle";
 import { EstimateChoice, EstimateSection, EstimateText, EstimateTheme, estimateStyles as styles } from "./EstimateUI";
 import { getStaffCatalogue, getStaffEstimate, getStaffLead, saveStaffEstimate, staffCatalogueKey, staffEstimateKey, staffLeadKey, submitStaffEstimate } from "./staffEstimateApi";
-import { estimateEditable, estimatePaise, previewEstimateTotals, refreshStaffForm, restoreStaffForm, staffFormFingerprint, staffFormInput, validateStaffForm, type StaffEstimateForm } from "./staffEstimateModel";
+import { estimateEditable, estimatePaise, staffLinePayables, previewEstimateTotals, refreshStaffForm, restoreStaffForm, staffFormFingerprint, staffFormInput, validateStaffForm, type StaffEstimateForm } from "./staffEstimateModel";
 import type { EstimateDraft } from "./types";
 
 export function StaffEstimateWorkspace({ leadId, session }: { readonly leadId: string; readonly session: AuthenticatedSession }) {
@@ -116,7 +116,12 @@ function StaffEstimateEditor({ leadId, session }: { readonly leadId: string; rea
   if (lead.isError || saved.isError || !lead.data) return <StateView tone="error" title="Estimate could not be verified" message="Refresh before reviewing or changing this estimate." actionLabel="Refresh estimate" onAction={() => void Promise.all([lead.refetch(), saved.refetch()])} />;
   if (!form) return <StateView tone="error" title="Estimate unavailable" message={error || "The saved estimate could not be verified."} />;
   const editable = canSave && estimateEditable(saved.data ?? null) && !busy && !conflict && !saved.isFetching && !catalogue.isFetching && !catalogue.isError;
-  const totals = previewEstimateTotals(form);
+  const locked = saved.data && !estimateEditable(saved.data) ? saved.data : undefined;
+  const totals = locked ? { subtotalPaise: locked.subtotalPaise ?? Math.round(locked.subtotal * 100),
+    gstPaise: locked.gstPaise ?? Math.round(locked.gst * 100), totalPaise: locked.totalPaise ?? Math.round(locked.total * 100) } : previewEstimateTotals(form);
+  const payables = staffLinePayables(form, locked);
+  const included = form.lines.filter(line => line.included);
+  const vendorOnly = included.length > 0 && included.every(line => line.pricingMode === "pmc" && (line.savedPmc ? line.savedPmc.vendorPayable : Boolean(line.pmcPricing))) && !form.legacyLines.some(line => line.included);
   const activeRoom = form.rooms.some((room) => room.id === roomId) ? roomId : form.rooms[0]?.id ?? "";
   const sourceReady = !canCatalogue || Boolean(catalogue.data && !catalogue.isError);
   const requirementsBlocked = collaborative && (requirements.isPending || requirements.isError || requirements.isFetching || !requirements.data || requirements.data.requirements.some((request) => request.status === "open"));
@@ -140,10 +145,10 @@ function StaffEstimateEditor({ leadId, session }: { readonly leadId: string; rea
     {canCatalogue ? <View style={styles.stack}><Button label="Refresh Configuration items" variant="quiet" disabled={busy || catalogue.isFetching} onPress={() => void catalogue.refetch()} />{catalogue.isError ? <EstimateText error>Current Configuration could not be loaded. Editing is paused until its source is verified.</EstimateText> : null}{catalogue.isPending ? <BrandLoader label="Loading Configuration" tone="dark" /> : null}</View> : null}
     {step === "rooms" ? <EstimateRoomSetup form={form} disabled={!editable} onChange={change} /> : null}
     {step === "scope" && catalogue.data && !catalogue.isError ? <EstimateBasketSelection form={form} catalogue={catalogue.data} disabled={!editable} onChange={change} /> : null}
-    {step === "items" ? <><EstimateItemEditor form={form} activeRoomId={activeRoom} onRoomChange={setRoomId} disabled={!editable || !sourceReady} onChange={change} />{catalogue.data && !catalogue.isError ? <EstimateRecommendations form={form} catalogue={catalogue.data} roomId={activeRoom} session={session} disabled={!editable} onChange={change} /> : null}</> : null}
+    {step === "items" ? <><EstimateItemEditor form={form} activeRoomId={activeRoom} payables={payables} onRoomChange={setRoomId} disabled={!editable || !sourceReady} onChange={change} />{catalogue.data && !catalogue.isError ? <EstimateRecommendations form={form} catalogue={catalogue.data} roomId={activeRoom} session={session} disabled={!editable} onChange={change} /> : null}</> : null}
     {step === "summary" ? <EstimateSection title="Estimate preview">
       <EstimateText>{form.lines.filter((line) => line.included).length + form.legacyLines.filter((line) => line.included).length} included items across {form.rooms.length} rooms.</EstimateText>
-      <EstimateText>Subtotal: {estimatePaise(totals?.subtotalPaise)}</EstimateText><EstimateText>GST: {estimatePaise(totals?.gstPaise)}</EstimateText><EstimateText>Total including GST: {estimatePaise(totals?.totalPaise)}</EstimateText>
+      <EstimateText>Subtotal: {estimatePaise(totals?.subtotalPaise)}</EstimateText><EstimateText>GST: {estimatePaise(totals?.gstPaise)}</EstimateText><EstimateText>{vendorOnly ? "Payable to vendor including all taxes" : "Total including GST"}: {estimatePaise(totals?.totalPaise)}</EstimateText>
       <EstimateText>These are draft calculations. Saving verifies current Configuration and stores the authoritative totals. Open the saved proposal PDF to review the generated estimate.</EstimateText>
       {form.lines.filter((line) => line.included).map((line) => <View key={line.key} style={styles.stack}><EstimateText>{line.roomName} · {line.mainLineName} · {line.quantity} {line.uomName}</EstimateText>{line.estimateNotes?.map((note, index) => <EstimateText key={index}>{note}</EstimateText>)}</View>)}
     </EstimateSection> : null}

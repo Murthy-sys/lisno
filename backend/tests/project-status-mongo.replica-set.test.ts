@@ -1,3 +1,4 @@
+import { buildEstimatePmcPayments } from "../src/domain/estimate-pmc-payment-split.js";
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,7 +49,7 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
-  it("keeps rounded quotation approval current in the selected status evidence", async () => {
+  it.each([false, true])("keeps rounded quotation approval current in selected evidence (PMC %s)", async (withPmc) => {
     await fixture();
     const approvedAt = new Date(CHAT_NOW).toISOString();
     const snapshot = { propertyType: "Villa", bedroomCount: null, rooms: [], scopes: [], selectedMainBasketIds: [],
@@ -56,6 +57,10 @@ describe("project status Mongo snapshot reads", () => {
       lineItems: [{ id: "line-one", source: "legacy", catalogueId: "EL01", included: true, roomName: "Hall",
         specification: "Electrical", unit: "unit", quantity: 1, amount: 100.24, rate: 100.24 }],
       subtotal: 100.24, gst: 18.04, total: 118, subtotalPaise: 10_024, gstPaise: 1_804, totalPaise: 11_800, roundOffPaise: -28 };
+    if (withPmc) {
+      Object.assign(snapshot, buildEstimatePmcPayments(snapshot.lineItems.map(line => ({ ...line, pricingMode: "pmc", pmcVendorPayable: true,
+        amountPaise: 10_024, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 2506 } })), snapshot));
+    }
     const sourceDigest = quotationSnapshotDigest(snapshot);
     const salesApproval = { actorId: "sales-a", pricedRevision: 1, estimateVersion: 4, sourceDigest, approvedAt };
     const estimation = { ...newQuotationLifecycle(1), phase: "post", status: "draft", pricedRevision: 1, designScopeRevision: 1,

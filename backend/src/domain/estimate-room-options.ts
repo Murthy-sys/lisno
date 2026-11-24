@@ -6,6 +6,39 @@ export const ESTIMATE_PROPERTY_TYPES = [
 ] as const;
 
 export const MAX_BEDROOM_COUNT = 50;
+export const ROOM_CATEGORIES = [
+  { id: "kitchen", label: "Kitchen" },
+  { id: "bedroom", label: "Bedroom" },
+  { id: "living", label: "Living & Dining" },
+  { id: "tv_unit", label: "TV Unit" },
+  { id: "balcony", label: "Balcony / Utility" },
+  { id: "foyer", label: "Foyer / Entrance" },
+  { id: "study", label: "Home Office / Study" },
+  { id: "bathroom", label: "Bathroom" },
+  { id: "custom", label: "Custom Room" }
+] as const;
+
+export type RoomCategoryId = typeof ROOM_CATEGORIES[number]["id"];
+const roomCategoryIds = new Set<string>(ROOM_CATEGORIES.map(({ id }) => id));
+
+export function isRoomCategoryId(value: unknown): value is RoomCategoryId {
+  return typeof value === "string" && roomCategoryIds.has(value);
+}
+
+export function roomCategoryForType(typeId: string | null | undefined): RoomCategoryId | undefined {
+  if (typeof typeId !== "string") return undefined;
+  if (typeId === "master" || /^bedroom[1-9]\d*$/.test(typeId)) return "bedroom";
+  if (typeId === "bath_c" || typeId === "bath_m" || /^bath_bedroom[1-9]\d*$/.test(typeId)) return "bathroom";
+  if (/^balcony_bedroom[1-9]\d*$/.test(typeId)) return "balcony";
+  return isRoomCategoryId(typeId) ? typeId : undefined;
+}
+
+export function isMainLineApplicableToRoom(categories: readonly string[] | undefined, roomTypeId: string | null | undefined): boolean {
+  if (categories === undefined || categories.length === 0) return true;
+  const category = roomCategoryForType(roomTypeId);
+  return category !== undefined && categories.includes(category);
+}
+
 export type EstimateRoomDefinition = {
   typeId: string;
   label: string;
@@ -28,7 +61,7 @@ export function getBedroomCount(propertyType: string, explicitCount: number | nu
   if (requiresBedroomCount(propertyType)) return isValidBedroomCount(explicitCount) ? explicitCount : null;
   const fixedCounts: Record<string, number> = { "1bhk": 1, "2bhk": 2, "2.5bhk": 2, "3bhk": 3, "3.5bhk": 3, "4bhk": 4, studio: 0 };
   const normalized = normalizePropertyType(propertyType);
-  return Object.hasOwn(fixedCounts, normalized) ? fixedCounts[normalized] : null;
+  return Object.hasOwn(fixedCounts, normalized) ? (fixedCounts[normalized] ?? null) : null;
 }
 
 export function getEstimateRoomDefinitions(propertyType: string, explicitCount: number | null): EstimateRoomDefinition[] {
@@ -36,6 +69,7 @@ export function getEstimateRoomDefinitions(propertyType: string, explicitCount: 
     { typeId: "living", label: normalizePropertyType(propertyType) === "studio" ? "Living / Sleeping Area" : "Living & Dining", group: "Common Areas", sqft: 300 },
     { typeId: "kitchen", label: "Kitchen", group: "Common Areas", sqft: 120 },
     { typeId: "balcony", label: "Balcony / Utility", group: "Common Areas", sqft: 60 },
+    { typeId: "tv_unit", label: "TV Unit", group: "Other", sqft: 0 },
     { typeId: "foyer", label: "Foyer / Entrance", group: "Common Areas", sqft: 80 },
     { typeId: "study", label: "Home Office/Study", group: "Common Areas", sqft: 120 }
   ];

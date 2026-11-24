@@ -59,7 +59,7 @@ function deferred() {
 
 function setup(options: { ownerId?: string; projectId?: string | null; mutateSave?: (draft: EstimateDraft) => void;
   mutateRevision?: (revision: QuotationRevision) => void; revisionGate?: Promise<void>; saveUnknown?: boolean } = {}) {
-  const state = { estimate: null as EstimateDraft | null };
+  const state = { estimate: null as EstimateDraft | null, pdfRequests: [] as string[] };
   const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -76,6 +76,10 @@ function setup(options: { ownerId?: string; projectId?: string | null; mutateSav
       if (options.saveUnknown) return Response.json({ error: { code: "SAVE_UNCONFIRMED", message: "Save outcome unknown." } }, { status: 503 });
       return response(state.estimate);
     }
+    if (path.endsWith("/pdf")) {
+      state.pdfRequests.push(String(input));
+      return new Response("%PDF-1.7 fixture", { headers: { "Content-Type": "application/pdf" } });
+    }
     if (path === revisionPath) {
       await options.revisionGate;
       if (!state.estimate) throw new Error("Revision requested before the first save");
@@ -85,7 +89,7 @@ function setup(options: { ownerId?: string; projectId?: string | null; mutateSav
       return response(revision);
     }
     if (path === `${estimatePath}/submit` && method === "POST") {
-      state.estimate = { ...state.estimate!, status: "sent_to_client", estimation: { ...state.estimate!.estimation!, status: "sent_to_client" } };
+      state.estimate = { ...state.estimate!, status: "sent_to_client", estimation: { ...state.estimate!.estimation!, status: "sent_to_client", pendingReviewRoundId: "issued-round" } };
       return response(state.estimate);
     }
     if (path === "/projects/project-one/estimate-requirements") return response({ projectId: "project-one", requirementsVersion: 1,
@@ -93,12 +97,14 @@ function setup(options: { ownerId?: string; projectId?: string | null; mutateSav
       canResolve: true, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false });
     if (path === "/estimation/catalogue") return response({ items: [{ id: "basket", name: "Finishes", displayOrder: 1,
       subBaskets: [{ id: "surfaces", basketId: "basket", name: "Surfaces", displayOrder: 1, mainLines: catalogueLines.map((line, index) => ({
-        id: line.id, mainLineId: line.id, basketId: "basket", subBasketId: "surfaces", name: line.name, displayOrder: index,
+        id: line.id, mainLineId: line.id, basketId: "basket", subBasketId: "surfaces", name: line.name, displayOrder: index, showByDefault: true,
         revisionId: `revision-${line.id}`, itemVersion: 2, revisionVersion: 3, itemStatus: "active", revisionStatus: "active",
         uom: { id: "sqft", name: "sq ft", code: "SQFT", decimalScale: 2 },
         modeBaseRatesPaise: { pmc: line.ratePaise, sub_vendor: line.ratePaise, in_house: null }
       })) }] }], ineligibleLineCount: 0, pagination: { total: 1, hasMore: false, offset: 0, limit: 100 } });
-    if (path === "/estimation/catalogue/recommendations") return response({ sources: [] });
+    if (path === "/estimation/catalogue/recommendations") return response({ sources: catalogueLines.map(line => ({
+      mainLineId: line.id, available: true, revisionId: `revision-${line.id}`, itemVersion: 2, revisionVersion: 3, rules: [], guidance: []
+    })) });
     if (path.includes("estimate-plan-change-requests")) return response([]);
     if (path.endsWith("/design-uploads")) return response({ uploads: [], drawings: [] });
     throw new Error(`Unexpected request: ${method} ${path}`);
@@ -157,6 +163,34 @@ describe("First submission from a genuinely new V3 estimate", () => {
     expect(revisionIndex).toBeGreaterThan(saveIndex);
     expect(submitIndex).toBeGreaterThan(revisionIndex);
     expect(data.state.estimate?.lineItems[0]).toMatchObject({ id: "saved-ceiling", amountPaise: 9500, sourceItemVersion: 2, sourceRevisionVersion: 3 });
+  });
+
+  it("opens the persisted Sales draft with unsaved edits, then switches to the exact submitted customer PDF", async () => {
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL() { return "blob:quotation"; }
+      static revokeObjectURL() {}
+    });
+    const data = setup(), user = userEvent.setup();
+    await selectItems(user);
+    const pdf = () => screen.getByRole("button", { name: "View quotation PDF" });
+    expect(screen.queryByRole("button", { name: "View quotation PDF" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity.*Ceiling finish/ }), { target: { value: "3" } });
+    await user.click(pdf());
+    const preview = await screen.findByRole("dialog", { name: "Draft quotation · Version 1" });
+    expect(await within(preview).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    expect(within(preview).getByText(/saved version 1.*edits are unsaved/i)).toBeVisible();
+    expect(data.state.pdfRequests).toEqual(["/api/v1/projects/project-one/quotation/draft/pdf?estimateId=estimate-created&expectedVersion=1"]);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Ceiling finish/ })).toHaveValue(3);
+    await user.click(await openAndComplete(user));
+    await screen.findByText(/Submitted to the client portal for approval/);
+    await user.click(pdf());
+    const submitted = await screen.findByRole("dialog", { name: /Submitted quotation/ });
+    expect(await within(submitted).findByRole("link", { name: "Download PDF" })).toBeVisible();
+    expect(data.state.pdfRequests[1]).toBe("/api/v1/estimates/estimate-created/revisions/issued-round/pdf?audience=client");
+    expect(data.writes().map(request => request.method)).toEqual(["PUT", "PUT", "POST"]);
   });
 
   it("opens and cancels by keyboard without saving or requesting a nonexistent revision", async () => {
@@ -250,6 +284,7 @@ describe("First submission from a genuinely new V3 estimate", () => {
     fireEvent.change(quantity, { target: { value: "7" } });
     await user.click(await openAndComplete(user));
     await screen.findByText(/Save outcome unknown/);
+    expect(screen.queryByRole("button", { name: "View quotation PDF" })).not.toBeInTheDocument();
     expect(quantity).toHaveValue(7);
     expect(screen.getByRole("checkbox", { name: /Ceiling finish/ })).toBeChecked();
     expect(data.requests.filter(request => request.path === revisionPath)).toHaveLength(0);

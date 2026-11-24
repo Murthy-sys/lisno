@@ -1,3 +1,4 @@
+import { estimatePmcPaymentsAreValid } from "../domain/estimate-pmc-payment-split.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import type mongoose from "mongoose";
 import { isDeepStrictEqual } from "node:util";
@@ -83,7 +84,7 @@ function validDecisionEvidence(round: Row, expectedClientId?: string | null): bo
 
 const APPROVED_LINE_FIELDS = [
   "source", "itemType", "clientVisible", "classification", "modeTier", "dimensionsMandatory", "dimensions",
-  "dimensionRule", "pricingMode", "rateSource", "pricingBasis", "componentPricing", "selectedInHouseComponentIds",
+  "dimensionRule", "pricingMode", "pmcVendorPayable", "pmcPaymentSplit", "rateSource", "pricingBasis", "componentPricing", "selectedInHouseComponentIds",
   "catalogueId", "roomId", "roomName", "estimateNotes", "specification", "unit", "rate", "ratePaise", "quantity",
   "included", "amount", "amountPaise", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "sourceItemStatus",
   "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion", "uomId", "uomCode", "uomDecimalScale",
@@ -97,6 +98,7 @@ function comparableLine(value: Row): Row {
 }
 
 function approvalComparableContent(value: Row): Row | null {
+  if (!estimatePmcPaymentsAreValid(value as any)) return null;
   const selectedMainBasketIds = value.selectedMainBasketIds ?? [];
   const subtotalPaise = value.subtotalPaise;
   const gstPaise = value.gstPaise;
@@ -111,6 +113,7 @@ function approvalComparableContent(value: Row): Row | null {
         ? "special" : "standard" })),
     lineItems: (value.lineItems ?? []).map((line: Row) => comparableLine(line)),
     subtotalPaise, gstPaise, totalPaise,
+    ...(value.pmcPaymentSummary === undefined ? {} : { pmcPaymentSummary: value.pmcPaymentSummary }),
     ...(value.roundOffPaise === undefined ? {} : { roundOffPaise: value.roundOffPaise }) };
 }
 

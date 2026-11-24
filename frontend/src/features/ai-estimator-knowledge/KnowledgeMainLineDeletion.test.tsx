@@ -1,3 +1,4 @@
+import { matrixFixture } from "./knowledgeMarginMatrix.test-fixture";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -23,6 +24,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => ({
   listKnowledgeItems: vi.fn(),
   listKnowledgeBaskets: vi.fn(),
   listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeMarginMatrix: vi.fn(async (basketId: string, subBasketId: string) => matrixFixture(basketId, subBasketId)),
     getKnowledgeSubBasketMargins: vi.fn(),
   listKnowledgeMasters: vi.fn(),
   getKnowledgeItem: vi.fn(),

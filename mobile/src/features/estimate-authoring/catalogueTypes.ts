@@ -1,3 +1,5 @@
+import type { EstimatePmcPricing } from "../../../../shared/estimation/estimatePmcPayable";
+import type { RoomCategoryId } from "../../../../shared/estimation/estimateRoomOptions";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateModeTier, EstimatePricingMode } from "./types";
 export interface Pagination { offset: number; hasMore: boolean; }
@@ -25,6 +27,7 @@ export interface EstimationInHousePolicy {
 }
 
 export interface EstimationCatalogueMainLine {
+  pmcPricing?: EstimatePmcPricing | undefined;
   id: string;
   mainLineId: string;
   basketId: string;
@@ -32,6 +35,9 @@ export interface EstimationCatalogueMainLine {
   itemType?: "main_line" | undefined;
   name: string;
   estimateNotes?: string[] | undefined;
+  /** Current Configuration metadata; absent means not a default item. */
+  showByDefault?: boolean | undefined;
+  applicableRoomCategories?: readonly RoomCategoryId[] | undefined;
   displayOrder: number;
   revisionId: string;
   applicableTiers?: EstimateModeTier[] | undefined;

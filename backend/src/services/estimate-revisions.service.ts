@@ -1,3 +1,5 @@
+import { estimatePmcPaymentsAreValid, readEstimatePmcPaymentSplit, readEstimatePmcPaymentSummary } from "../domain/estimate-pmc-payment-split.js";
+import type { ClientQuotationRenditionService, ClientQuotationRenditionRound } from "./client-quotation-rendition.service.js";
 import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { createHash } from "node:crypto";
@@ -35,7 +37,12 @@ const lineSchema = z.object({
   ratePaise: paise.nullable().optional(), amountPaise: paise.nullable().optional(),
   estimateNotes: z.array(text).optional(), clientVisible: z.boolean().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(), classification: z.enum(["standard", "special"]).optional(),
-  modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
+  modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(), pmcVendorPayable: z.literal(true).optional(),
+  pmcPaymentSplit: z.unknown().transform((value, ctx) => {
+    const parsed = readEstimatePmcPaymentSplit(value);
+    if (!parsed) { ctx.addIssue({ code: "custom", message: "Invalid saved PMC payment split." }); return z.NEVER; }
+    return parsed;
+  }).optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(), rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   mainBasketId: optionalId, subBasketId: id.nullable().optional(), mainLineId: optionalId, revisionId: optionalId,
   mainBasketName: optionalText, subBasketName: text.nullable().optional(), mainLineName: optionalText,
@@ -56,6 +63,11 @@ const lineSchema = z.object({
 });
 const snapshotSchema = z.object({
   proposal: estimateProposalSchema.optional(),
+  pmcPaymentSummary: z.unknown().transform((value, ctx) => {
+    const parsed = readEstimatePmcPaymentSummary(value);
+    if (!parsed) { ctx.addIssue({ code: "custom", message: "Invalid saved PMC payment summary." }); return z.NEVER; }
+    return parsed;
+  }).optional(),
   clientName: text, projectName: text, location: text, propertyType: text,
   rooms: z.array(z.object({ id: optionalId, typeId: optionalId, label: optionalText,
     length: money.nullish().transform(value => value ?? undefined), width: money.nullish().transform(value => value ?? undefined),
@@ -67,6 +79,7 @@ const snapshotSchema = z.object({
   selectedMainBasketIds: z.array(id).optional(),
   selectedMainBasketClassifications: z.array(z.object({ mainBasketId: id, classification: z.enum(["standard", "special"]) })).optional()
 }).superRefine((snapshot, ctx) => {
+  if (!estimatePmcPaymentsAreValid(snapshot)) ctx.addIssue({ code: "custom", message: "Saved PMC payments must reconcile." });
   if (snapshot.roundOffPaise === undefined) {
     if ([snapshot.subtotalPaise, snapshot.gstPaise, snapshot.totalPaise].some(value => value !== undefined) &&
       !estimateTotalsReconcile(snapshot)) {
@@ -89,12 +102,13 @@ const summaryFields = "_id estimateId estimateVersion sendGeneration phase workf
 export interface EstimateRevisionsService {
   list(actor: PublicUser, estimateId: string, query?: unknown): Promise<EstimateRevisionPage>;
   detail(actor: PublicUser, estimateId: string, revisionId: string): Promise<EstimateRevisionDetail>;
-  readPdf(actor: PublicUser, estimateId: string, revisionId: string): Promise<StoredDownload>;
+  readPdf(actor: PublicUser, estimateId: string, revisionId: string, audience?: "client"): Promise<StoredDownload>;
 }
 
 export function createEstimateRevisionsService(input: {
   leads: Pick<LeadService, "get">;
   storage: Pick<EstimateClientReviewStorage, "read">;
+  renditions?: ClientQuotationRenditionService;
 }): EstimateRevisionsService {
   async function scope(actor: PublicUser, estimateId: string): Promise<Row> {
     if (!id.safeParse(estimateId).success || !["estimator_sales", "designer", "super_admin"].includes(actor.role)) notFound();
@@ -141,7 +155,12 @@ export function createEstimateRevisionsService(input: {
       };
       return { ...summary(row), snapshot: await presentEstimateInHouseResponse(snapshot) };
     },
-    async readPdf(actor, estimateId, revisionId) {
+    async readPdf(actor, estimateId, revisionId, audience) {
+      if (audience === "client") {
+        const row = await findRound(actor, estimateId, revisionId, "_id estimateId estimateVersion recipientEmail estimateSnapshot");
+        if (!input.renditions) unavailablePdf();
+        return input.renditions.readForRound(row as unknown as ClientQuotationRenditionRound);
+      }
       const row = await findRound(actor, estimateId, revisionId, "+pdfStorageReference pdfFilename pdfMimeType pdfByteSize pdfSha256 sendGeneration");
       if (typeof row.pdfStorageReference !== "string" || !row.pdfStorageReference || row.pdfMimeType !== "application/pdf") unavailablePdf();
       let bytes: Buffer;

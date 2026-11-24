@@ -1,3 +1,4 @@
+import { isMainLineApplicableToRoom } from "../../../../shared/estimation/estimateRoomOptions";
 import { configuredTierUnavailableReason, type ConfiguredLineDraft } from "./configuredEstimate";
 import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import type {
@@ -42,7 +43,7 @@ export interface RecommendationDecision {
   selected: boolean;
   completionRequired: boolean;
   unavailableChildCount: number;
-  unavailableReason?: "price_not_configured" | "configuration_incomplete";
+  unavailableReason?: "price_not_configured" | "configuration_incomplete" | "room_incompatible";
   target: RecommendedLineTarget | null;
   children: RecommendationChildView[];
   reasons: RecommendationReason[];
@@ -182,6 +183,10 @@ export function partitionRoomRecommendationSources({ catalogue, lines, roomId }:
     const location = (locations.get(line.mainLineId) ?? []).find((candidate) =>
       candidate.basketId === line.mainBasketId && candidate.subBasketId === line.subBasketId
     );
+    if (line.roomMismatch) {
+      if (line.persistedId) historical.push({ mainLineId: line.mainLineId, name: line.mainLineName });
+      continue;
+    }
     if (!line.sourceMissing && location && lineMatchesCatalogue(line, location)) current.push(line);
     else if (line.persistedId) historical.push({ mainLineId: line.mainLineId, name: line.mainLineName });
     else outdatedDraft = true;
@@ -206,11 +211,14 @@ function reasonFor(sourceId: string, sourceName: string, rule: EstimationRecomme
   return { ruleId: rule.id, sourceId, sourceName, reason: rule.reason, requirement: rule.requirement };
 }
 
-export function buildRoomRecommendations({ catalogue, lines, roomId, recommendations }: {
+export function buildRoomRecommendations({ catalogue, lines, roomId, roomTypeId, recommendations, includeProbable = false }: {
   catalogue: EstimationCatalogue;
   lines: readonly ConfiguredLineDraft[];
   roomId: string;
+  roomTypeId?: string;
   recommendations: EstimationCatalogueRecommendations;
+  /** Staff estimator opt-in; existing client-style consumers retain required-only choices. */
+  includeProbable?: boolean;
 }): RoomRecommendationView {
   const locations = catalogueLocations(catalogue);
   const partition = partitionRoomRecommendationSources({ catalogue, lines, roomId });
@@ -242,7 +250,7 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
       guidance.push({ id: item.id, sourceId: source.mainLineId, sourceName, name: item.name, reason: item.reason });
     }
     for (const rule of source.rules) {
-      if (rule.requirement !== "must") continue;
+      if (rule.requirement !== "must" && !includeProbable) continue;
       const key = rule.targetKind === "main_line"
         ? `line:${rule.targetMainLineId ?? ""}`
         : `sub-basket:${rule.targetBasketId}:${rule.targetSubBasketId ?? ""}`;
@@ -253,16 +261,22 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
       const targetLocation = rule.targetKind === "main_line" && rule.available
         ? matchingTarget(locations, rule.targetMainLineId, rule.targetBasketId, rule.targetSubBasketId)
         : null;
-      const target = targetLocation && (canSelectTarget(targetLocation.item) ||
+      const targetApplies = targetLocation && isMainLineApplicableToRoom(targetLocation.item.applicableRoomCategories, roomTypeId);
+      const target = targetLocation && targetApplies && (canSelectTarget(targetLocation.item) ||
         isSelected(targetLocation.item.mainLineId, targetLocation.basketId, targetLocation.subBasketId)) ? targetLocation : null;
       const basket = catalogue.items.find((item) => item.id === rule.targetBasketId);
       const subBasket = rule.targetKind === "sub_basket" && rule.targetSubBasketId
         ? basket?.subBaskets.find((item) => item.id === rule.targetSubBasketId)
         : undefined;
+      let incompatibleChildren = 0;
       const children = rule.targetKind === "sub_basket" && rule.available && subBasket
         ? (rule.children ?? []).flatMap((child) => {
           const childLocation = matchingTarget(locations, child.mainLineId, rule.targetBasketId, rule.targetSubBasketId);
           if (!childLocation) return [];
+          if (!isMainLineApplicableToRoom(childLocation.item.applicableRoomCategories, roomTypeId)) {
+            incompatibleChildren++;
+            return [];
+          }
           if (!canSelectTarget(childLocation.item) && !isSelected(child.mainLineId, rule.targetBasketId, rule.targetSubBasketId)) return [];
           if (child.revisionId !== childLocation.item.revisionId ||
             child.revisionVersion !== childLocation.item.revisionVersion ||
@@ -280,7 +294,8 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
         if (!subBasket || (rule.children ?? []).some(child => !matchingTarget(locations, child.mainLineId, rule.targetBasketId, rule.targetSubBasketId))) stale = true;
         else {
           const catalogueChildIds = new Set([...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])]
-            .filter(child => canSelectTarget(child) || isSelected(child.mainLineId, rule.targetBasketId, rule.targetSubBasketId))
+            .filter(child => isMainLineApplicableToRoom(child.applicableRoomCategories, roomTypeId) &&
+              (canSelectTarget(child) || isSelected(child.mainLineId, rule.targetBasketId, rule.targetSubBasketId)))
             .map(child => child.mainLineId));
           const responseChildIds = new Set(children.map(child => child.target.mainLineId));
           if (catalogueChildIds.size !== responseChildIds.size ||
@@ -295,7 +310,8 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
       const unavailableName = rule.targetKind === "main_line" ? "Related item unavailable" : "Related Sub Basket unavailable";
       const name = (rule.targetKind === "main_line" ? targetLocation?.item.name : subBasket?.name)
         ?? rule.targetDisplay?.name ?? unavailableName;
-      const unavailableReason = rule.targetDisplay?.unavailableReason;
+      const unavailableReason = (targetLocation && !targetApplies) || incompatibleChildren > 0
+        ? "room_incompatible" : rule.targetDisplay?.unavailableReason;
       const next: RecommendationDecision = existing ?? {
         key,
         kind: rule.targetKind,

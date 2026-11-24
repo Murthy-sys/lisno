@@ -70,8 +70,9 @@ export const decideEstimateAsClient = (
   `/client/estimates/${encodeURIComponent(estimateId)}/decision`,
   { decision, note, reviewRoundId: review.id, reviewRoundVersion: review.version }
 );
-export const downloadClientEstimatePdf = (estimateId: string, roundId: string) =>
-  apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf?roundId=${encodeURIComponent(roundId)}`);
+export const downloadClientEstimatePdf = (estimateId: string, roundId: string, signal?: AbortSignal) =>
+  apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf?roundId=${encodeURIComponent(roundId)}`,
+    { signal, showGlobalLoader: false });
 
 export const enableEstimateCollaboration = (estimateId: string, expectedVersion: number) =>
   apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/enable-collaboration`, { expectedVersion });

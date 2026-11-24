@@ -1,3 +1,4 @@
+import type { MarginComponent, MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react";
 import {
@@ -36,7 +37,7 @@ function interactiveDragOrigin(target: EventTarget | null) {
   return Boolean(target.closest('input, textarea, select, button, a, label, [role="button"], [role="textbox"], [contenteditable]:not([contenteditable="false"])'));
 }
 
-export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatalogState = { status: "ready" }, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft, emptyCalculationDefaults = false }: {
+export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatalogState = { status: "ready" }, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onMarginEdit, onReplaceMarginComponents, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft, emptyCalculationDefaults = false }: {
   readonly emptyCalculationDefaults?: boolean;
   readonly payload: KnowledgeJsonObject;
   readonly item: KnowledgeItemDetail;
@@ -50,6 +51,8 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
   readonly pendingSaveVersion: number;
   readonly issues: readonly { readonly path: string; readonly message: string }[];
   readonly onChange: (payload: KnowledgeJsonObject) => void;
+  readonly onMarginEdit?: (field: MarginEditField, changed: boolean) => void;
+  readonly onReplaceMarginComponents?: (components: readonly MarginComponent[]) => void;
   readonly onSaveComponent: (payload: KnowledgeJsonObject) => Promise<boolean>;
   readonly onValidationChange: (valid: boolean) => void;
   readonly onPendingChange: (pending: InHousePendingCalculations) => void;
@@ -170,6 +173,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
     current.onChange(movingExisting && Object.hasOwn(next, "inHousePresetComponentIds")
       ? { ...next, inHousePresetComponentIds: readInHouseUsagePolicy(current.payload).componentIds.filter(id => id !== sourceId) } : next);
     const resetIds = movingExisting ? [sourceId, targetId] : [targetId];
+    onReplaceMarginComponents?.(current.components.filter(({ id }) => resetIds.includes(id)));
     const targetKeys = new Set(resetIds.flatMap((id) => [inHouseCalculationKey(id, "labor"), inHouseCalculationKey(id, "material")]));
     setPending((value) => Object.fromEntries(Object.entries(value).filter(([key]) => !targetKeys.has(key))));
     setValidity((value) => Object.fromEntries(Object.entries(value).filter(([key]) => !targetKeys.has(key))));
@@ -268,6 +272,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
 
   function removeComponent(id: string) {
     if (readOnly) return;
+    onReplaceMarginComponents?.(components.filter(component => component.id === id));
     const next = withInHouseComponents(payload, components.filter(component => component.id !== id));
     onChange(Object.hasOwn(payload, "inHousePresetComponentIds")
       ? { ...next, inHousePresetComponentIds: usagePolicy.componentIds.filter(componentId => componentId !== id) } : next);
@@ -380,6 +385,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
             contextLabel={`${editorLabel} · ${cost === "labor" ? "Labor cost" : "Material cost"}`} active={open}
             issuePath={`inHouseComponents.${index}.${cost}`} value={component[cost] as unknown as KnowledgeJsonValue}
             uom={{ ...uom, scopeKey: `${uom.scopeKey}:${component.id}:${cost}` }} readOnly={readOnly} validationAttempt={validationAttempt} issues={issues}
+            onMarginEdit={(bound, changed) => onMarginEdit?.({ mode: "in_house", component: { basketId: component.basketId, subBasketId: component.subBasketId }, key: cost, bound }, changed)}
             onChange={(settings) => update({ ...component, [cost]: settings })} onDirty={() => onChange(payload)}
             onValidationChange={validationPublishers[inHouseCalculationKey(component.id, cost)]!}
             onPendingInputChange={pendingPublishers[inHouseCalculationKey(component.id, cost)]!} pendingSaveVersion={pendingSaveVersion} emptyDefaults={emptyCalculationDefaults} />)}

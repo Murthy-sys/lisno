@@ -44,13 +44,21 @@ export interface EstimateRecommendationsProps {
   popup?: EstimateRecommendationsPopup;
   /** Opt-in Sales feedback, scoped to a stable workspace/room rather than source-query changes. */
   selectionFeedback?: { contextKey: string };
-  /** Sales popup opt-in; only an accepted Add can complete this interaction. */
+  /** Sales popup opt-in; an accepted Add or probable-item Ignore must be acknowledged. */
   completion?: EstimateRecommendationCompletion;
+  /** Optional recommendations are decisions; required-item selection is owned by the workspace. */
+  mode?: "required" | "probable";
+  ignoredTargetIds?: ReadonlySet<string>;
+  onIgnore?: (id: string) => boolean | void;
+  onReopen?: () => void;
 }
 
-/** Receives only authorized non-negotiable suggestions, never unrestricted catalogue data. */
+/** Receives only authorized suggestions, never unrestricted catalogue data. */
 export function EstimateRecommendations({ roomName, contextKey, items, total, offset, onOffsetChange, state,
-  disabled = false, message, onRetry, onAdd, onRemove, popup, selectionFeedback, completion }: EstimateRecommendationsProps) {
+  disabled = false, message, onRetry, onAdd, onRemove, popup, selectionFeedback, completion,
+  mode = "required", ignoredTargetIds, onIgnore, onReopen }: EstimateRecommendationsProps) {
+  const probable = mode === "probable";
+  const title = probable ? "Probable items" : "Non-negotiable recommendations";
   const id = useId();
   const [expandedContext, setExpandedContext] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -64,8 +72,9 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const focusAfterChange = useRef<{ id: string; feedback?: { contextKey: string; anchor: HTMLElement; needsReveal: boolean } } | null>(null);
-  const pendingCompletion = useRef<{ contextKey: string; id: string } | null>(null);
+  const pendingCompletion = useRef<{ contextKey: string; id: string; action: "add" | "ignore" } | null>(null);
   const visible = state !== "ready" || total > 0 || Boolean(message);
+  const unresolved = probable ? completion?.remainingCount ?? items.filter(item => !item.selected && !ignoredTargetIds?.has(item.id)).length : total;
   const expanded = popup ? popup.open === true : open;
   const closePopup = () => {
     pendingCompletion.current = null;
@@ -84,8 +93,9 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
       focusAfterChange.current = null;
       return;
     }
-    // Selection acknowledgement prevents an unchanged ready result from completing an Add.
-    if (!completion.selectedTargetIds.has(pending.id) || state !== "ready" || completion.blocked || disabled || message) return;
+    // A ready response alone cannot acknowledge a selection or an Ignore decision.
+    const acknowledged = pending.action === "ignore" ? ignoredTargetIds?.has(pending.id) : completion.selectedTargetIds.has(pending.id);
+    if (!acknowledged || state !== "ready" || completion.blocked || disabled || message && !probable) return;
     pendingCompletion.current = null;
     if (completion.remainingCount === 0) {
       setClosedReceiptContext(completion.contextKey);
@@ -94,13 +104,13 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
   });
   useEffect(() => {
     if (popup) {
-      if (popup.open === undefined && state === "ready" && total > 0) popup.onOpenChange(true);
+      if (popup.open === undefined && state === "ready" && total > 0 && unresolved > 0) popup.onOpenChange(true);
       return;
     }
-    if (state === "ready" && total > 0 && expandedContext !== contextKey) {
+    if (state === "ready" && total > 0 && unresolved > 0 && expandedContext !== contextKey) {
       setExpandedContext(contextKey); setOpen(true);
     }
-  }, [state, total, expandedContext, contextKey, popup]);
+  }, [state, total, unresolved, expandedContext, contextKey, popup]);
   const feedbackEnabled = Boolean(selectionFeedback);
   useLayoutEffect(() => {
     if (!feedbackEnabled) return;
@@ -170,19 +180,20 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
   if (!visible) return closedReceipt;
   const blocked = disabled || state !== "ready";
   const status = <>
-    {state === "loading" ? <p role="status">Checking non-negotiable recommendations…</p> : null}
+    {state === "loading" ? <p role="status">{probable ? "Checking probable items…" : "Checking non-negotiable recommendations…"}</p> : null}
     {state === "error" || state === "stale" || state === "forbidden" ? <p role="alert">{message ?? (state === "stale" ? "Configuration changed. Refresh recommendations." : state === "forbidden" ? "Recommendations are unavailable for this account." : "Recommendations could not be loaded.")}{onRetry ? <> <button type="button" className={popup ? "ui-button ui-button--secondary" : undefined} onClick={onRetry}>Retry recommendations</button></> : null}</p> : null}
     {state === "ready" && message ? <p role="status">{message}{popup && onRetry ? <> <button type="button" className="ui-button ui-button--secondary" onClick={onRetry}>Refresh recommendations</button></> : null}</p> : null}
   </>;
   const body = <>
-      {selectionFeedback ? <p className="estimate-selection__add-guidance">Add selects this item for this room.</p> : null}
+      {probable ? <p className="estimate-selection__add-guidance">Add includes this item in this room. Ignore leaves your estimate unchanged.</p>
+        : selectionFeedback ? <p className="estimate-selection__add-guidance">Add selects this item for this room.</p> : null}
       <ul className="estimate-selection__list" aria-label="Recommended items" aria-busy={state === "loading"}>
         {items.slice(0, ESTIMATE_SELECTION_PAGE_SIZE).map(item => <li key={item.id}>
           <div className="estimate-selection__copy"><strong>{item.name}</strong>{selectionFeedback && item.context ? <span>{item.context}</span> : null}{item.sourceNames.length ? <span>For {item.sourceNames.join(", ")}</span> : null}{item.message ? <small>{item.message}</small> : null}</div>
-          <button type="button" data-recommendation-item={item.id}
+          <div className="estimate-selection__recommendation-actions"><button type="button" data-recommendation-item={item.id}
             className={popup ? `ui-button ui-button--${item.selected ? "secondary" : "primary"}` : undefined}
-            aria-label={`${item.selected ? "Remove" : item.addLabel ?? "Add"} ${item.name}`}
-            disabled={blocked || item.disabled} onClick={event => {
+            aria-label={`${item.selected ? probable ? "Added" : "Remove" : item.addLabel ?? "Add"} ${item.name}`}
+            disabled={blocked || item.disabled || probable && item.selected} onClick={event => {
               // Remove and rejected changes must not finish an earlier accepted Add.
               pendingCompletion.current = null;
               setClosedReceiptContext(null);
@@ -192,7 +203,7 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
                 return;
               }
               if (!item.selected && popup && completion && (!item.addLabel || item.addLabel === "Add")) {
-                pendingCompletion.current = { contextKey: completion.contextKey, id: item.id };
+                pendingCompletion.current = { contextKey: completion.contextKey, id: item.id, action: "add" };
               }
               focusAfterChange.current = selectionFeedback
                 ? document.activeElement === event.currentTarget
@@ -205,15 +216,28 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
                   ? `Added 1 item: ${item.name} to ${roomName}.`
                   : `${item.name} ${item.selected ? "removed from" : "added to"} ${roomName}.`;
               setAnnouncement({ contextKey: feedbackContext, completionContext, text });
-            }}>{item.selected ? "Remove" : item.addLabel ?? "Add"}</button>
+            }}>{item.selected ? probable ? "Added" : "Remove" : item.addLabel ?? "Add"}</button>
+            {probable && !item.selected ? <button type="button" className={popup ? "ui-button ui-button--secondary" : undefined}
+              aria-label={`${ignoredTargetIds?.has(item.id) ? "Ignored" : "Ignore"} ${item.name}`}
+              disabled={blocked || ignoredTargetIds?.has(item.id) || !onIgnore}
+              onClick={() => {
+                pendingCompletion.current = null;
+                focusAfterChange.current = null;
+                setClosedReceiptContext(null);
+                if (onIgnore?.(item.id) === false) return;
+                focusAfterChange.current = { id: item.id };
+                if (popup && completion) pendingCompletion.current = { contextKey: completion.contextKey, id: item.id, action: "ignore" };
+                setAnnouncement({ contextKey: feedbackContext, completionContext, text: `Ignored ${item.name}. Your estimate is unchanged.` });
+              }}>{ignoredTargetIds?.has(item.id) ? "Ignored" : "Ignore"}</button> : null}
+          </div>
         </li>)}
       </ul>
       <EstimateSelectionPagination total={total} offset={offset} disabled={blocked} onChange={onOffsetChange} label="Recommendation pages" />
   </>;
-  if (!popup) return <section ref={sectionRef} className="estimate-selection estimate-selection--recommendations" aria-label={`Non-negotiable recommendations for ${roomName}`}>
+  if (!popup) return <section ref={sectionRef} className="estimate-selection estimate-selection--recommendations" aria-label={`${title} for ${roomName}`}>
     <div className="estimate-selection__heading">
       <button ref={triggerRef} type="button" className="estimate-selection__disclosure" aria-expanded={open} aria-controls={id}
-        onClick={() => setOpen(value => !value)}>Non-negotiable recommendations{state === "ready" ? ` (${total})` : ""}</button>
+        onClick={() => { if (!open) onReopen?.(); setOpen(value => !value); }}>{title}{state === "ready" ? ` (${total})` : ""}</button>
     </div>
     {status}
     <div id={id} hidden={!open} className="estimate-selection__body">{body}</div>
@@ -225,13 +249,14 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
     <button ref={triggerRef} type="button" className="estimate-recommendations-trigger ui-dialog--reference" aria-expanded={expanded} aria-haspopup="dialog"
       aria-controls={expanded ? id : undefined} onClick={() => {
         if (expanded) { closePopup(); return; }
+        onReopen?.();
         popup.onOpenChange(true);
-      }}>Recommendations{state === "ready" ? ` (${total})` : ""}{triggerStatus ? <span>{triggerStatus}</span> : null}</button>
+      }}>{probable ? "Probable items" : "Recommendations"}{state === "ready" ? ` (${total})` : ""}{triggerStatus ? <span>{triggerStatus}</span> : null}</button>
     {!expanded ? closedReceipt : null}
-    {expanded ? <Dialog title="Non-negotiable recommendations" eyebrow="Estimation" description={roomName}
+    {expanded ? <Dialog title={title} eyebrow="Estimation" description={roomName}
       className="estimate-recommendations-dialog" onClose={closePopup} closeButtonRef={closeRef}
       closeButtonLabel="Close recommendations" initialFocusRef={closeRef} returnFocusRef={triggerRef} fallbackFocusRef={popup.fallbackFocusRef}>
-      <section id={id} ref={sectionRef} role="region" aria-label={`Non-negotiable recommendations for ${roomName}`}
+      <section id={id} ref={sectionRef} role="region" aria-label={`${title} for ${roomName}`}
         className="estimate-selection estimate-recommendations-popup">
         {selectionFeedback ? receipt : null}
         <div className="estimate-recommendations-popup__content">{status}{body}</div>

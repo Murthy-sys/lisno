@@ -11,6 +11,45 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("validates distinct room applicability categories only in Overview", () => {
+    for (const categories of [[], ["bedroom", "living"], ["tv_unit"]]) {
+      expect(validateKnowledgeSectionPayload("overview", { applicableRoomCategories: categories })).toEqual([]);
+    }
+    for (const categories of [null, "living", ["Living & Dining"], ["invalid"], ["kitchen", "kitchen"], [9]]) {
+      expect(validateKnowledgeSectionPayload("overview", { applicableRoomCategories: categories }))
+        .toContainEqual(expect.objectContaining({ path: "payload.applicableRoomCategories", code: "INVALID_ROOM_CATEGORIES" }));
+    }
+    expect(validateKnowledgeSectionPayload("design", { applicableRoomCategories: ["bedroom"] }))
+      .toContainEqual(expect.objectContaining({ code: "UNKNOWN_FIELD" }));
+  });
+
+  it("accepts only P1, P2 and P3 as optional Overview closure priorities", () => {
+    expect(validateKnowledgeSectionPayload("overview", {})).toEqual([]);
+    for (const closurePriority of ["P1", "P2", "P3"]) {
+      expect(validateKnowledgeSectionPayload("overview", { closurePriority })).toEqual([]);
+    }
+    for (const closurePriority of [null, "", "p1", "P4", 1, true, [], {}]) {
+      expect(validateKnowledgeSectionPayload("overview", { closurePriority }))
+        .toContainEqual(expect.objectContaining({ path: "payload.closurePriority", code: "INVALID_ENUM" }));
+    }
+    expect(validateKnowledgeSectionPayload("recommendations", { closurePriority: "P1" }))
+      .toContainEqual(expect.objectContaining({ path: "payload.closurePriority", code: "UNKNOWN_FIELD" }));
+  });
+
+  it("accepts the optional strict default-display boolean in Overview only", () => {
+    for (const payload of [{}, { showByDefault: true }, { showByDefault: false }]) {
+      expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
+    }
+    for (const showByDefault of [null, "true", "false", 0, 1, [], {}]) {
+      expect(validateKnowledgeSectionPayload("overview", { showByDefault }))
+        .toContainEqual(expect.objectContaining({ path: "payload.showByDefault", code: "INVALID_TYPE" }));
+    }
+    for (const section of ["advanced", "pricing", "recommendations"] as const) {
+      expect(validateKnowledgeSectionPayload(section, { showByDefault: true }))
+        .toContainEqual(expect.objectContaining({ path: "payload.showByDefault", code: "UNKNOWN_FIELD" }));
+    }
+  });
+
   it("accepts an optional strict boolean dimension requirement in Overview only", () => {
     for (const payload of [{}, { dimensionsMandatory: true }, { dimensionsMandatory: false }]) expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
     for (const dimensionsMandatory of [null, "true", "false", 0, 1, {}, []]) expect(validateKnowledgeSectionPayload("overview", { dimensionsMandatory }))

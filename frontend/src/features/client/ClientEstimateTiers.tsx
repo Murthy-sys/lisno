@@ -1,3 +1,5 @@
+import { PmcPaymentSummary, PmcPaymentLine, clientEstimateTotalPaise } from "../estimates/estimatePmcPaymentPresentation";
+import { readEstimatePmcPaymentSplit } from "../../../../shared/estimation/estimatePmcPaymentSplit";
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
 import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
@@ -197,7 +199,8 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
 
   return <section className="client-estimate-tiers" aria-labelledby={`estimate-tiers-${projectId}`}>
     <header className="client-estimate-tiers__header"><div><h2 id={`estimate-tiers-${projectId}`}>Working estimate tiers</h2><p>Choose a mode beside each Sub Basket and enter required item dimensions. Your team’s submitted estimate remains separate below.</p></div>
-      <dl>{!detail.isIncomplete && detail.roundOffPaise !== undefined && detail.roundOffPaise !== 0 ? <><dt>Round off</dt><dd>{detail.roundOffPaise < 0 ? "−" : "+"}{money(Math.abs(detail.roundOffPaise))}</dd></> : null}<dt>Current total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(detail.totalPaise)}</dd></dl></header>
+      <dl>{!detail.isIncomplete && detail.roundOffPaise !== undefined && detail.roundOffPaise !== 0 ? <><dt>Round off</dt><dd>{detail.roundOffPaise < 0 ? "−" : "+"}{money(Math.abs(detail.roundOffPaise))}</dd></> : null}<dt>Current total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(clientEstimateTotalPaise(detail))}</dd></dl></header>
+    <PmcPaymentSummary value={detail.pmcPaymentSummary} />
     {!detail.editingAllowed ? <p role="status">{detail.editingBlockReason === "review_pending" ? "A submitted estimate is awaiting review. Request changes below before changing tiers."
       : detail.editingBlockReason === "not_started" ? "Your team has not started the estimate yet." : "This estimate is closed for changes."}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}
@@ -244,7 +247,8 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
       const disabled = !mayEdit || needsReview || dimensionsRequired || Boolean(dimensionsDraft) || Boolean(draft && draft.groupKey !== group.key);
       const label = `${line.mainLineName} in ${line.roomName}`;
       return <div className="client-estimate-tiers__line" key={line.id}>
-        <div className="client-estimate-tiers__line-heading"><div><h3>{line.mainLineName}</h3><p>{line.roomName} · {line.quantity} {line.uomName}</p></div><p>Saved amount incl. GST <strong>{money(estimatePriceIncludingGst(line.amountPaise))}</strong></p></div>
+        <div className="client-estimate-tiers__line-heading"><div><h3>{line.mainLineName}</h3><p>{line.roomName} · {line.quantity} {line.uomName}</p></div><p>Saved amount incl. GST <strong>{money(line.pmcPaymentSplit !== undefined ? readEstimatePmcPaymentSplit(line.pmcPaymentSplit)?.totalPayablePaise ?? null : line.taxInclusiveAmountPaise === undefined ? estimatePriceIncludingGst(line.amountPaise) : line.taxInclusiveAmountPaise)}</strong></p></div>
+        <PmcPaymentLine value={line.pmcPaymentSplit} />
         <EstimateLineTierDetails rowKey={line.id} label={label} tier={tier} description={choice?.source ? choice.description : null} />
         {line.dimensionsMandatory ? dimensionsDraft?.lineId === line.id ? <div>
           <EstimateDimensionsFields label={label} dimensions={dimensionsDraft.dimensions} rule={dimensionsDraft.rule} quantityUnit={line.uomName}
@@ -265,7 +269,7 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
         </fieldset> : null}
         {componentAmount(line, line) ? <EstimateComponentBreakdown pricing={componentAmount(line, line)!} label={label} /> : null}
         {hasGovernedInHousePrice(line) ? <p>Price incl. GST: {money(estimatePriceIncludingGst(lineAggregatePrice(line, line)?.totalPaise))}</p> : null}
-        {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : `Selected amount incl. GST: ${money(estimatePriceIncludingGst(choice?.amountPaise))}`}</p> : null}
+        {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : line.pricingMode === "pmc" ? `Selected vendor payable incl. GST: ${money(estimatePriceIncludingGst(choice?.amountPaise))}. Save to update the full Lisno and vendor payment breakdown.` : `Selected amount incl. GST: ${money(estimatePriceIncludingGst(choice?.amountPaise))}`}</p> : null}
       </div>;
     })}</section>;
     })}

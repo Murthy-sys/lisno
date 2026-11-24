@@ -46,6 +46,61 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it.each([{ editable: false }, { saving: true }])("locks the room picker and displays saved choices during %j", state => {
+    const props = renderPanel({ presentation: "configuration", overviewPayload: { applicableRoomCategories: ["tv_unit", "kitchen"] }, ...state });
+    const picker = screen.getByRole("button", { name: "Applicable rooms / places" });
+    expect(picker).toBeDisabled();
+    expect(picker).toHaveTextContent("Kitchen, TV Unit");
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
+  it.each([[undefined, "No"], [true, "Yes"], [false, "No"], ["true", "No"], [1, "No"], [null, "No"]] as const)("shows default-display value %s as %s without mutating Overview", (showByDefault, expected) => {
+    const props = renderPanel({ presentation: "configuration",
+      overviewPayload: showByDefault === undefined ? overviewPayload : { ...overviewPayload, showByDefault } });
+    const defaults = screen.getByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(defaults).getByRole("radio", { name: expected })).toBeChecked();
+    expect(defaults).toHaveAccessibleDescription("Yes shows this item in the default estimation list. No keeps it available through Add items and recommendations.");
+    expect(defaults.previousElementSibling).toHaveTextContent("Is this main line needed for the client?");
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it("changes only default display by keyboard and keeps its radio group independent of client visibility", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", showDimensions: true });
+    const defaults = screen.getByRole("radiogroup", { name: "Show this Main Line by default?" });
+    within(defaults).getByRole("radio", { name: "No" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("showByDefault");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, showByDefault: true });
+    expect(within(defaults).getByRole("radio", { name: "Yes" })).toHaveFocus();
+
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, showByDefault: true }} /></main>);
+    expect(within(defaults).getByRole("radio", { name: "Yes" })).toBeChecked();
+    const visibility = screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" });
+    expect(within(visibility).getByRole("radio", { name: "Yes" })).toBeChecked();
+    await user.keyboard("{ArrowRight}");
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("showByDefault");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, showByDefault: false });
+    expect(props.onOverviewDirty).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ editable: false }, { saving: true }])("locks the saved default-display choice when Overview is unavailable for edits (%j)", async state => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", overviewPayload: { ...overviewPayload, showByDefault: true }, ...state });
+    const defaults = screen.getByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(defaults).getByRole("radio", { name: "Yes" })).toBeChecked();
+    within(defaults).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    await user.click(within(defaults).getByRole("radio", { name: "No" }));
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["default", "procurement-basket"] as const)("does not expose default display in the %s presentation", presentation => {
+    renderPanel({ presentation, overviewPayload: { ...overviewPayload, showByDefault: true } });
+    expect(screen.queryByRole("radiogroup", { name: "Show this Main Line by default?" })).not.toBeInTheDocument();
+  });
+
   it("explains Configuration visibility accurately when the keyboard changes the client choice", async () => {
     const user = userEvent.setup();
     const props = renderPanel({ presentation: "configuration", showDimensions: true, showApplicableTiers: true });

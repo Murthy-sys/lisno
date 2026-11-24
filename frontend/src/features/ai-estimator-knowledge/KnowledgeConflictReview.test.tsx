@@ -203,6 +203,20 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
 });
 
 describe("KnowledgeConflictReview Mode Overview projection", () => {
+  it.each([[{}, "All rooms and places"], [{ applicableRoomCategories: ["bedroom", "living"] }, "Bedroom, Living & Dining"],
+    [{ applicableRoomCategories: ["legacy"] }, "Saved selection needs review"]])("reviews server room applicability (%j)", (payload, expected) => {
+    render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}
+      payload={payload as import("./knowledgeTypes").KnowledgeJsonObject} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    expect(screen.getByText("Applicable rooms / places").parentElement).toHaveTextContent(String(expected));
+  });
+
+  it.each([[undefined, "No"], [true, "Yes"], [false, "No"], ["true", "Saved configuration needs review"], [1, "Saved configuration needs review"], [null, "Saved configuration needs review"]] as const)("reviews server default-display value %s as %s", (showByDefault, expected) => {
+    render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}
+      payload={showByDefault === undefined ? {} : { showByDefault }} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(within(review).getByText("Show this Main Line by default?").parentElement).toHaveTextContent(`Show this Main Line by default?${expected}`);
+  });
+
   it.each([[{}, "Signature"], [{ applicableTiers: [] }, "None"], [{ applicableTiers: ["premium", "functional"] }, "Premium, Functional"]])("shows saved tier selection in Overview conflict review (%j)", (payload, expected) => {
     render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}
       payload={payload as import("./knowledgeTypes").KnowledgeJsonObject} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);

@@ -1,0 +1,9 @@
+# PMC switch in Main Line Client view
+
+The [approved specification](../specs/2026-11-23-main-line-client-preview-pmc-design.md) governs this change.
+
+1. **Implement the drawer interaction.** The frontend owner first inspects the current diff for KnowledgeMainLineClientPreview.tsx, then updates its use of EstimatePricingModeControl. In Standard, render the editable PMC-only variant for an included line. Start with vendor pricing, switch to the selected tier’s PMC pricing when enabled, and restore vendor pricing when disabled. In Special, retain the existing full controls. Reuse the drawer’s local state and existing pricing and availability logic.
+2. **Verify the behavior.** The test owner updates KnowledgeMainLineClientPreview.test.tsx. With unequal vendor and PMC rates, open the default drawer, toggle the named switch by keyboard, verify its checked state and price in both directions, then close and reopen to verify reset. Cover a missing PMC rate, excluded and hidden lines, existing Special controls, and absence of writes. Implementation and test authoring may proceed in parallel in Mode A because they own separate files and the expected behavior is settled.
+3. **Check the integrated result.** After both changes, the primary agent reviews the diff for preview-only scope and runs the focused preview tests, frontend typecheck and build. Inspect the rendered drawer at mobile and desktop widths for focus visibility, switch operation and overflow. Run git diff --check and report results, including any limitations.
+
+Approved and implemented in Mode A. All 21 preview tests passed. Frontend typecheck, production build, and git diff --check passed. Chromium checks with synthetic catalogue data confirmed keyboard focus, price changes in both directions, and drawer width at 390 and 1440 px. Build output: frontend/dist.

@@ -28,8 +28,8 @@ describe("quotation recommendation contract", () => {
 
   it("sends filters to candidate search so results beyond the loaded page can match", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: { items: [], total: 0, offset: 0, limit: 20 } }));
-    await getQuotationCandidates("project-a", "Primer", 40, { mainBasketId: "painting", subBasketId: "walls" });
+    await getQuotationCandidates("project-a", "Primer", 40, { roomId: "kitchen-2", mainBasketId: "painting", subBasketId: "walls" });
     const url = new URL(String(fetch.mock.calls[0][0]), "http://localhost");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ search: "Primer", offset: "40", limit: "20", mainBasketId: "painting", subBasketId: "walls" });
+    expect(Object.fromEntries(url.searchParams)).toEqual({ search: "Primer", offset: "40", limit: "20", roomId: "kitchen-2", mainBasketId: "painting", subBasketId: "walls" });
   });
 });
