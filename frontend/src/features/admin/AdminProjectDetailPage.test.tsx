@@ -1,13 +1,19 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import axe from "axe-core";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import type { ProjectFinanceBucket } from "../../api/types";
-import { renderApp } from "../../test/render";
+import { renderApp, renderWithQuery } from "../../test/render";
+import { AuthProvider } from "../../auth/AuthProvider";
+import { AdminProjectDetailPage } from "./AdminProjectDetailPage";
+import { adminProjectKeys } from "./adminProjectsApi";
+import { procurementProjectIdentityKeys } from "./procurementProjectIdentityApi";
 import { server } from "../../test/server";
 
 beforeEach(() => {
@@ -97,6 +103,18 @@ function installSuperAdminFinanceSession(additionalPermissions: PermissionCode[]
       })
     )
   );
+}
+
+async function openProjectView(user: ReturnType<typeof userEvent.setup>, name: "Project details" | "Client persona" | "Assignments") {
+  const navigation = await screen.findByRole("group", { name: "Project views" });
+  await user.click(within(navigation).getByRole("button", { name }));
+}
+
+async function openProjectTool(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const trigger = await screen.findByText("More project tools", { selector: "summary" });
+  if (!trigger.closest("details")?.open) await user.click(trigger);
+  const navigation = screen.getByRole("group", { name: "Project tools" });
+  await user.click(within(navigation).getByRole("button", { name }));
 }
 
 const approvedPendingProject = {
@@ -564,12 +582,13 @@ describe("AdminProjectDetailPage", () => {
     expect(within(projectDetails).getByText("Client-approved value (incl. GST)")).toBeVisible();
     expect(within(projectDetails).getByText(/₹2,78,704/)).toBeVisible();
     for (const name of ["Project summary", "Quick summary"]) {
-      const summary = screen.getByRole("region", { name });
-      expect(within(summary).getByText("Client-approved value (incl. GST)")).toBeVisible();
-      expect(within(summary).getByText("₹2,78,704")).toBeVisible();
+      expect(screen.queryByRole("region", { name })).not.toBeInTheDocument();
     }
+    expect(screen.getAllByText("₹2,78,704")).toHaveLength(1);
     expect(screen.queryByText("₹9,99,999")).not.toBeInTheDocument();
+    expect(financeRequests).toEqual([]);
 
+    await openProjectTool(userEvent.setup(), "Finance");
     expect(await screen.findByRole("heading", { name: "murthy-1 finance" })).toBeVisible();
     const breakdown = screen.getByRole("list", { name: "Cost budget breakdown" });
     expect(within(breakdown).getByText("Approved cost budget").closest("li"))
@@ -623,6 +642,7 @@ describe("AdminProjectDetailPage", () => {
 
     renderApp(["/admin/projects/project-murthy"]);
 
+    await openProjectTool(userEvent.setup(), "Finance");
     expect(await screen.findByText(/financial details do not match this project's approved estimate/i))
       .toBeVisible();
     expect(screen.getByRole("heading", { name: "murthy-1 finance" })).toBeVisible();
@@ -662,14 +682,16 @@ describe("AdminProjectDetailPage", () => {
 
     const details = await screen.findByRole("region", { name: "Project details" });
     expect(within(details).getByText("Approved baseline unavailable")).toBeVisible();
-    expect(within(screen.getByRole("region", { name: "Project summary" })).getByText("Approved baseline unavailable")).toBeVisible();
-    expect(within(screen.getByRole("region", { name: "Quick summary" })).getByText("Approved baseline unavailable")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project summary" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Quick summary" })).not.toBeInTheDocument();
+    expect(financeRequests).toBe(0);
+    await openProjectTool(userEvent.setup(), "Finance");
     expect(screen.getByText(/approved Estimate baseline is missing/i)).toBeVisible();
     expect(screen.queryByText(/₹10,62,000/)).not.toBeInTheDocument();
     expect(financeRequests).toBe(0);
   });
 
-  it("puts people first, separates responsibilities and reuses assignment queries across navigation", async () => {
+  it("starts with project facts and loads assignment and operational tools only when visited", async () => {
     installSuperAdminFinanceSession(["execution.worker_assignment.override"]);
     let projectRequests = 0;
     let taskRequests = 0;
@@ -720,27 +742,37 @@ describe("AdminProjectDetailPage", () => {
     renderApp(["/admin/projects/project-murthy"]);
 
     const identity = await screen.findByRole("region", { name: "Project details" });
-    const finance = await screen.findByRole("heading", { name: "murthy-1 finance" });
-    const workflow = await screen.findByRole("heading", { name: "Entire project workflow" });
-    const people = screen.getByRole("region", { name: "People & assignments" });
     const user = userEvent.setup();
+    expect(identity).toBeVisible();
+    expect(screen.queryByRole("region", { name: "People & assignments" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "murthy-1 finance" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Entire project workflow" })).not.toBeInTheDocument();
+    expect(taskRequests).toBe(0);
+    expect(sectionAssignmentRequests).toBe(0);
+    await openProjectView(user, "Assignments");
+    const people = screen.getByRole("region", { name: "People & assignments" });
     const navigation = within(people).getByRole("group", { name: "Assignment responsibility" });
-    expect(within(navigation).getByRole("button", { name: "Procurement" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(people).queryByRole("heading", { name: "Design plan assignment" })).not.toBeInTheDocument();
-    expect(within(people).queryByRole("heading", { name: "Work sections" })).not.toBeInTheDocument();
-    await user.click(within(navigation).getByRole("button", { name: "Designer" }));
+    expect(within(navigation).getByRole("button", { name: "Designer" })).toHaveAttribute("aria-pressed", "true");
     expect(within(people).getByRole("heading", { name: "Design plan assignment" })).toBeVisible();
-    await user.click(within(navigation).getByRole("button", { name: "Trade teams" }));
-    expect(await within(people).findByRole("heading", { name: "Work sections" })).toBeVisible();
+    expect(within(navigation).queryByRole("button", { name: "Trade teams" })).not.toBeInTheDocument();
+    await user.click(within(navigation).getByRole("button", { name: "Procurement" }));
+    await waitFor(() => expect(taskRequests).toBe(1));
+    expect(sectionAssignmentRequests).toBe(0);
+    await openProjectTool(user, "Trade teams");
+    expect(await screen.findByRole("heading", { name: "Work sections" })).toBeVisible();
+    await openProjectTool(user, "Finance");
+    expect(await screen.findByRole("heading", { name: "murthy-1 finance" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Work sections" })).not.toBeInTheDocument();
+    await openProjectTool(user, "Entire workflow");
+    expect(await screen.findByRole("heading", { name: "Entire project workflow" })).toBeVisible();
     await user.click(screen.getByRole("link", { name: "Manage people" }));
-    expect(within(navigation).getByRole("button", { name: "Procurement" })).toHaveAttribute("aria-pressed", "true");
-    const follows = Node.DOCUMENT_POSITION_FOLLOWING;
-    expect(identity.compareDocumentPosition(finance) & follows).toBeTruthy();
-    expect(finance.compareDocumentPosition(workflow) & follows).toBeTruthy();
-    expect(people.compareDocumentPosition(identity) & follows).toBeTruthy();
+    expect(within(navigation).getByRole("button", { name: "Designer" })).toHaveAttribute("aria-pressed", "true");
     expect(projectRequests).toBe(1);
-    expect(taskRequests).toBe(1);
     expect(sectionAssignmentRequests).toBe(1);
+    // Reopening a visited editor reuses the mounted query and its draft.
+    const reads = taskRequests;
+    await user.click(within(navigation).getByRole("button", { name: "Procurement" }));
+    expect(taskRequests).toBe(reads);
   });
 });
 
@@ -769,9 +801,13 @@ it("enables initial-approved Designer assignment and keeps the unchanged approva
   expect(within(details).getByText("Designer quotation").closest("div")).toHaveTextContent("No changes; initial approval current");
   expect(within(details).getByText("₹2,78,704")).toBeVisible();
   expect(screen.queryByText("₹9,99,999")).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Assign Designer" })).toHaveAttribute("href", "#design-assignment-title");
+  const assign = screen.getByRole("link", { name: "Assign Designer" });
+  expect(assign).toHaveAttribute("href", "#design-assignment-title");
+  expect(financeCalls).toBe(0);
+  await userEvent.click(assign);
   await screen.findByRole("option", { name: /Designer One/ });
   expect(screen.getByRole("combobox", { name: "Assigned Designer" })).toBeEnabled();
+  await openProjectTool(userEvent.setup(), "Finance");
   await waitFor(() => expect(financeCalls).toBe(1));
 });
 
@@ -798,6 +834,7 @@ it("does not load current finance from a stale historical approval during a quot
     http.get("/api/v1/finance/projects/project-murthy", () => { financeCalls += 1; return HttpResponse.json({ data: approvedPendingBucket }); })
   );
   renderApp(["/admin/projects/project-murthy"]);
+  await openProjectTool(userEvent.setup(), "Finance");
   expect(await screen.findByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).toBeVisible();
   expect(financeCalls).toBe(0);
 });
@@ -826,12 +863,19 @@ it("keeps Procurement and Project Manager people separate and preserves a select
   );
   const user = userEvent.setup();
   renderApp(["/admin/projects/project-1"]);
-  const people = await screen.findByRole("region", { name: "People & assignments" });
+  await openProjectView(user, "Assignments");
+  const people = screen.getByRole("region", { name: "People & assignments" });
+  await user.click(within(people).getByRole("button", { name: "Procurement" }));
   const procurementSelect = await within(people).findByRole("combobox", { name: "Assigned Procurement" });
   expect(within(procurementSelect).getByRole("option", { name: /Priya Procurement/ })).toBeVisible();
   expect(within(procurementSelect).queryByRole("option", { name: /Maya/ })).not.toBeInTheDocument();
   expect(within(people).queryByRole("combobox", { name: "Project Manager" })).not.toBeInTheDocument();
   await user.selectOptions(procurementSelect, procurement.id);
+  await openProjectView(user, "Client persona");
+  expect(screen.queryByRole("combobox", { name: "Assigned Procurement" })).not.toBeInTheDocument();
+  await openProjectView(user, "Project details");
+  await openProjectView(user, "Assignments");
+  expect(within(people).getByRole("combobox", { name: "Assigned Procurement" })).toHaveValue(procurement.id);
   const navigation = within(people).getByRole("group", { name: "Assignment responsibility" });
   await user.click(within(navigation).getByRole("button", { name: "Project Manager" }));
   const managerSelect = await within(people).findByRole("combobox", { name: "Project Manager" });
@@ -883,7 +927,7 @@ it.each([false, true])("closes an active project from the header without a curre
   const trigger = await screen.findByRole("button", { name: "Close project" });
   expect(readinessRequests).toBe(0);
   expect(decisions).toHaveLength(0);
-  if (includeFinancePermissions) expect(screen.getByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).toBeVisible();
+  expect(screen.queryByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).not.toBeInTheDocument();
   await user.click(trigger);
   const dialog = screen.getByRole("alertdialog", { name: "Close murthy-1?" });
   const confirm = within(dialog).getByRole("button", { name: "Close project" });
@@ -937,4 +981,254 @@ it("keeps header closure blocked until the completion service confirms readiness
   expect(within(dialog).getByRole("button", { name: "Close project" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(decisions).toBe(0);
+});
+
+
+describe("Simple Super Admin project views", () => {
+  it("shows facts once and presents captured Client persona through keyboard-operable views", async () => {
+    installSuperAdminFinanceSession();
+    server.use(http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: {
+      ...project, projectNumber: "Lisno000042", nativePlace: "Mysuru", preferredLanguage: "kannada",
+      languagesKnown: ["kannada", "english"], category: "self_use", tentativeBudget: "Flexible up to 12 lakh after scope review",
+      closureTentativeDate: "2027-02-14"
+    } })));
+    const user = userEvent.setup();
+    const view = renderApp(["/admin/projects/project-1"]);
+    const details = await screen.findByRole("region", { name: "Project details" });
+    expect(within(details).getByText("₹9,75,000")).toBeVisible();
+    expect(screen.getAllByText("₹9,75,000")).toHaveLength(1);
+    expect(screen.queryByRole("region", { name: "Quick summary" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("figure", { name: "Interior reference" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Team members" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByText("More project tools", { selector: "summary" }).closest("details")).not.toHaveAttribute("open");
+    const navigation = screen.getByRole("group", { name: "Project views" });
+    const viewButtons = within(navigation).getAllByRole("button");
+    expect(viewButtons).toHaveLength(3);
+    ["Project details", "Client persona", "Assignments"].forEach((name, index) => expect(viewButtons[index]).toHaveAccessibleName(name));
+    const personaButton = within(navigation).getByRole("button", { name: "Client persona" });
+    personaButton.focus();
+    await user.keyboard("{Enter}");
+    expect(personaButton).toHaveAttribute("aria-pressed", "true");
+    const persona = screen.getByRole("region", { name: "Client persona" });
+    expect(screen.queryByRole("region", { name: "Project details" })).not.toBeInTheDocument();
+    for (const text of ["Asha Shah", "asha@example.com", "+91 90000 00000", "Mysuru", "Self use", "Flexible up to 12 lakh after scope review", "14 Feb 2027"]) {
+      expect(within(persona).getByText(text)).toBeVisible();
+    }
+    expect(within(persona).getByText("Preferred language").closest("div")).toHaveTextContent("Kannada");
+    expect(within(persona).getByText("Languages known").closest("div")).toHaveTextContent("English");
+    expect(within(persona).queryByText(/expected completion|handover/i)).not.toBeInTheDocument();
+    expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    await openProjectView(user, "Project details");
+    const technical = screen.getByText("Technical details", { selector: "summary" });
+    await user.click(technical);
+    expect(screen.getByText(`System ID: ${project.id}`)).toBeVisible();
+  });
+
+  it("keeps unrecorded persona fields explicit and hides unauthorized tools", async () => {
+    installSuperAdminFinanceSession([], false);
+    server.use(http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: project })));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects/project-1"]);
+    await openProjectView(user, "Client persona");
+    const persona = screen.getByRole("region", { name: "Client persona" });
+    expect(within(persona).getByText("Native place").closest("div")).toHaveTextContent("Not captured");
+    expect(within(persona).getByText("Tentative closure date").closest("div")).toHaveTextContent("Not captured");
+    expect(within(persona).queryByRole("textbox")).not.toBeInTheDocument();
+    const tools = screen.queryByText("More project tools", { selector: "summary" });
+    if (tools) {
+      await user.click(tools);
+      const group = screen.getByRole("group", { name: "Project tools" });
+      for (const name of ["Finance", "Trade teams", "Entire workflow"]) expect(within(group).queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it.each([false, true])("keeps Client response history secondary and respects response-task access=%s", async canRead => {
+    installSuperAdminFinanceSession(canRead ? ["estimation.client_response_tasks.read"] : [], false);
+    server.use(http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: {
+      ...project, estimate: { ...project.estimate, hasPendingClientResponseTask: true,
+        clientReview: { id: "round-1", sendGeneration: 2, estimateVersion: 4, version: 3,
+          deliveryStatus: "sent", deliveryAttemptCount: 1, deliveredAt: "2026-08-23T10:00:02.000Z", status: "pending" } }
+    } })));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects/project-1"]);
+    await screen.findByRole("region", { name: "Project details" });
+    expect(screen.queryByRole("region", { name: "Client response" })).not.toBeInTheDocument();
+    await openProjectTool(user, "Client response");
+    const response = screen.getByRole("region", { name: "Client response" });
+    expect(within(response).getByText("Pending")).toBeVisible();
+    expect(within(response).getByText("Email sent")).toBeVisible();
+    if (canRead) expect(within(response).getByRole("link", { name: "Review Client response" })).toHaveAttribute("href", "/admin/client-responses/round-1");
+    else {
+      expect(within(response).queryByRole("link", { name: "Review Client response" })).not.toBeInTheDocument();
+      expect(within(response).getByText("Read-only Client response history")).toBeVisible();
+    }
+  });
+
+  it("opens an existing Designer anchor without opening unrelated tools", async () => {
+    installSuperAdminFinanceSession(["design.plan_assignment.manage"]);
+    let financeRequests = 0;
+    server.use(
+      http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: approvedPendingProject })),
+      http.get("/api/v1/admin/designers", () => HttpResponse.json({ data: [{ id: "designer-one", name: "Designer One", email: "designer@example.test" }] })),
+      http.get("/api/v1/finance/projects/project-murthy", () => { financeRequests++; return HttpResponse.json({ data: approvedPendingBucket }); })
+    );
+    renderApp(["/admin/projects/project-murthy#design-assignment-title"]);
+    const navigation = await screen.findByRole("group", { name: "Project views" });
+    expect(within(navigation).getByRole("button", { name: "Assignments" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("combobox", { name: "Assigned Designer" })).toBeEnabled();
+    expect(screen.getByText("More project tools", { selector: "summary" }).closest("details")).not.toHaveAttribute("open");
+    expect(financeRequests).toBe(0);
+  });
+
+  it("clears the prior project's persona and view when navigating to a different project", async () => {
+    installSuperAdminFinanceSession(["projects.procurement_identity.manage"], false);
+    const other = { ...project, id: "project-2", name: "Garden studio", location: "",
+      client: { name: "Second Client", email: "second@example.test", mobile: "2222222222" },
+      nativePlace: "Madurai", estimate: { ...project.estimate, id: "estimate-2", total: 432100 } };
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: { ...project, location: "", nativePlace: "Mysuru" } })),
+      http.get("/api/v1/admin/projects/project-2", () => HttpResponse.json({ data: other })),
+      http.get("/api/v1/admin/projects/:projectId/procurement-identity", ({ params }) => HttpResponse.json({ data: {
+        projectId: params.projectId, city: params.projectId === project.id ? { name: "Pune", key: "pune" } : { name: "Chennai", key: "chennai" },
+        programManagerId: null, version: 1
+      } }))
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<MemoryRouter initialEntries={["/admin/projects/project-1"]}><AuthProvider>
+      <Link to="/admin/projects/project-2">Open second fixture project</Link>
+      <Routes><Route path="/admin/projects/:projectId" element={<AdminProjectDetailPage />} /></Routes>
+    </AuthProvider></MemoryRouter>);
+    expect(await screen.findByText("Pune")).toBeVisible();
+    await openProjectView(user, "Client persona");
+    expect(screen.getByText("Mysuru")).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Open second fixture project" }));
+    expect(await screen.findByRole("heading", { name: "Garden studio" })).toBeVisible();
+    const details = screen.getByRole("region", { name: "Project details" });
+    expect(await within(details).findByText("Chennai")).toBeVisible();
+    expect(screen.queryByText("Pune")).not.toBeInTheDocument();
+    expect(within(details).getByText("₹4,32,100")).toBeVisible();
+    expect(screen.queryByText("₹9,75,000")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mysuru")).not.toBeInTheDocument();
+    await openProjectView(user, "Client persona");
+    expect(screen.getByText("Second Client")).toBeVisible();
+    expect(screen.getByText("Madurai")).toBeVisible();
+    expect(screen.queryByText("Asha Shah")).not.toBeInTheDocument();
+  });
+
+  it("removes previously visible project data after a denied refresh", async () => {
+    installSuperAdminFinanceSession([], false);
+    let denied = false;
+    server.use(http.get("/api/v1/admin/projects/project-1", () => denied
+      ? HttpResponse.json({ error: { code: "FORBIDDEN", message: "Project access changed." } }, { status: 403 })
+      : HttpResponse.json({ data: project })));
+    const view = renderApp(["/admin/projects/project-1"]);
+    await screen.findByRole("region", { name: "Project details" });
+    denied = true;
+    await view.queryClient.invalidateQueries({ queryKey: adminProjectKeys.detail("project-1") });
+    expect(await screen.findByText("Project access changed.")).toBeVisible();
+    expect(screen.queryByText("₹9,75,000")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Project views" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Super Admin Project city", () => {
+  it("shows the captured city read-only when legacy location is blank, with loading and accessible markup", async () => {
+    installSuperAdminFinanceSession(["projects.procurement_identity.manage"], false);
+    let releaseIdentity!: () => void;
+    const identityReady = new Promise<void>(resolve => { releaseIdentity = resolve; });
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: { ...project, location: "  " } })),
+      http.get("/api/v1/admin/projects/project-1/procurement-identity", async () => {
+        await identityReady;
+        return HttpResponse.json({ data: { projectId: project.id, city: { name: "Bengaluru", key: "bengaluru" }, programManagerId: null, version: 1 } });
+      })
+    );
+    const view = renderApp(["/admin/projects/project-1"]);
+    const details = await screen.findByRole("region", { name: "Project details" });
+    expect(await within(details).findByText("Loading project city…")).toBeVisible();
+    await act(async () => { releaseIdentity(); });
+    expect(await within(details).findByText("Bengaluru")).toBeVisible();
+    expect(within(details).getByText("Project city").closest("div")).toHaveTextContent("Bengaluru");
+    expect(within(details).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(details).queryByRole("combobox")).not.toBeInTheDocument();
+    expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("preserves a captured legacy Location without requesting the city identity", async () => {
+    installSuperAdminFinanceSession(["projects.procurement_identity.manage"], false);
+    let identityRequests = 0;
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: project })),
+      http.get("/api/v1/admin/projects/project-1/procurement-identity", () => {
+        identityRequests++;
+        return HttpResponse.json({ data: { projectId: project.id, city: { name: "Mumbai", key: "mumbai" }, programManagerId: null, version: 1 } });
+      })
+    );
+    renderApp(["/admin/projects/project-1"]);
+    const details = await screen.findByRole("region", { name: "Project details" });
+    expect(within(details).getByText("Location").closest("div")).toHaveTextContent("Pune");
+    expect(within(details).queryByText("Project city")).not.toBeInTheDocument();
+    expect(identityRequests).toBe(0);
+  });
+
+  it("keeps absent and foreign cities explicit, retries failures, and hides cached cities after failed or denied refreshes", async () => {
+    installSuperAdminFinanceSession(["projects.procurement_identity.manage"], false);
+    let response: "missing" | "foreign" | "saved" | "failed" | "denied" = "missing";
+    let identityRequests = 0;
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: { ...project, location: "" } })),
+      http.get("/api/v1/admin/projects/project-1/procurement-identity", () => {
+        identityRequests++;
+        if (response === "failed" || response === "denied") return HttpResponse.json({ error: {
+          code: response === "denied" ? "FORBIDDEN" : "UNAVAILABLE", message: "Identity unavailable."
+        } }, { status: response === "denied" ? 403 : 503 });
+        return HttpResponse.json({ data: {
+          projectId: response === "foreign" ? "project-foreign" : project.id,
+          city: response === "missing" ? null : response === "foreign" ? { name: "Foreign city", key: "foreign" } : { name: "Bengaluru", key: "bengaluru" },
+          programManagerId: null, version: 1
+        } });
+      })
+    );
+    const user = userEvent.setup();
+    const view = renderApp(["/admin/projects/project-1"]);
+    const details = await screen.findByRole("region", { name: "Project details" });
+    await waitFor(() => expect(within(details).getByText("Project city").closest("div")).toHaveTextContent("Not captured"));
+    response = "foreign";
+    await act(async () => { await view.queryClient.invalidateQueries({ queryKey: procurementProjectIdentityKeys.detail(project.id) }); });
+    expect(await within(details).findByText("Project city could not be loaded.")).toBeVisible();
+    expect(screen.queryByText("Foreign city")).not.toBeInTheDocument();
+    response = "saved";
+    await user.click(within(details).getByRole("button", { name: "Retry project city" }));
+    expect(await within(details).findByText("Bengaluru")).toBeVisible();
+    expect(identityRequests).toBe(3);
+    for (const failure of ["failed", "denied"] as const) {
+      response = failure;
+      await act(async () => { await view.queryClient.invalidateQueries({ queryKey: procurementProjectIdentityKeys.detail(project.id) }); });
+      expect(await within(details).findByText("Project city could not be loaded.")).toBeVisible();
+      expect(screen.queryByText("Bengaluru")).not.toBeInTheDocument();
+      response = "saved";
+      await user.click(within(details).getByRole("button", { name: "Retry project city" }));
+      expect(await within(details).findByText("Bengaluru")).toBeVisible();
+    }
+    expect(identityRequests).toBe(7);
+  });
+
+  it("does not fetch or expose cached city data without identity permission", async () => {
+    installSuperAdminFinanceSession([], false);
+    let identityRequests = 0;
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: { ...project, location: "" } })),
+      http.get("/api/v1/admin/projects/project-1/procurement-identity", () => { identityRequests++; return HttpResponse.json({ data: null }); })
+    );
+    const view = renderApp(["/admin/projects/project-1"]);
+    view.queryClient.setQueryData(procurementProjectIdentityKeys.detail(project.id), {
+      projectId: project.id, city: { name: "Cached city", key: "cached" }, programManagerId: null, version: 1
+    });
+    const details = await screen.findByRole("region", { name: "Project details" });
+    expect(within(details).getByText("Project city").closest("div")).toHaveTextContent("Not available");
+    expect(screen.queryByText("Cached city")).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Retry project city" })).not.toBeInTheDocument();
+    expect(identityRequests).toBe(0);
+  });
 });

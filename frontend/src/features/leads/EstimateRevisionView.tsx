@@ -23,6 +23,8 @@ function SavedLine({ line, showHierarchy }: { line: RevisionLine; showHierarchy:
     <div className="estimate-revision-line__identity"><h4>{title}</h4>
       <p className="estimate-revision-line__meta"><span>{savedText(line.roomName) ?? "Room not recorded"}</span>
         {line.classification ? <span>{line.classification === "special" ? "Special" : "Standard"}</span> : null}
+        {line.source === "configuration" && line.itemType !== "temporary" && line.customizationType
+          ? <span>Item type: {line.customizationType === "custom" ? "Custom" : "Standard"}</span> : null}
         {line.pricingMode ? <span>{modeNames[line.pricingMode]}</span> : null}
         {line.modeTier ? <span>{line.modeTier[0]!.toUpperCase()}{line.modeTier.slice(1)}</span> : null}
         <span>{line.included ? "Included" : "Not included"}</span>

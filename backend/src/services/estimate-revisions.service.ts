@@ -37,6 +37,7 @@ const lineSchema = z.object({
   ratePaise: paise.nullable().optional(), amountPaise: paise.nullable().optional(),
   estimateNotes: z.array(text).optional(), clientVisible: z.boolean().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(), classification: z.enum(["standard", "special"]).optional(),
+  customizationType: z.enum(["standard", "custom"]).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(), pmcVendorPayable: z.literal(true).optional(),
   pmcPaymentSplit: z.unknown().transform((value, ctx) => {
     const parsed = readEstimatePmcPaymentSplit(value);

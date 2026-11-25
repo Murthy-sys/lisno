@@ -2428,6 +2428,63 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
   });
 });
 
+describe("estimate Main Line customization metadata", { timeout: 30_000 }, () => {
+  it("round-trips independent room labels and preserves omitted values without changing any mode's pricing or design rules", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/customization-rooms/estimate";
+    const rooms = [
+      { id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }, { id: "room-three", label: "Study" }
+    ];
+    const lines = [configuredLine({ quantity: 1.25 }),
+      configuredLine({ roomId: "room-two", roomName: "Bedroom", classification: "special", pricingMode: "pmc", quantity: 2, ratePaise: 5003, customizationType: "custom" }),
+      configuredLine({ roomId: "room-three", roomName: "Study", quantity: 3, customizationType: "standard" })];
+    await configureFixturePrices(lines);
+    const command = (lineItems: unknown[], expectedVersion?: number) => ({ ...estimateInput(lineItems, ["basket-a"], expectedVersion), rooms });
+    const firstResponse = await request(server).put(path).set(bearer("estimator")).send(command(lines));
+    expect(firstResponse.status, JSON.stringify(firstResponse.body)).toBe(200);
+    const first = firstResponse.body.data;
+    expect(first.lineItems.map((line: any) => line.customizationType)).toEqual(["standard", "custom", "standard"]);
+    const persisted = (await EstimateModel.findById(first.id).select("+lineItems.pmcMarginSnapshot").lean())!;
+    const snapshot = toEstimateSnapshot(persisted as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
+    expect(snapshot.lineItems.map(line => line.customizationType)).toEqual(["standard", "custom", "standard"]);
+    const savedCommands = lines.map((line, index) => ({ ...line, id: first.lineItems[index].id }));
+    const changed = (await request(server).put(path).set(bearer("estimator")).send(command(savedCommands.map((line, index) => ({ ...line, customizationType: index === 1 ? "standard" : "custom" })), first.version)).expect(200)).body.data;
+    const stripLabel = ({ customizationType: _label, ...line }: Record<string, unknown>) => line;
+    expect(changed.lineItems.map(stripLabel)).toEqual(first.lineItems.map(stripLabel));
+    for (const field of ["subtotalPaise", "gstPaise", "totalPaise", "roundOffPaise", "pmcPaymentSummary"]) expect(changed[field]).toEqual(first[field]);
+    const after = (await EstimateModel.findById(first.id).select("+lineItems.pmcMarginSnapshot").lean())!;
+    expect(after.lineItems.map(stripLabel)).toEqual(persisted.lineItems.map(stripLabel));
+    const older = (await request(server).put(path).set(bearer("estimator")).send(command([...savedCommands].reverse().map(({ customizationType: _label, ...line }) => line), changed.version)).expect(200)).body.data;
+    expect(older.lineItems.map((line: any) => [line.roomId, line.customizationType])).toEqual([
+      ["room-three", "custom"], ["room-two", "standard"], ["room-one", "custom"]
+    ]);
+    expect((await request(server).get(path).set(bearer("estimator")).expect(200)).body.data.lineItems).toEqual(older.lineItems);
+    expect(snapshot.lineItems.map(line => line.customizationType)).toEqual(["standard", "custom", "standard"]);
+  });
+
+  it("retains saved choices through deselection and rejects invalid labels, stale saves and unauthorized actors", async () => {
+    await configureFixturePrices();
+    const { server } = app();
+    const path = "/api/v1/leads/customization-guards/estimate";
+    const line = configuredLine({ customizationType: "custom" });
+    const first = (await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200)).body.data;
+    const command = { ...line, id: first.lineItems[0].id };
+    const stored = await EstimateModel.findById(first.id).lean();
+    for (const customizationType of ["special", "", null, true]) {
+      await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...command, customizationType }], ["basket-a"], first.version)).expect(400);
+    }
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([directTemporaryLine({ customizationType: "custom" })], ["basket-a"], first.version)).expect(400);
+    await request(server).put(path).set(bearer("designer")).send(estimateInput([{ ...command, customizationType: "standard" }], ["basket-a"], first.version)).expect(404);
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...command, customizationType: "standard" }], ["basket-a"], first.version + 1)).expect(409);
+    expect(await EstimateModel.findById(first.id).lean()).toEqual(stored);
+    const { customizationType: _label, ...older } = command;
+    const excluded = (await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...older, included: false }], ["basket-a"], first.version)).expect(200)).body.data;
+    expect(excluded.lineItems[0]).toMatchObject({ customizationType: "custom", included: false, amountPaise: 0 });
+    const restored = (await request(server).put(path).set(bearer("estimator")).send(estimateInput([older], ["basket-a"], excluded.version)).expect(200)).body.data;
+    expect(restored.lineItems[0]).toMatchObject({ customizationType: "custom", included: true, amountPaise: first.lineItems[0].amountPaise });
+  });
+});
+
 describe("estimate bedroom-count metadata", { timeout: 30_000 }, () => {
   it("round-trips independent counts without requiring selected bedrooms or changing saved rooms and prices", async () => {
     await configureFixturePrices();
@@ -2642,6 +2699,24 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
   }
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
     selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
+
+  it("keeps exact component pricing and selection when only the customization label changes", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseUsage": "estimator", "payload.inHousePresetComponentIds": ["component-electrical"] } });
+    const { server } = app();
+    const path = "/api/v1/leads/customization-components/estimate";
+    const input = line({ selectedInHouseComponentIds: undefined, ratePaise: null, quantity: 2 });
+    const preview = (await request(server).post(`${path}/in-house-preview`).set(bearer("estimator")).send(componentPreviewInput(input)).expect(200)).body.data.lines[0];
+    const priced = { ...input, pricingBasis: "in_house_components_v1", componentPricingFingerprint: preview.aggregatePricing.inputFingerprint };
+    const first = (await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced])).expect(200)).body.data;
+    const stored = (await EstimateModel.findById(first.id).lean())!;
+    const changed = (await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...priced, id: first.lineItems[0].id, customizationType: "custom" }], ["basket-a"], first.version)).expect(200)).body.data;
+    const after = (await EstimateModel.findById(first.id).lean())!;
+    expect(changed.lineItems[0]).toMatchObject({ customizationType: "custom", aggregatePricing: first.lineItems[0].aggregatePricing });
+    expect(after.lineItems[0].componentPricing).toEqual(stored.lineItems[0].componentPricing);
+    expect(after.lineItems[0].selectedInHouseComponentIds).toEqual(stored.lineItems[0].selectedInHouseComponentIds);
+    expect(after.totalPaise).toBe(stored.totalPaise);
+  });
 
   it("uses the saved subset for two unequal projects and returns only combined prices across preview, save, read and catalogue", async () => {
     const cost = (baseRatePaise: number, startingMarkupBps: number) => ({ ...settings(baseRatePaise), lowQuantityLimit: "0", impactBps: 0, startingMarkupBps });

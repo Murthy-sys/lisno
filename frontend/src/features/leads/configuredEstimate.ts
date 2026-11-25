@@ -6,7 +6,7 @@ import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentPricingMatchesLine, 
 import { calculateDimensionQuantity, estimateDimensionRulesEqual, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise, EstimationInHouseComponent, EstimationTierPricing, EstimationBasePriceAvailability } from "./estimationCatalogueApi";
-import type { ConfiguredEstimateLine, EstimateClassification, EstimatePricingMode, EstimateRateSource } from "./leadsApi";
+import type { ConfiguredEstimateLine, EstimateClassification, EstimateCustomizationType, EstimatePricingMode, EstimateRateSource } from "./leadsApi";
 import { estimationLinePricingMode, isEstimationLinePriceVisible, isEstimationTierBaseAvailable, isPositiveConfiguredPrice } from "./estimationCatalogueVisibility";
 
 export interface ConfiguredEstimateRoom {
@@ -30,6 +30,7 @@ export interface ConfiguredLineDraft {
   mainBasketName: string;
   itemType: "main_line" | "temporary";
   classification?: EstimateClassification;
+  customizationType?: EstimateCustomizationType;
   pricingMode?: EstimatePricingMode;
   modeTier?: KnowledgeModeTier;
   applicableTiers?: KnowledgeModeTier[];
@@ -184,6 +185,10 @@ export function updateConfiguredLinePricing(
   change: Partial<ConfiguredLineDraft>,
   inheritedClassification: EstimateClassification = "standard"
 ): ConfiguredLineDraft {
+  // An estimate label is independent of every pricing input and saved calculation.
+  if (change.customizationType !== undefined && Object.keys(change).every(key => key === "customizationType")) {
+    return { ...line, customizationType: change.customizationType };
+  }
   // Prices can only change through an explicit Configuration choice, never rate entry.
   if (configuredInHouseGoverned(line)) {
     const { selectedInHouseComponentIds: _ignoredSelection, ...governedChange } = change;
@@ -414,6 +419,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     mainBasketName: line.mainBasketName,
     itemType: line.itemType ?? "main_line",
     classification: line.classification ?? "standard",
+    ...(line.itemType !== "temporary" ? { customizationType: line.customizationType ?? "standard" } : {}),
     pricingMode: line.pricingMode,
     modeTier: line.modeTier ?? "signature",
     selectedInHouseComponentIds: line.selectedInHouseComponentIds,
@@ -468,6 +474,7 @@ function newLine(
     mainBasketId: basket.id,
     mainBasketName: basket.name,
     itemType: mainLine.itemType ?? "main_line",
+    ...(mainLine.itemType !== "temporary" ? { customizationType: "standard" } : {}),
     subBasketId: subBasket?.id ?? null,
     subBasketName: subBasket?.name ?? null,
     mainLineId: mainLine.mainLineId,
@@ -610,6 +617,7 @@ export function buildConfiguredLines(
       included: saved.included,
       recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
       classification: saved.classification,
+      ...(saved.itemType === "main_line" ? { customizationType: saved.customizationType ?? "standard" } : {}),
       sourceItemStatus: fresh.itemStatus,
       sourceRevisionStatus: fresh.revisionStatus,
       sourceItemVersion: fresh.itemVersion,

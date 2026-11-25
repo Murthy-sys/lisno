@@ -109,7 +109,7 @@ describe("EstimateClientReviewRound persistence model", () => {
       id: "pmc-line", source: "configuration", catalogueId: "pmc-main", mainLineId: "pmc-main", roomId: "room-a",
       mainBasketId: "basket-a", subBasketId: "sub-a", revisionId: "revision-a", uomId: "uom-a",
       mainBasketName: "Painting", subBasketName: "Walls", mainLineName: "Wall work", uomName: "Square feet",
-      specification: null, classification: "special", pricingMode: "pmc", rateSource: "configuration", pmcVendorPayable: true,
+      specification: null, classification: "special", customizationType: "custom", pricingMode: "pmc", rateSource: "configuration", pmcVendorPayable: true,
       ratePaise: 12000, amountPaise: 120000, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 30000 }
     })), { subtotalPaise: 120000, gstPaise: 21600, totalPaise: 141600 });
     const saved = { ...original, ...payments, lineItems: payments.lineItems.map(({ pmcMarginSnapshot: _private, ...line }) => line),
@@ -118,6 +118,8 @@ describe("EstimateClientReviewRound persistence model", () => {
     await expect(document.validate()).resolves.toBeUndefined();
     expect(document.toObject().estimateSnapshot.pmcPaymentSummary).toEqual(payments.pmcPaymentSummary);
     expect(document.toObject().estimateSnapshot.lineItems[0]?.pmcPaymentSplit).toEqual(payments.lineItems[0]?.pmcPaymentSplit);
+    expect(document.toObject().estimateSnapshot.lineItems[0]?.customizationType).toBe("custom");
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.customizationType").options.immutable).toBe(true);
     expect(document.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("pmcMarginSnapshot");
     expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.pmcPaymentSummary").options.immutable).toBe(true);
     await expect(round({ estimateSnapshot: { ...saved, pmcPaymentSummary: { ...payments.pmcPaymentSummary, customerTotalPayablePaise: 177001 } } }).validate()).rejects.toThrow();

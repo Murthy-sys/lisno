@@ -13,6 +13,7 @@ export function configuredLineEditingFingerprint(line: ConfiguredLineDraft): str
   return canonicalJson({
     included: line.included, quantity: line.quantity, rateInput: line.rateInput,
     classification: line.classification ?? "standard", modeTier: line.modeTier ?? "signature",
+    customizationType: line.customizationType ?? "standard",
     pricingMode: line.pricingMode ?? null, rateSource: line.rateSource ?? "manual",
     selectedInHouseComponentIds: [...(line.selectedInHouseComponentIds ?? [])].sort(),
     configurationPricingChanged: Boolean(line.configurationPricingChanged),
@@ -37,6 +38,7 @@ export function estimateDraftFingerprint(draft: EstimateDraftInput): string {
       revisionId: line.revisionId, uomId: line.uomId, included: line.included,
       quantity: line.quantity, ratePaise: line.ratePaise ?? null, modeTier: line.modeTier ?? "signature",
       classification: line.classification ?? "standard", pricingMode: line.pricingMode ?? null,
+      customizationType: line.customizationType ?? "standard",
       rateSource: line.rateSource ?? "manual", dimensions: line.dimensions ? canonicalEstimateDimensions(line.dimensions) ?? line.dimensions : null,
       selectedInHouseComponentIds: [...(line.selectedInHouseComponentIds ?? [])].sort(),
       recommendationSourceMainLineIds: [...(line.recommendationSourceMainLineIds ?? [])].sort()

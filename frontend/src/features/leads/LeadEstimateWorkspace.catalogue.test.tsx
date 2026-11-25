@@ -21,7 +21,7 @@ vi.mock("./estimateRevisionsApi", async importOriginal => ({
 
 beforeEach(() => { authState.role = "estimator_sales"; });
 const json = (data: unknown) => Response.json({ data });
-function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false, overrides: Partial<EstimateDraft> = {}) {
+function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false, overrides: Partial<EstimateDraft> = {}, completeRecommendations = false) {
   const rooms = [
     { id: "living", typeId: "living", label: "Living & Dining", sqft: 200, length: 20, width: 10 },
     { id: "kitchen", typeId: "kitchen", label: "Kitchen", sqft: 80, length: 10, width: 8 }
@@ -61,7 +61,10 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
     if (url.includes("/estimation/catalogue?")) return catalogueUnavailable
       ? Response.json({ error: { code: "UNAVAILABLE", message: "Catalogue unavailable" } }, { status: 503 })
       : json({ ...catalogue, pagination: { total: 2, offset: 0, limit: 100, hasMore: false } });
-    if (url.includes("/estimation/catalogue/recommendations?")) return json({ sources: [] });
+    if (url.includes("/estimation/catalogue/recommendations?")) return json({ sources: completeRecommendations
+      ? catalogue.items.flatMap(basket => basket.subBaskets.flatMap(sub => sub.mainLines.map(line => ({ mainLineId: line.mainLineId,
+        available: true, revisionId: line.revisionId, itemVersion: line.itemVersion, revisionVersion: line.revisionVersion, rules: [], guidance: [] }))))
+      : [] });
     if (url.endsWith("/leads/lead/estimate/in-house-preview") && method === "POST" && aggregatePreview) {
       const body = JSON.parse(String(init?.body)) as { lines: Array<{ key: string }> };
       previews.push(body);
@@ -98,6 +101,52 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
+  it("saves independent Main Line labels, preserves them on refresh and removal, and restores them on reload", async () => {
+    const user = userEvent.setup();
+    const fixture = setup("draft", true, {}, true);
+    for (const basket of fixture.catalogue.items) for (const sub of basket.subBaskets) for (const line of sub.mainLines) {
+      line.itemVersion = 1; line.revisionVersion = 1;
+    }
+    const view = fixture.mount();
+    const custom = () => screen.getByRole("radio", { name: /^Custom item type.*Gypsum ceiling in Living/ });
+    await waitFor(() => expect(custom()).toBeEnabled());
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ });
+    const initialRate = (rate as HTMLInputElement).value;
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Gypsum ceiling/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Custom item type.*Wall paint/ })).toBeDisabled();
+    await user.click(custom());
+    expect(custom()).toBeChecked();
+    expect(rate).toHaveValue(initialRate);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(fixture.saves).toHaveLength(1));
+    expect(fixture.saves[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "ceiling", customizationType: "custom",
+      classification: "standard", pricingMode: "sub_vendor", ratePaise: 9900, quantity: 2 })]);
+    await screen.findByText("Estimate draft saved.");
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(custom()).toBeEnabled());
+    expect(custom()).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Include Gypsum ceiling/ }));
+    expect(custom()).toBeDisabled();
+    expect(custom()).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Include Gypsum ceiling/ }));
+    expect(custom()).toBeEnabled();
+    expect(custom()).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Include Wall paint/ }));
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Wall paint/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(fixture.saves).toHaveLength(2));
+    expect(fixture.saves[1]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "ceiling", customizationType: "custom" }),
+      expect.objectContaining({ mainLineId: "paint-line", customizationType: "standard" })
+    ]));
+    await screen.findByText("Estimate draft saved.");
+    view.unmount();
+    fixture.mount();
+    expect(await screen.findByRole("radio", { name: /^Custom item type.*Gypsum ceiling/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Wall paint/ })).toBeChecked();
+  });
+
   it("shows the configured description on a selected line in the authenticated Sales workspace", async () => {
     const user = userEvent.setup();
     const fixture = setup("draft", true);

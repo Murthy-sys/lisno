@@ -2782,3 +2782,91 @@
   .configured-estimate-line__amount,
   .configured-estimate-line__more { grid-row: 3; }
 }
+
+/* Estimation keeps its primary controls together; narrow desktop panes scroll locally. */
+@media (min-width: 768px) {
+  .configured-estimate-line--inline-controls .configured-estimate-line__primary {
+    position: relative;
+    flex-wrap: nowrap;
+    gap: 3px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding: 5px;
+    margin: -5px;
+    scroll-padding-inline: 5px;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__choice {
+    flex: 1 0 140px;
+    min-width: 140px;
+    grid-template-columns: 20px 28px minmax(0, 1fr);
+    padding: 0 4px 0 0;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__group {
+    flex: 0 0 auto;
+    max-width: none;
+    padding-inline: 1px;
+    border-left: 1px solid #d9e1d7;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__choices {
+    flex-wrap: nowrap;
+    gap: 2px;
+  }
+
+  .configured-estimate-line--inline-controls .estimate-classification label {
+    padding-inline: 1px;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__fields {
+    flex: 0 0 auto;
+    grid-template-columns: 76px 100px minmax(100px, max-content) 24px;
+    width: max-content;
+    max-width: none;
+    margin-inline-start: 0;
+    padding-left: 6px;
+    border-left: 1px solid #d9e1d7;
+    gap: 3px;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__fields > * {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__amount {
+    padding-right: 0;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__amount > span {
+    contain: inline-size;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__amount output {
+    white-space: nowrap;
+  }
+}
+
+@media (min-width: 768px) and (pointer: fine) {
+  .configured-estimate-line--inline-controls .configured-estimate-line__pmc-controls .estimate-tier-info-button {
+    width: 24px;
+    min-width: 24px;
+    height: 28px;
+  }
+
+  .configured-estimate-line--inline-controls .configured-estimate-line__pmc-switch {
+    margin-right: 0;
+  }
+}
+
+@media (min-width: 768px) and (pointer: coarse) {
+  .configured-estimate-line--inline-controls .configured-estimate-line__fields {
+    grid-template-columns: 130px 120px minmax(128px, max-content) 44px;
+  }
+}

@@ -27,6 +27,21 @@ const revision: EstimateRevisionDetail = {
 const props = { revision, view: "builder" as const, activeRoomId: null, onSelectRoom: vi.fn(), navigation: <nav aria-label="Test revisions">Current estimate</nav> };
 
 describe("EstimateRevisionView", () => {
+  it("shows recorded Main Line customization as read-only metadata without inferring old values", () => {
+    const saved = structuredClone(revision);
+    saved.snapshot.lineItems[0]!.customizationType = "custom";
+    saved.snapshot.lineItems[1]!.customizationType = "standard";
+    const view = render(<EstimateRevisionView {...props} revision={saved} />);
+    expect(screen.getByRole("article", { name: "Archived ceiling" })).toHaveTextContent("Item type: Custom");
+    expect(screen.getByRole("article", { name: "Archived paint" })).toHaveTextContent("Item type: Standard");
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    view.rerender(<EstimateRevisionView {...props} />);
+    expect(screen.queryByText(/Item type:/)).not.toBeInTheDocument();
+    saved.snapshot.lineItems[0]!.itemType = "temporary";
+    view.rerender(<EstimateRevisionView {...props} revision={saved} />);
+    expect(screen.getByRole("article", { name: "Archived ceiling" })).not.toHaveTextContent("Item type:");
+  });
+
   it.each([true, false])("shows the frozen combined price and exact total without component details (included=%s)", included => {
     const aggregate = structuredClone(revision);
     aggregate.snapshot.lineItems = [{ ...aggregate.snapshot.lineItems[0]!, mainLineId: "main-a", quantity: 3,

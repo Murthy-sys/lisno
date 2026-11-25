@@ -61,6 +61,89 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
 }
 const chosen = () => configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
 
+describe("Main Line customization labels", () => {
+  const props = () => ({
+    rooms, activeRoomId: rooms[0]!.id, onSelectRoom: vi.fn(), catalogue,
+    selectedMainBasketIds: new Set(["basket-pop"]), lines: chosen(), onUpdateLine: vi.fn(),
+    onRefreshAvailableItems: vi.fn(), refreshingAvailableItems: false,
+    roomTotal: () => 0, roomIcons: {}, moneyPaise, editable: true, pricingModeEditable: false
+  });
+
+  it("uses native keyboard radios and emits only metadata without requiring pricing-mode access", async () => {
+    const user = userEvent.setup();
+    const input = props();
+    const view = render(<ConfiguredEstimateBuilder {...input} />);
+    const group = screen.getByRole("group", { name: /Item type for .*POP false ceiling in Living & Dining/ });
+    const standard = within(group).getByRole("radio", { name: /^Standard item type/ });
+    expect(standard).toBeChecked();
+    expect(standard).toBeEnabled();
+    expect(screen.queryByRole("group", { name: /Item type for .*Cove in Gypsum/ })).not.toBeInTheDocument();
+    standard.focus();
+    await user.keyboard("{ArrowRight}");
+    const mainLine = input.lines.find(line => line.itemType === "main_line")!;
+    expect(input.onUpdateLine).toHaveBeenLastCalledWith(mainLine.key, { customizationType: "custom" });
+    view.rerender(<ConfiguredEstimateBuilder {...input} lines={input.lines.map(line => line.key === mainLine.key
+      ? { ...line, customizationType: "custom" } : line)} />);
+    const custom = within(group).getByRole("radio", { name: /^Custom item type/ });
+    expect(custom).toBeChecked();
+    expect(standard).not.toBeChecked();
+    custom.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(input.onUpdateLine).toHaveBeenLastCalledWith(mainLine.key, { customizationType: "standard" });
+    expect(input.onUpdateLine).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the same Main Line in different rooms in independent radio groups", async () => {
+    const user = userEvent.setup();
+    const first = props();
+    const mainLine = first.lines.find(line => line.itemType === "main_line")!;
+    first.lines = [{ ...mainLine, customizationType: "custom" }];
+    const secondRoom = { ...rooms[0]!, id: "another-room", label: "Guest living room" };
+    const secondLine = { ...mainLine, key: `${secondRoom.id}:${mainLine.mainLineId}`, roomId: secondRoom.id, roomName: secondRoom.label };
+    const onSecondUpdate = vi.fn();
+    render(<><ConfiguredEstimateBuilder {...first} />
+      <ConfiguredEstimateBuilder {...first} rooms={[secondRoom]} activeRoomId={secondRoom.id} lines={[secondLine]} onUpdateLine={onSecondUpdate} /></>);
+    const firstGroup = screen.getByRole("group", { name: /Item type for .*in Living & Dining/ });
+    const secondGroup = screen.getByRole("group", { name: /Item type for .*in Guest living room/ });
+    const firstCustom = within(firstGroup).getByRole("radio", { name: /^Custom item type/ });
+    const secondCustom = within(secondGroup).getByRole("radio", { name: /^Custom item type/ });
+    expect(firstCustom).toBeChecked();
+    expect(within(secondGroup).getByRole("radio", { name: /^Standard item type/ })).toBeChecked();
+    expect(firstCustom.getAttribute("name")).not.toBe(secondCustom.getAttribute("name"));
+    await user.click(secondCustom);
+    expect(onSecondUpdate).toHaveBeenCalledWith(secondLine.key, { customizationType: "custom" });
+    expect(first.onUpdateLine).not.toHaveBeenCalled();
+    expect(firstCustom).toBeChecked();
+  });
+
+  it("retains an excluded saved choice and does not include a row through its radios", async () => {
+    const user = userEvent.setup();
+    const input = props();
+    const mainLine = input.lines.find(line => line.itemType === "main_line")!;
+    render(<ConfiguredEstimateBuilder {...input} itemPresentation="catalogue"
+      lines={[{ ...mainLine, persistedId: "saved-main", included: false, customizationType: "custom" }]} />);
+    const group = screen.getByRole("group", { name: /Item type for .*POP false ceiling/ });
+    expect(within(group).getByRole("radio", { name: /^Custom item type/ })).toBeChecked();
+    within(group).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    await user.click(within(group).getByRole("radio", { name: /^Standard item type/ }));
+    expect(input.onUpdateLine).not.toHaveBeenCalled();
+  });
+
+  it.each(["loading", "stale", "error"] as const)("disables metadata editing when current Configuration is %s", availableItemsState => {
+    render(<ConfiguredEstimateBuilder {...props()} availableItemsState={availableItemsState} />);
+    const group = screen.getByRole("group", { name: /Item type for .*POP false ceiling/ });
+    within(group).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+  });
+
+  it.each(["read-only", "refreshing", "missing-source"] as const)("keeps %s rows locked", state => {
+    const input = props();
+    render(<ConfiguredEstimateBuilder {...input} editable={state !== "read-only"} refreshingAvailableItems={state === "refreshing"}
+      lines={input.lines.map(line => state === "missing-source" ? { ...line, persistedId: `saved-${line.key}`, sourceMissing: true } : line)} />);
+    const group = screen.getByRole("group", { name: /Item type for .*POP false ceiling/ });
+    within(group).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+  });
+});
+
 describe("required recommendation selection", () => {
   it("explains the source and protects inclusion while preserving quantity and tier editing", async () => {
     const user = userEvent.setup();
@@ -211,9 +294,9 @@ describe("Sales direct catalogue browsing", () => {
     expect(within(screen.getByRole("navigation", { name: "Jump to Main Basket" })).getByRole("button", { name: /POP/ })).toBeVisible();
   });
 
-  it("retains the price and quantity of a persisted incompatible room assignment and allows removal", async () => {
+  it("retains price, quantity and a disabled item type for an incompatible room assignment and allows removal", async () => {
     const current = structuredClone(catalogue);
-    const saved = { ...chosen()[0]!, persistedId: "original", included: true, quantity: 7, rateInput: "123.45" };
+    const saved = { ...chosen()[0]!, persistedId: "original", included: true, quantity: 7, rateInput: "123.45", customizationType: "custom" as const };
     current.items[0]!.subBaskets[0]!.mainLines[0]!.applicableRoomCategories = ["tv_unit"];
     const [retained] = buildConfiguredLines(current, rooms, new Set(["basket-pop"]), [saved]);
     expect(retained).toMatchObject({ persistedId: "original", included: true, roomMismatch: true, quantity: 7, rateInput: "123.45" });
@@ -222,8 +305,13 @@ describe("Sales direct catalogue browsing", () => {
     render(<LiveBuilder availableCatalogue={current} initialLines={[retained!]} itemPresentation="catalogue" onLinesChange={changes} />);
     const review = screen.getByRole("region", { name: "Room applicability review" });
     expect(review).toHaveTextContent("Before GST: ₹864.15");
+    const itemType = within(review).getByRole("group", { name: /Item type for .*POP false ceiling in Living & Dining/ });
+    expect(within(itemType).getByRole("radio", { name: /^Custom item type/ })).toBeChecked();
+    within(itemType).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    await userEvent.click(within(itemType).getByRole("radio", { name: /^Standard item type/ }));
+    expect(changes).not.toHaveBeenCalled();
     await userEvent.click(within(review).getByRole("button", { name: "Remove POP false ceiling from Living & Dining" }));
-    expect(changes.mock.lastCall?.[0][0]).toMatchObject({ persistedId: "original", included: false, quantity: 7, rateInput: "123.45" });
+    expect(changes.mock.lastCall?.[0][0]).toMatchObject({ persistedId: "original", included: false, quantity: 7, rateInput: "123.45", customizationType: "custom" });
   });
 
   it("filters defaults before paging and search while keeping non-default choices in Add items", async () => {
@@ -1121,7 +1209,8 @@ describe("selected item editing regressions", () => {
     render(<LiveBuilder initialLines={[line]} pricingModeEditable={false} onLinesChange={changed} />);
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
     expect(screen.getByText("PMC")).toBeVisible();
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Standard item type/ })).toBeEnabled();
+    expect(screen.queryByRole("radio", { name: /^Special/ })).not.toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /Increase quantity/ }));
     expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ pricingMode: "pmc", classification: "special", rateInput: "950", rateSource: "configuration" })]);
@@ -1171,7 +1260,8 @@ describe("selected item editing regressions", () => {
       included: true, classification: "special" as const, pricingMode: "sub_vendor" as const };
     const changed = vi.fn();
     render(<LiveBuilder initialLines={[line]} pricingModeEditable={false} onLinesChange={changed} />);
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Standard item type/ })).toBeEnabled();
+    expect(screen.queryByRole("radio", { name: /^Special/ })).not.toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
     expect(screen.queryByText("Vendor")).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
@@ -1190,7 +1280,8 @@ describe("selected item editing regressions", () => {
     const pmc = within(pop).getByRole("switch", { name: /PMC pricing mode/ });
     expect(pmc).not.toBeChecked();
     expect(within(pop).queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
-    expect(within(pop).queryByText(/^(Pricing|Type|Standard|Special)$/)).not.toBeInTheDocument();
+    expect(within(pop).queryByText(/^(Pricing|Type|Special)$/)).not.toBeInTheDocument();
+    expect(within(pop).getByRole("radio", { name: /^Standard item type/ })).toBeChecked();
     expect(rate).toHaveValue("1239");
     expect(changed).not.toHaveBeenCalled();
     pmc.focus(); await user.keyboard(" ");
@@ -1353,7 +1444,7 @@ describe("selected item editing regressions", () => {
     expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ pricingMode: "sub_vendor", classification: "standard", rateSource: "configuration", rateInput: "1050" });
   });
 
-  it("omits Type in editable and read-only rows while preserving Main Line and temporary-item classifications", async () => {
+  it("shows independent Main Line item type while preserving pricing classifications and temporary rows", async () => {
     const user = userEvent.setup();
     const initialLines = configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])
       .map((line) => ({ ...line, included: true, classification: line.itemType === "temporary" ? "special" as const : undefined }));
@@ -1362,11 +1453,12 @@ describe("selected item editing regressions", () => {
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     const cove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
     for (const row of [pop, cove]) {
-      expect(within(row).queryByText(/^(Type|Standard|Special)$/)).not.toBeInTheDocument();
-      expect(within(row).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
-      expect(row.querySelector(".configured-estimate-line__type-group")).not.toBeInTheDocument();
+      expect(within(row).queryByText(/^(Type|Special)$/)).not.toBeInTheDocument();
       expect(within(row).getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
     }
+    expect(within(pop).getByRole("radio", { name: /^Standard item type/ })).toBeChecked();
+    expect(within(pop).getByRole("radio", { name: /^Custom item type/ })).toBeEnabled();
+    expect(within(cove).queryByRole("group", { name: /Item type/ })).not.toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
     await user.click(within(pop).getByRole("button", { name: /Increase quantity/ }));
     expect(changed).toHaveBeenLastCalledWith([
@@ -1378,10 +1470,11 @@ describe("selected item editing regressions", () => {
     const readOnlyPop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     const readOnlyCove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
     for (const row of [readOnlyPop, readOnlyCove]) {
-      expect(within(row).queryByText(/^(Type|Standard|Special)$/)).not.toBeInTheDocument();
-      expect(within(row).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+      expect(within(row).queryByText(/^(Type|Special)$/)).not.toBeInTheDocument();
       expect(within(row).getByRole("spinbutton", { name: /Quantity/ })).toBeDisabled();
     }
+    within(readOnlyPop).getAllByRole("radio", { name: /item type/ }).forEach(option => expect(option).toBeDisabled());
+    expect(within(readOnlyCove).queryByRole("group", { name: /Item type/ })).not.toBeInTheDocument();
     within(readOnlyPop).getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
   });
 

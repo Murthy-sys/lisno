@@ -1,7 +1,6 @@
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
-import { VendorWorkProgressPanel } from "../workflow/VendorWorkProgressPanel";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
 import { useState } from "react";
@@ -33,6 +32,7 @@ import { ProjectCompletionControl, ProjectFinancePanel } from "../finance/Projec
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { currentQuotationIsApproved } from "../estimates/quotationApproval";
+import { SuperAdminProjectDetails } from "./SuperAdminProjectDetails";
 import "./admin-project-detail.css";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -91,7 +91,7 @@ export function AdminProjectDetailPage() {
   const coordination = useQuery({
     queryKey: projectWorkflowKeys.projectTasks(projectId),
     queryFn: () => getAdminProjectWorkflowTasks(projectId),
-    enabled: canAssignWorkers && Boolean(project && canAssignProjectCoordination(project))
+    enabled: auth.user?.role !== "super_admin" && canAssignWorkers && Boolean(project && canAssignProjectCoordination(project))
   });
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
@@ -99,6 +99,7 @@ export function AdminProjectDetailPage() {
     return <PageState state="error" message={errorMessage(projectQuery.error)} action={{ label: "Try again", onAction: () => void projectQuery.refetch() }} />;
   }
   if (!project) return <PageState state="empty" message="Project details are unavailable." />;
+  if (project.id !== projectId) return <PageState state="error" message="These details do not match the requested project." action={{ label: "Try again", onAction: () => void projectQuery.refetch() }} />;
 
   const nextAction = adminProjectNextAction(project);
   const assignmentPending = isDesignerAssignmentPending(project);
@@ -129,8 +130,18 @@ export function AdminProjectDetailPage() {
     : project.estimate ? money.format(project.estimate.total) : "No estimate yet";
   const createdDate = new Date(project.createdAt);
   const createdLabel = Number.isNaN(createdDate.getTime()) ? "Not captured" : date.format(createdDate);
-  const initialBudget = project.budgetMin === null || project.budgetMax === null
+  const initialBudget = project.budgetMin == null || project.budgetMax == null || !Number.isFinite(project.budgetMin) || !Number.isFinite(project.budgetMax)
     ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`;
+  if (auth.user?.role === "super_admin") return <SuperAdminProjectDetails key={project.id}
+    project={project}
+    summary={{ estimateLabel, estimateValue, createdLabel, initialBudget, nextAction, estimateStages }}
+    currentEstimateApproved={currentEstimateApproved}
+    approvedFinanceSource={approvedFinanceSource}
+    permissions={{ canAssignDesigner, canAssignWorkers, canManageProjectManager: canManageProcurementIdentity,
+      canReadFinance, canReadClientResponses, canDecideCompletion,
+      canReadWorkflow: hasFrontendPermission(auth.authorization, "projects.design_workflow.read"),
+      canReadVendorWork: hasFrontendPermission(auth.authorization, "execution.tracker.read") }}
+    onCompleted={() => void projectQuery.refetch()} />;
   const people = [
     ...(project.estimator ? [{ role: "Sales", name: project.estimator.name, email: project.estimator.email }] : []),
     ...(project.estimate?.designPlanDesigner ? [{ role: "Designer", name: project.estimate.designPlanDesigner.name, email: project.estimate.designPlanDesigner.email }] : []),
@@ -152,7 +163,7 @@ export function AdminProjectDetailPage() {
         eyebrow="Project administration"
         title={project.name}
         description="Manage project people, review approvals and follow delivery progress."
-        breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
+        breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to My Projects</Link>}
         metadata={<>
           <ProjectId className="admin-project-reference__identifier" projectNumber={project.projectNumber} />
           <StatusBadge tone="info" label={adminProjectStatusLabel(project)} />
@@ -228,7 +239,6 @@ export function AdminProjectDetailPage() {
         </div>
       </Surface>
       <ProjectWorkflowPanel projectId={project.id} />
-      {auth.user?.role === "super_admin" ? <VendorWorkProgressPanel projectId={project.id} projectName={project.name} /> : null}
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}

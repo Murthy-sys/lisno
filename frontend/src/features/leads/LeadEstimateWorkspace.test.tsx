@@ -645,7 +645,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(await screen.findByRole("checkbox", { name: /Updated painting/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Updated painting/ })).toHaveValue("94.4");
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Updated painting/ })).toHaveValue(2.5);
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]!.lineItems).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -728,7 +728,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getAllByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ })).toHaveLength(1);
     expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     for (const view of ["Summary", "Proposal"]) {
       await user.click(screen.getByRole("button", { name: view }));
       const header = screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }).parentElement!;
@@ -737,7 +737,7 @@ describe("LeadEstimateWorkspace", () => {
       expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     }
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
     expect((await screen.findByRole("heading", { name: "Configure estimate" })).closest("header")).not.toContainElement(screen.getByRole("link", { name: "Back to Asha Shah" }));
@@ -745,11 +745,11 @@ describe("LeadEstimateWorkspace", () => {
     expect(saves).toHaveLength(1);
     expect(saves[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-carcass", ratePaise: 8005, included: true })]);
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
     expect(screen.queryByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).not.toBeInTheDocument();
     await addConfiguredItem(user, "Wardrobe carcass");
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("94.46");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -792,7 +792,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Reload saved estimate (discard edits)" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("94.46"));
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     expect(estimateGets).toBe(2);
 
     conflictOnNextSave = false;
@@ -911,11 +911,11 @@ describe("LeadEstimateWorkspace", () => {
       expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeEnabled();
     });
     await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     const row = () => screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     expect(screen.getAllByRole("checkbox").every(checkbox => !(checkbox as HTMLInputElement).checked)).toBe(true);
     await addConfiguredItem(user, "POP false ceiling");
-    expect(within(row()).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(within(row()).queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     await user.click(within(row()).getByRole("switch", { name: /PMC pricing mode/ }));
     const rate = within(row()).getByRole("textbox", { name: /Selling rate/ });
     expect(rate).toHaveValue("141.6");
@@ -938,7 +938,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     await addConfiguredItem(user, "POP false ceiling");
-    expect(within(row()).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(within(row()).queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
     expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("141.6");
     expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
@@ -1069,7 +1069,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     expect(screen.getByText("Published POP false ceiling")).toBeVisible();
     if (kind === "saved") expect(screen.getByText("PMC")).toBeVisible();
-    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("141.9");
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
@@ -1130,7 +1130,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(rate).toBeDisabled();
     expect(rate).toHaveValue(String((initialRate + Math.round(initialRate * 0.18)) / 100));
     expect(saves).toEqual([]);
-    expect(screen.queryByRole("radio", { name: /item type|pricing mode/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Special item type|pricing mode/ })).not.toBeInTheDocument();
     const persist = async (expected: Record<string, unknown>) => {
       const count = saves.length + 1;
       await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -1204,7 +1204,8 @@ describe("LeadEstimateWorkspace", () => {
               uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
           pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       }
-      if (url.includes("/estimation/catalogue/recommendations?")) return response({ sources: [] });
+      if (url.includes("/estimation/catalogue/recommendations?")) return response({ sources: [{ mainLineId: "line-pop",
+        available: true, revisionId: `revision-pop-${version}`, itemVersion: version, revisionVersion: version, rules: [], guidance: [] }] });
       if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
         const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
         saves.push(payload);
@@ -1229,9 +1230,13 @@ describe("LeadEstimateWorkspace", () => {
     });
     const rate = screen.getByRole("textbox", { name: /Selling rate.*Living & Dining/ });
     expect(rate).toHaveValue("141.9");
+    await user.click(screen.getByRole("radio", { name: /^Custom item type.*Living & Dining/ }));
+    expect(rate).toHaveValue("141.9");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
-    expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ pricingMode: "pmc", rateSource: "configuration", itemVersion: 1, revisionVersion: 1 });
+    expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ customizationType: "custom", pricingMode: "pmc", rateSource: "configuration", itemVersion: 1, revisionVersion: 1 });
+    await user.click(screen.getByRole("radio", { name: /^Standard item type.*Living & Dining/ }));
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode.*Living & Dining/ }));
     expect(rate).toHaveValue("147.97");
     expect(screen.getByRole("switch", { name: /PMC pricing mode.*Living & Dining/ })).not.toBeChecked();
@@ -1241,10 +1246,14 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(rate).toHaveValue("265.97"));
     pendingSave.resolve();
     await screen.findByText("Estimate draft saved.");
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Living & Dining/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /PMC pricing mode.*Living & Dining/ })).not.toBeChecked();
     expect(rate).toHaveValue("265.97");
     await user.click(screen.getByRole("button", { name: /Master Bedroom.*2 sq|Master Bedroom.*₹343.66/ }));
     const manualRate = screen.getByRole("textbox", { name: /Selling rate.*Master Bedroom/ });
+    expect(manualRate).toHaveValue("202.76");
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Master Bedroom/ })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: /^Custom item type.*Master Bedroom/ }));
     expect(manualRate).toHaveValue("202.76");
     expect(screen.getByRole("switch", { name: /PMC pricing mode.*Master Bedroom/ })).not.toBeChecked();
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
@@ -1259,9 +1268,9 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     const persisted = saves[1]!.lineItems as Array<Record<string, unknown>>;
-    expect(persisted[0]).toMatchObject({ classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 22540,
+    expect(persisted[0]).toMatchObject({ customizationType: "standard", classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 22540,
       revisionId: "revision-pop-2", itemVersion: 2, revisionVersion: 2 });
-    expect(persisted[1]).toMatchObject({ classification: "special", pricingMode: "in_house", rateSource: "manual", ratePaise: 17183, revisionId: "revision-pop-2" });
+    expect(persisted[1]).toMatchObject({ customizationType: "custom", classification: "special", pricingMode: "in_house", rateSource: "manual", ratePaise: 17183, revisionId: "revision-pop-2" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Summary" }));
     expect(screen.getByText("₹738 total incl. GST")).toBeVisible();
@@ -1274,9 +1283,11 @@ describe("LeadEstimateWorkspace", () => {
     view.unmount();
     renderWorkspace();
     expect(await screen.findByRole("textbox", { name: /Selling rate.*Living & Dining/ })).toHaveValue("265.97");
+    expect(screen.getByRole("radio", { name: /^Standard item type.*Living & Dining/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /PMC pricing mode.*Living & Dining/ })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: /Master Bedroom.*₹343.66/ }));
     expect(screen.getByRole("textbox", { name: /Selling rate.*Master Bedroom/ })).toHaveValue("202.76");
+    expect(screen.getByRole("radio", { name: /^Custom item type.*Master Bedroom/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /PMC pricing mode.*Master Bedroom/ })).not.toBeChecked();
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
   });
@@ -2568,7 +2579,7 @@ it.each([false, true])("preserves explicitly saved In-house components on reload
   });
   const user = userEvent.setup(); const view = renderWorkspace();
   await screen.findByRole("checkbox", { name: /POP false ceiling/ });
-  expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: /Special item type/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
   const choices = screen.getByRole("group", { name: /In-house components for/ });
   expect(within(choices).getByRole("checkbox", { name: /Ceilings \/ Framework/ })).not.toBeChecked();

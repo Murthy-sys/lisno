@@ -34,6 +34,7 @@ const configuredLine = z.object({
   estimateNotes: z.array(z.string().max(4000)).max(4).optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
+  customizationType: z.enum(["standard", "custom"]).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
   dimensionsMandatory: z.boolean().optional(),
   dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),

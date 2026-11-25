@@ -6,27 +6,29 @@ import interiorImage from "../../assets/projects-living-room.webp";
 import { EstimateBuilderGlyph } from "./EstimateBuilderShell";
 
 /** Shared presentation only; each role supplies its permitted controls and values. */
-export function EstimateLineLayout({ included, choice, tier, type, pricing, pricingBeforeTier = false, fields, children, className = "", label }: {
+export function EstimateLineLayout({ included, choice, tier, type, pricing, pricingBeforeTier = false, inlineControls = false, fields, children, className = "", label }: {
   included: boolean;
   choice: ReactNode;
   tier?: ReactNode;
   type?: ReactNode;
   pricing?: ReactNode;
   pricingBeforeTier?: boolean;
+  inlineControls?: boolean;
   fields: ReactNode;
   children?: ReactNode;
   className?: string;
   label?: string;
 }) {
   const pricingGroup = pricing ? <div className="configured-estimate-line__group configured-estimate-line__pricing-group">{pricing}</div> : null;
-  return <div className={`configured-estimate-line configured-estimate-line--reference${included ? " configured-estimate-line--included" : ""}${className ? ` ${className}` : ""}`}
+  return <div className={`configured-estimate-line configured-estimate-line--reference${included ? " configured-estimate-line--included" : ""}${inlineControls ? " configured-estimate-line--inline-controls" : ""}${className ? ` ${className}` : ""}`}
     role={label ? "group" : undefined} aria-label={label}>
     <div className="configured-estimate-line__primary">
       {choice}
-      {pricingBeforeTier ? pricingGroup : null}
+      {!inlineControls && pricingBeforeTier ? pricingGroup : null}
       {tier ? <div className="configured-estimate-line__group configured-estimate-line__tier-group">{tier}</div> : null}
+      {inlineControls ? pricingGroup : null}
       {type ? <div className="configured-estimate-line__group configured-estimate-line__type-group">{type}</div> : null}
-      {!pricingBeforeTier ? pricingGroup : null}
+      {!inlineControls && !pricingBeforeTier ? pricingGroup : null}
       <div className="configured-estimate-line__fields">{fields}</div>
     </div>
     <div className="configured-estimate-line__details">{children}</div>
@@ -118,16 +120,21 @@ export function EstimateLineActions({ name, disabled, included, onToggle, onRese
     menu.style.top = `${top}px`;
     menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
     const dismiss = () => setMenuOpen(false);
+    const onScroll = () => {
+      const currentAnchor = trigger.getBoundingClientRect();
+      // Revealing the trigger can queue a scroll event until after the menu opens.
+      if (currentAnchor.left !== anchor.left || currentAnchor.top !== anchor.top) dismiss();
+    };
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Node && !menu.contains(event.target) && !trigger.contains(event.target)) dismiss();
     };
     // The portal keeps a bottom-row menu outside the item pane's clipping boundary.
-    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", dismiss);
     viewport?.addEventListener("resize", dismiss);
     document.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", dismiss);
       viewport?.removeEventListener("resize", dismiss);
       document.removeEventListener("pointerdown", onPointerDown);

@@ -519,6 +519,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         source: "configuration" as const,
         ...(supportsExpandedCatalogue ? { itemType: line.itemType } : {}),
         classification: line.classification ?? "standard",
+        ...(line.itemType === "main_line" ? { customizationType: line.customizationType ?? "standard" } : {}),
         modeTier: line.modeTier ?? "signature",
         ...(line.pricingMode !== undefined ? { pricingMode: line.pricingMode } : {}),
         ...(!configuredInHouseGoverned(line) && line.selectedInHouseComponentIds !== undefined ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}),
@@ -664,6 +665,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       const selectionUnchanged = submitted && submitted.included === line.included &&
         JSON.stringify(submitted.recommendationSourceMainLineIds) ===
           JSON.stringify(line.recommendationSourceMainLineIds);
+      const customizationUnchanged = submitted &&
+        (submitted.customizationType ?? "standard") === (line.customizationType ?? "standard");
       const snapshot = submittedState.get(line.key);
       const sourceUnchanged = snapshot && (snapshot.modeTier ?? "signature") === (line.modeTier ?? "signature") && snapshot.revisionId === line.revisionId &&
         snapshot.mainBasketId === line.mainBasketId && snapshot.subBasketId === line.subBasketId &&
@@ -681,6 +684,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       return stored ? {
         ...line,
         persistedId: stored.id,
+        ...(customizationUnchanged && line.itemType === "main_line"
+          ? { customizationType: stored.customizationType ?? "standard" } : {}),
         ...(sourceUnchanged ? {
           mainBasketId: stored.mainBasketId,
           mainBasketName: stored.mainBasketName,
@@ -1226,6 +1231,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (change.rateInput !== undefined || change.rateSource === "manual") return;
     if (change.included === false && !canRemoveConfiguredLines(new Set([key]))) return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
+    if (change.customizationType !== undefined && (!line?.included || line.itemType !== "main_line" ||
+      line.sourceMissing || line.roomMismatch || !catalogue.data || catalogue.isError || catalogue.isFetching || saved.isFetching)) return;
     if (line?.roomMismatch) {
       if (change.included !== false) return;
       const original = saved.data?.lineItems.find((entry): entry is ConfiguredEstimateLine =>

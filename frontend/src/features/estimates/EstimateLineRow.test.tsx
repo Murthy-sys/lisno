@@ -1,21 +1,28 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "./EstimateLineRow";
 
 describe("Shared estimate line presentation", () => {
-  it.each([false, true])("keeps DOM and keyboard order aligned with pricingBeforeTier=%s", async (pricingBeforeTier) => {
+  it.each([
+    { pricingBeforeTier: false, inlineControls: false },
+    { pricingBeforeTier: true, inlineControls: false },
+    { pricingBeforeTier: false, inlineControls: true },
+    { pricingBeforeTier: true, inlineControls: true }
+  ])("keeps DOM and keyboard order aligned with pricingBeforeTier=$pricingBeforeTier and inlineControls=$inlineControls", async ({ pricingBeforeTier, inlineControls }) => {
     const user = userEvent.setup();
-    render(<EstimateLineLayout included pricingBeforeTier={pricingBeforeTier || undefined}
+    render(<EstimateLineLayout included pricingBeforeTier={pricingBeforeTier || undefined} inlineControls={inlineControls || undefined}
       choice={<button type="button">Choose item</button>}
       tier={<button type="button">Choose tier</button>}
       type={<button type="button">Choose type</button>}
       pricing={<button type="button">PMC</button>}
       fields={<button type="button">Quantity</button>} />);
-    const expected = pricingBeforeTier
-      ? ["Choose item", "PMC", "Choose tier", "Choose type", "Quantity"]
-      : ["Choose item", "Choose tier", "Choose type", "PMC", "Quantity"];
+    const expected = inlineControls
+      ? ["Choose item", "Choose tier", "PMC", "Choose type", "Quantity"]
+      : pricingBeforeTier
+        ? ["Choose item", "PMC", "Choose tier", "Choose type", "Quantity"]
+        : ["Choose item", "Choose tier", "Choose type", "PMC", "Quantity"];
     expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(expected);
     for (const name of expected) {
       await user.tab();
@@ -87,6 +94,28 @@ describe("Shared estimate line presentation", () => {
     await user.click(trigger);
     expect(screen.queryByRole("group", { name: "Options for Storage in Kitchen" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("keeps actions open for queued reveal scrolling and closes when later scrolling moves the trigger", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<div style={{ overflowX: "auto" }}>
+      <EstimateLineActions name="Storage in Kitchen" included disabled={false} onToggle={vi.fn()} />
+    </div>);
+    const trigger = screen.getByRole("button", { name: "More options for Storage in Kitchen" });
+    const position = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(new DOMRect(120, 80, 24, 30));
+    await user.click(trigger);
+    fireEvent.scroll(container.firstElementChild!);
+    expect(screen.getByRole("button", { name: "Remove from estimate" })).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    position.mockReturnValue(new DOMRect(90, 80, 24, 30));
+    fireEvent.scroll(container.firstElementChild!);
+    expect(screen.queryByRole("group", { name: "Options for Storage in Kitchen" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(trigger);
+    fireEvent.resize(window);
+    expect(screen.queryByRole("group", { name: "Options for Storage in Kitchen" })).not.toBeInTheDocument();
   });
 
   it("supports a named row with caller-owned read-only amounts and explicit checkbox names", async () => {
