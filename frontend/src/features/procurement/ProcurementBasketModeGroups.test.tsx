@@ -69,17 +69,19 @@ function install() {
     setFailure: (next: boolean) => { failed = next; } };
 }
 function Location() { return <output aria-label="Current route">{useLocation().search}</output>; }
-function renderWorkspace(options: { query?: string; stale?: boolean; estimateVersion?: number } = {}) {
-  return renderWithQuery(<MemoryRouter initialEntries={[`/procurement/projects/project-one${options.query ?? ""}`]}>
+async function renderWorkspace(options: { query?: string; stale?: boolean; estimateVersion?: number; selectMode?: boolean } = {}) {
+  const rendered = renderWithQuery(<MemoryRouter initialEntries={[`/procurement/projects/project-one${options.query ?? ""}`]}>
     <Location /><ProcurementBasketWorkspace projectId="project-one" projectName="Synthetic Villa" projectSourceStale={options.stale ?? false}
       currentEstimate={{ estimateId: "estimate-one", estimateVersion: options.estimateVersion ?? 4 }} />
   </MemoryRouter>);
+  if (options.selectMode !== false && !options.query) await userEvent.click(await screen.findByRole("button", { name: "By execution mode" }));
+  return rendered;
 }
 const openPop = (mode: string) => screen.findAllByRole("button", { name: `Open POP / Gypsum in ${mode}` });
 
 describe("Procurement approved estimate mode groups", () => {
   it("renders backend subsets once per mode with disjoint amounts and same-named IDs", async () => {
-    const installed = install(); renderWorkspace();
+    const installed = install(); await renderWorkspace();
     const vendor = (await openPop("Sub-vendor"))[0]!;
     expect(within(vendor).getByText("2 included lines")).toBeVisible();
     expect(within(vendor).getByText("₹300.00")).toBeVisible();
@@ -100,7 +102,7 @@ describe("Procurement approved estimate mode groups", () => {
     const data = structuredClone(installed.fixture.list);
     data.modeGroups![3]!.mode = "execution_pending";
     installed.setList(data);
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     const pending = await screen.findByRole("region", { name: "Execution selection pending baskets" });
     expect(within(pending).getByText("Choose Sub-vendor or In-house")).toBeVisible();
     expect(within(pending).getAllByText("Incomplete")).toHaveLength(2);
@@ -113,7 +115,7 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it.each(["In-house", "Sub-vendor", "PMC"])("opens the full mixed basket from its %s subset without filtering source lines", async (label) => {
-    const installed = install(); const user = userEvent.setup(); renderWorkspace();
+    const installed = install(); const user = userEvent.setup(); await renderWorkspace();
     await user.click((await openPop(label))[0]!);
     const table = await screen.findByRole("table", { name: "Included approved source lines for POP / Gypsum" });
     expect(within(table).getAllByRole("rowheader")).toHaveLength(4);
@@ -125,7 +127,7 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it("sends the exact existing whole-basket BOQ payload from an In-house subset", async () => {
-    const installed = install(); const user = userEvent.setup(); renderWorkspace();
+    const installed = install(); const user = userEvent.setup(); await renderWorkspace();
     await user.click((await openPop("In-house"))[0]!);
     await user.click(await screen.findByRole("checkbox", { name: /Synthetic vendor/ }));
     await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
@@ -139,7 +141,7 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it("keeps local search, filters, view and disclosure state on Back with no writes or per-card reads", async () => {
-    const installed = install(); const user = userEvent.setup(); renderWorkspace();
+    const installed = install(); const user = userEvent.setup(); await renderWorkspace();
     const search = await screen.findByRole("searchbox", { name: "Search baskets" });
     await user.type(search, "  pOp / gYpSuM  ");
     await user.click(screen.getByRole("button", { name: "Filter" }));
@@ -161,7 +163,7 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it("shows distinct no results, readiness and mode filters without changing full totals", async () => {
-    install(); const user = userEvent.setup(); renderWorkspace();
+    install(); const user = userEvent.setup(); await renderWorkspace();
     const search = await screen.findByRole("searchbox", { name: "Search baskets" });
     await user.type(search, "no matching basket");
     expect(screen.getByText("No baskets match your search or filters.")).toBeVisible();
@@ -179,7 +181,7 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it("uses a static skeleton for unknown names and photo failures while retaining keyboard actions", async () => {
-    install(); const user = userEvent.setup(); const view = renderWorkspace();
+    install(); const user = userEvent.setup(); const view = await renderWorkspace();
     const unknown = await screen.findByRole("button", { name: /Open Specialist conservation/ });
     expect(unknown.querySelector("img")).toBeNull();
     expect(unknown.querySelector(".procurement-mode__photo-placeholder")).not.toBeNull();
@@ -199,9 +201,10 @@ describe("Procurement approved estimate mode groups", () => {
     if (kind === "missing") delete data.modeGroups;
     else if (kind === "duplicate source") data.modeGroups![2]!.baskets[0]!.sourceLineItemKeys = ["living:standard"];
     else data.modeGroups![0]!.currentCostPaise = 0;
-    installed.setList(data); const user = userEvent.setup(); renderWorkspace({ query: "?basket=basket-mixed" });
+    installed.setList(data); const user = userEvent.setup(); await renderWorkspace({ query: "?basket=basket-mixed" });
     expect(await screen.findByRole("table", { name: "Included approved source lines for POP / Gypsum" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Back to main baskets/ }));
+    await user.click(screen.getByRole("button", { name: "By execution mode" }));
     expect(await screen.findByText(/Approved estimate mode groups are unavailable/)).toBeVisible();
     expect(screen.queryByRole("button", { name: /Open POP/ })).not.toBeInTheDocument();
     installed.setList(installed.fixture.list);
@@ -212,7 +215,7 @@ describe("Procurement approved estimate mode groups", () => {
   it("keeps empty groups collapsed and zero readiness distinct from an empty project", async () => {
     const installed = install();
     installed.setList({ ...installed.fixture.list, baskets: [], modeGroups: qaEmptyModeGroups() });
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     expect(await screen.findByText("No approved main baskets are available for this project.")).toBeVisible();
     const pmc = screen.getByRole("button", { name: "PMC" });
     expect(pmc).toHaveAttribute("aria-expanded", "false");
@@ -222,17 +225,18 @@ describe("Procurement approved estimate mode groups", () => {
   });
 
   it("preserves source mismatch and removed basket states", async () => {
-    install(); const view = renderWorkspace({ estimateVersion: 5 });
+    install(); const view = await renderWorkspace({ estimateVersion: 5, selectMode: false });
     expect(await screen.findByText(/approved estimate changed/i)).toBeVisible();
     expect(screen.queryByRole("button", { name: /Open POP/ })).not.toBeInTheDocument();
-    view.unmount(); renderWorkspace({ query: "?basket=removed-basket" });
+    view.unmount(); await renderWorkspace({ query: "?basket=removed-basket" });
     expect(await screen.findByText("This main basket is no longer in the approved estimate.")).toBeVisible();
   });
 
   it("recovers a list failure and preserves the stale-source dispatch freeze", async () => {
-    const installed = install(); installed.setFailure(true); const user = userEvent.setup(); renderWorkspace({ stale: true });
+    const installed = install(); installed.setFailure(true); const user = userEvent.setup(); await renderWorkspace({ stale: true, selectMode: false });
     await screen.findByText("Synthetic basket refresh failed.");
     installed.setFailure(false); await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     await user.click((await openPop("PMC"))[0]!);
     const vendor = await screen.findByRole("checkbox", { name: /Synthetic vendor/ });
     if (!vendor.hasAttribute("disabled")) await user.click(vendor);
@@ -249,6 +253,7 @@ describe("Procurement approved estimate mode groups", () => {
           currentEstimate={{ estimateId: projectId === "project-one" ? "estimate-one" : "estimate-two", estimateVersion: 4 }} /></>;
     }
     renderWithQuery(<MemoryRouter><Projects /></MemoryRouter>);
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     await user.type(await screen.findByRole("searchbox", { name: "Search baskets" }), "POP");
     await user.click(screen.getByRole("button", { name: "List view" }));
     const metric = { includedLineCount: 1, boqReadyLineCount: 1, readinessPercent: 100,
@@ -260,6 +265,7 @@ describe("Procurement approved estimate mode groups", () => {
       modeGroups: qaEmptyModeGroups().map((group) => group.mode !== "pmc" ? group : { ...group, ...metric, basketCount: 1,
         baskets: [{ ...metric, id: "basket-mixed", name: "Painting", sourceLineItemKeys: ["second-room:painting"] }] }) });
     await user.click(screen.getByRole("button", { name: "Open second project" }));
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     const painting = await screen.findByRole("button", { name: "Open Painting in PMC" });
     expect(within(painting).getByText("₹1,250.00")).toBeVisible();
     expect(within(painting).getByText("₹960.00")).toBeVisible();
@@ -274,7 +280,7 @@ describe("Procurement approved estimate mode groups", () => {
     const installed = install();
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets", () =>
       HttpResponse.json({ error: { code: "FORBIDDEN", message: "You cannot access this procurement project." } }, { status: 403 })));
-    renderWorkspace();
+    await renderWorkspace({ selectMode: false });
     expect(await screen.findByText("You cannot access this procurement project.")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Open POP/ })).not.toBeInTheDocument();
     expect(installed.creations).toEqual([]);

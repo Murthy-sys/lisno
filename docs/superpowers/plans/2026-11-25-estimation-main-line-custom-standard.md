@@ -218,4 +218,13 @@ The replica-set command's initial sandbox attempt could not bind a local port (E
 
 From repository root: `git diff --check` passed; `git status --short` contains the intended task paths and preserved prior changes. No lint command exists. Full repository suites and OCR were not run; relevant broader frontend/backend suites were run during implementation, with the 24 baseline failures described above. Do not interpret the focused pass as an entirely green repository suite.
 
+### Submission validation follow-up, 2026-11-25
+
+- Report: estimate submission rejected `customizationType` as unrecognized. Submit first saves the draft through the existing PUT route. Current source and built output already accept this metadata inside configured Main Lines; the frontend sends it there correctly. An independent read-only probe of the actual validation middleware accepted both Standard and Custom.
+- Runtime evidence: the local backend had been running since November 24, before this feature. Its live `/openapi.json` lacked `customizationType`, while current source and built schemas included it. No product-code correction was needed.
+- Resolution: gracefully restarted the existing local development supervisor with the same `npm run dev` command, including its rules and OCR companions. No seed, reset, migration, deployment, or customer submission was performed. Existing dirty Procurement work was preserved.
+- Runtime verification: the restarted backend exposes `customizationType` in both `ConfiguredEstimateLineInput` and `ClientEstimateSnapshot`; `/api/v1/health` returned HTTP 200. The frontend and rules service remained reachable, and startup markers confirmed rules readiness and OCR startup without a startup failure.
+- Regression verification: re-ran `npm test -- tests/estimator-catalogue-estimate.replica-set.test.ts tests/estimate-revisions.replica-set.test.ts -t 'customization|preserves configured frozen dimensions'` from `backend/`: 2 files, 4 tests passed, 151 nonmatching tests skipped. Tests used isolated MongoMemoryReplSet, not application data. No build/typecheck/browser rerun was needed because no product source changed. The user's own estimate was not submitted during verification.
+- Local runtime evidence and private startup log: `/private/tmp/lisno-customization-runtime-20261125/`. The replacement local development service is intentionally left running for the user.
+
 Final logs are `/private/tmp/lisno-custom-standard-20261125/verify-*.log`. The task-owned Vite server and browsers were stopped; isolated baseline archives and intermediate screenshots were removed. Only final QA evidence and logs remain in that temporary directory. Build outputs and TypeScript caches are ignored, not staged or committed.

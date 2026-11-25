@@ -14,6 +14,36 @@ export type MainBasketClassification = "standard" | "special";
 export type ProcurementEstimateMode = "in_house" | "sub_vendor" | "pmc";
 export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "execution_pending" | "unrecorded";
 
+export type ProcurementClosurePriority = "P1" | "P2" | "P3";
+export type ProcurementPriorityGroupKey = ProcurementClosurePriority | "unassigned";
+
+export interface ProcurementPriorityResolution {
+  state: "resolved" | "unset" | "unavailable" | "invalid" | "legacy";
+  value: ProcurementClosurePriority | null;
+  revision: { id: string; status: "draft" | "active"; version: number } | null;
+}
+
+export interface ProcurementPriorityItem {
+  sourceLineItemKey: string;
+  basketId: string;
+  basketName: string;
+  mainLineId: string | null;
+  mainLineName: string | null;
+  roomId: string | null;
+  roomName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  mode: ProcurementEstimateModeGroupKey;
+  scope: "included" | "commitment_only";
+  resolution: ProcurementPriorityResolution;
+}
+
+export interface ProcurementBasketPriorityGroup {
+  priority: ProcurementPriorityGroupKey;
+  lineCount: number;
+  items: ProcurementPriorityItem[];
+}
+
 export interface ProcurementInHouseComponentBreakdown {
   visibleComponentsOnly?: boolean;
   complete: boolean;
@@ -160,10 +190,63 @@ export interface ProcurementBasketList {
   estimateSource: BasketEstimateSource;
   baskets: ProcurementBasketSummary[];
   modeGroups?: ProcurementBasketModeGroup[];
+  priorityGroups?: ProcurementBasketPriorityGroup[];
 }
 
 const nonNegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object";
+
+const priorityOrder = ["P1", "P2", "P3", "unassigned"] as const;
+const displayModes = ["in_house", "sub_vendor", "pmc", "execution_pending", "unrecorded"] as const;
+const nonBlankString = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
+const nullableString = (value: unknown): boolean => value === null || nonBlankString(value);
+
+function validPriorityResolution(value: unknown, priority: unknown, mainLineId: unknown): boolean {
+  if (!record(value)) return false;
+  const revision = value.revision;
+  if (revision !== null && (!record(revision) || !nonBlankString(revision.id) ||
+    (revision.status !== "draft" && revision.status !== "active") || !nonNegativeInteger(revision.version) || revision.version === 0)) return false;
+  if (value.state === "resolved") return priority !== "unassigned" && value.value === priority && revision !== null && mainLineId !== null;
+  if (priority !== "unassigned" || value.value !== null) return false;
+  if (value.state === "unset") return revision !== null && mainLineId !== null;
+  if (value.state === "legacy") return revision === null;
+  return value.state === "unavailable" || value.state === "invalid";
+}
+
+/** Priority metadata is optional for compatibility, but never inferred from missing data. */
+export function hasValidProcurementPriorityGroups(data: ProcurementBasketList): data is ProcurementBasketList & { priorityGroups: ProcurementBasketPriorityGroup[] } {
+  const groups: unknown = data.priorityGroups;
+  if (!Array.isArray(groups) || groups.length > priorityOrder.length || !Array.isArray(data.baskets)) return false;
+  const baskets = new Map(data.baskets.map(basket => [basket.id, basket]));
+  if (baskets.size !== data.baskets.length) return false;
+  const includedCounts = new Map<string, number>();
+  const representedBaskets = new Set<string>();
+  const sourceKeys = new Set<string>();
+  let previousPriority = -1;
+  for (const group of groups) {
+    if (!record(group)) return false;
+    const order = priorityOrder.indexOf(group.priority as ProcurementPriorityGroupKey);
+    if (order <= previousPriority || !Array.isArray(group.items) || group.items.length === 0 || group.lineCount !== group.items.length) return false;
+    previousPriority = order;
+    for (const item of group.items) {
+      if (!record(item) || !nonBlankString(item.sourceLineItemKey) || sourceKeys.has(item.sourceLineItemKey) ||
+        !nonBlankString(item.basketId)) return false;
+      const basket = baskets.get(item.basketId);
+      if (!basket || item.basketName !== basket.name || !nonBlankString(item.basketName) ||
+        !nullableString(item.mainLineId) || !nullableString(item.mainLineName) || !nullableString(item.roomId) ||
+        typeof item.roomName !== "string" || !nullableString(item.subBasketId) || !nullableString(item.subBasketName) ||
+        !displayModes.includes(item.mode as ProcurementEstimateModeGroupKey) ||
+        !validPriorityResolution(item.resolution, group.priority, item.mainLineId)) return false;
+      if (item.scope === "included") includedCounts.set(item.basketId, (includedCounts.get(item.basketId) ?? 0) + 1);
+      else if (item.scope !== "commitment_only" || !nonNegativeInteger(basket.committedNetPaise) || basket.committedNetPaise === 0) return false;
+      representedBaskets.add(item.basketId);
+      sourceKeys.add(item.sourceLineItemKey);
+    }
+  }
+  return data.baskets.every(basket => nonNegativeInteger(basket.includedLineCount) &&
+    (includedCounts.get(basket.id) ?? 0) === basket.includedLineCount &&
+    (!(basket.committedNetPaise > 0) || representedBaskets.has(basket.id)));
+}
 
 function validModeMetrics(value: Record<string, unknown>): boolean {
   if (![value.includedLineCount, value.boqReadyLineCount, value.approvedEstimatePaise, value.unpricedLineCount,

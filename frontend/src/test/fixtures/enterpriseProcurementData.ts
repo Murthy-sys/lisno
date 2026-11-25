@@ -136,7 +136,8 @@ export const procurementProject: ProcurementProject = {
 
 import type {
   ProcurementBasketDetail, ProcurementBasketList, ProcurementBasketModeGroup,
-  ProcurementEstimateMode, ProcurementModeBasketSubset, ProcurementModeGroupMetrics
+  ProcurementEstimateMode, ProcurementModeBasketSubset, ProcurementModeGroupMetrics,
+  ProcurementBasketPriorityGroup, ProcurementClosurePriority, ProcurementPriorityItem
 } from "../../features/procurement/procurementBasketApi";
 import type { PurchaseOrderModeResolution } from "../../features/procurement/purchaseOrderApi";
 
@@ -215,11 +216,42 @@ const unknownSubset: ProcurementModeBasketSubset = { id: unknownDetail.id, name:
   sourceLineItemKeys: ["living:temporary"], ...qaEmptyModeMetrics, includedLineCount: 1, readinessPercent: 0,
   approvedEstimatePaise: 7_000, currentCostPaise: null, currentCostComplete: false, unpricedLineCount: 1, modeIssueCount: 1 };
 
+function priorityItem(basket: ProcurementBasketDetail, line: ProcurementBasketDetail["lines"][number],
+  value: ProcurementClosurePriority | null): ProcurementPriorityItem {
+  return { sourceLineItemKey: line.sourceLineItemKey, basketId: basket.id, basketName: basket.name,
+    mainLineId: line.mainLineId, mainLineName: line.mainLineName, roomId: line.roomId, roomName: line.roomName,
+    subBasketId: line.subBasketId, subBasketName: line.subBasketName,
+    mode: line.mode?.executionPolicy?.intent === "pmc" ? "pmc" : line.mode?.decision?.mode ?? "unrecorded",
+    scope: "included", resolution: { state: value ? "resolved" : "unset", value,
+      revision: { id: `revision-${line.mainLineId}`, status: "draft", version: 2 } } };
+}
+
+const priorityGroups: ProcurementBasketPriorityGroup[] = [
+  { priority: "P1", lineCount: 2, items: [priorityItem(mixedDetail, mixedLines[0]!, "P1"), priorityItem(mixedDetail, mixedLines[3]!, "P1")] },
+  { priority: "P2", lineCount: 1, items: [priorityItem(mixedDetail, mixedLines[1]!, "P2")] },
+  { priority: "P3", lineCount: 2, items: [priorityItem(mixedDetail, mixedLines[2]!, "P3"), priorityItem(duplicateDetail, duplicateDetail.lines[0]!, "P3")] },
+  { priority: "unassigned", lineCount: 1, items: [priorityItem(unknownDetail, unknownDetail.lines[0]!, null)] }
+];
+
+export function qaUnassignedPriorityGroups(basket: Pick<ProcurementBasketDetail, "id" | "name" | "lines">): ProcurementBasketPriorityGroup[] {
+  const items: ProcurementPriorityItem[] = basket.lines.filter(line => line.included && (line.approvedAmountPaise ?? 0) > 0).map(line => ({
+    sourceLineItemKey: line.sourceLineItemKey, basketId: basket.id, basketName: basket.name,
+    mainLineId: line.mainLineId, mainLineName: line.mainLineName, roomId: line.roomId, roomName: line.roomName,
+    subBasketId: line.subBasketId, subBasketName: line.subBasketName,
+    mode: line.mode?.executionPolicy?.intent === "pmc" ? "pmc" : line.mode?.executionPolicy?.intent === "execution"
+      ? line.mode.decision?.mode ?? "execution_pending" : "unrecorded",
+    scope: "included", resolution: { state: line.source === "legacy" || !line.mainLineId ? "legacy" : "unset", value: null,
+      revision: line.source === "legacy" || !line.mainLineId ? null : { id: `revision-${line.mainLineId}`, status: "draft", version: 2 } }
+  }));
+  return items.length ? [{ priority: "unassigned", lineCount: items.length, items }] : [];
+}
+
 // Explicit expected server output, not the production grouping resolver or money reducer.
 export function createProcurementGroupFixture() {
   const details = [mixedDetail, duplicateDetail, unknownDetail];
   const list: ProcurementBasketList = { projectId: "project-one", estimateSource: groupSource,
     baskets: details.map(({ lines: _lines, preparationDigest: _digest, projectId: _project, estimateSource: _source, ...basket }) => basket),
+    priorityGroups,
     modeGroups: [
       { ...qaEmptyModeMetrics, mode: "in_house", basketCount: 2, baskets: [mixedSubsets.in_house, duplicateSubset],
         includedLineCount: 2, boqReadyLineCount: 1, readinessPercent: 50, approvedEstimatePaise: 120_000,
@@ -251,7 +283,7 @@ export function createProcurementGroupBrowserFixture() {
     ["pmc", "metal", "Aluminium / Metal work"], ["pmc", "interior", "INTERIOR MATERIAL"],
     ["pmc", "gl", "GL"]
   ];
-  categories.forEach(([mode, id, name]) => {
+  categories.forEach(([mode, id, name], index) => {
     const key = `living:${id}`;
     const detail: ProcurementBasketDetail = { ...mixedDetail, id: `basket-${id}`, name,
       includedLineCount: 1, readyLineCount: 1, approvedEstimatePaise: 25_000,
@@ -259,6 +291,10 @@ export function createProcurementGroupBrowserFixture() {
       lines: [groupLine(key, `${name} approved line`, "special", mode, 25_000, 20_000)] };
     const { lines: _lines, preparationDigest: _digest, projectId: _project, estimateSource: _source, ...summary } = detail;
     fixture.details.push(detail); fixture.list.baskets.push(summary);
+    const priority = (["P1", "P2", "P3"] as const)[index % 3]!;
+    const group = fixture.list.priorityGroups!.find(group => group.priority === priority)!;
+    group.items.push(priorityItem(detail, detail.lines[0]!, priority));
+    group.lineCount += 1;
     fixture.list.modeGroups!.find((group) => group.mode === mode)!.baskets.push({
       ...qaEmptyModeMetrics, id: detail.id, name, sourceLineItemKeys: [key], includedLineCount: 1,
       boqReadyLineCount: 1, readinessPercent: 100, approvedEstimatePaise: 25_000, currentCostPaise: 20_000 });

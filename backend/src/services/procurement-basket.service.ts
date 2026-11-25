@@ -1,6 +1,7 @@
 import mongoose, { type ClientSession } from "mongoose";
 import { projectProcurementBaskets, projectProcurementBasketDetail, type ProcurementBasketDetailDto, type ProcurementBasketSummaryDto } from "../domain/procurement-basket-projection.js";
 import { projectProcurementBasketModeGroups, type ProcurementBasketModeGroup } from "../domain/procurement-basket-mode-groups.js";
+import { projectProcurementBasketPriorityGroups, procurementPriorityItemIncluded, type ProcurementBasketPriorityGroup } from "../domain/procurement-basket-priority-groups.js";
 import { isApprovedInHouseComponentSource, procurementComponentTargetKey } from "../domain/procurement-in-house-components.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
@@ -10,10 +11,11 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess } from "./procurement.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
+import { readProcurementPriorities } from "./procurement-basket-priority.service.js";
 
 export interface ProcurementBasketService {
   list(actor: PublicUser, projectId: string): Promise<{ projectId: string; estimateSource: ProcurementBasketDetailDto["estimateSource"];
-    baskets: ProcurementBasketSummaryDto[]; modeGroups: ProcurementBasketModeGroup[] }>;
+    baskets: ProcurementBasketSummaryDto[]; modeGroups: ProcurementBasketModeGroup[]; priorityGroups: ProcurementBasketPriorityGroup[] }>;
   get(actor: PublicUser, projectId: string, basketId: string): Promise<ProcurementBasketDetailDto>;
 }
 
@@ -24,8 +26,13 @@ export function createProcurementBasketService(): ProcurementBasketService {
       return transaction(async session => {
         await assertProcurementProjectAccess(actor, projectId, session);
         const { baskets, preparation, committedBySourceLine } = await preparedBasketRead(projectId, session);
+        const priorityMainLineIds = baskets.flatMap(basket => basket.lines.flatMap(line =>
+          line.source === "configuration" && line.mainLineId && (procurementPriorityItemIncluded(line) ||
+            (committedBySourceLine.get(line.sourceLineItemKey) ?? 0) > 0) ? [line.mainLineId] : []));
+        const priorities = await readProcurementPriorities(priorityMainLineIds, session);
         return { projectId, estimateSource: preparation.estimateSource,
           modeGroups: projectProcurementBasketModeGroups(baskets, committedBySourceLine),
+          priorityGroups: projectProcurementBasketPriorityGroups(baskets, priorities, committedBySourceLine),
           baskets: baskets.map(({ lines: _lines, projectId: _projectId, estimateSource: _estimateSource,
             preparationDigest: _preparationDigest, inHouseComponentBreakdown: _componentBreakdown, ...summary }) => summary) };
       });

@@ -136,9 +136,11 @@ function install(initialEnquiry: BasketEnquiry | null = null) {
   };
 }
 
-function renderWorkspace(onClient?: (client: QueryClient) => void) {
+async function renderWorkspace(onClient?: (client: QueryClient) => void) {
   function CaptureClient() { const client = useQueryClient(); onClient?.(client); return null; }
-  return renderWithQuery(<MemoryRouter initialEntries={["/procurement/projects/project-one"]}><CaptureClient /><ProcurementBasketWorkspace projectId="project-one" projectName="Aurora Villa" projectSourceStale={false} currentEstimate={{ estimateId: "estimate-one", estimateVersion: 2 }} /></MemoryRouter>);
+  const rendered = renderWithQuery(<MemoryRouter initialEntries={["/procurement/projects/project-one"]}><CaptureClient /><ProcurementBasketWorkspace projectId="project-one" projectName="Aurora Villa" projectSourceStale={false} currentEstimate={{ estimateId: "estimate-one", estimateVersion: 2 }} /></MemoryRouter>);
+  await userEvent.click(await screen.findByRole("button", { name: "By execution mode" }));
+  return rendered;
 }
 
 function installExecutionRate(initialEnquiry: BasketEnquiry | null = null, lineName = "POP false ceiling") {
@@ -202,7 +204,7 @@ describe("Procurement basket workspace", () => {
         items: suggestions, total: 2, limit: 20, offset: 0, mainLines: [{ id: "main-one", name: "Primer coat" }, { id: "main-two", name: "Finishing coat" }]
       } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const first = await screen.findByRole("checkbox", { name: /Recommended Specialist Suggested for Primer coat/ });
     const second = screen.getByRole("checkbox", { name: /Recommended Specialist Suggested for Finishing coat/ });
@@ -222,7 +224,7 @@ describe("Procurement basket workspace", () => {
     const recommendation = recommendedVendor("suggestion-one", "main-one", "Primer coat");
     recommendation.vendor = { id: "vendor-one", name: "Sharma Interiors", code: "VEN-1" };
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-suggestions", () => HttpResponse.json({ data: { items: [recommendation], total: 1, offset: 0, limit: 20, mainLines: [{ id: "main-one", name: "Primer coat" }] } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const recommended = await screen.findByRole("checkbox", { name: /Sharma Interiors Suggested for Primer coat/ });
     await user.click(screen.getByRole("button", { name: "Select all eligible (2)" }));
@@ -237,7 +239,7 @@ describe("Procurement basket workspace", () => {
   it("keeps ordinary directory selection available when recommendations fail", async () => {
     const { dispatches } = install(draftEnquiry);
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-suggestions", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Suggestion lookup failed." } }, { status: 503 })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("The vendor directory remains available below.")).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: /Sharma Interiors/ }));
@@ -252,7 +254,7 @@ describe("Procurement basket workspace", () => {
       lines: [{ ...detail.lines[0]!, mode: { ...mode, uom: { ...mode.uom!, name: "Square feet" } } }]
     } })));
     const user = userEvent.setup();
-    renderWorkspace();
+    await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(table).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
@@ -263,7 +265,7 @@ describe("Procurement basket workspace", () => {
     const { setConfigurationRate } = installExecutionRate(null, "False Ceiling Painting in Royal Emulsion");
     let client!: QueryClient;
     const user = userEvent.setup();
-    renderWorkspace((current) => { client = current; });
+    await renderWorkspace((current) => { client = current; });
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(table).getByRole("rowheader", { name: /^False Ceiling Painting in Royal Emulsion Execution source: Sub-vendor/ }).closest("tr")!;
@@ -311,6 +313,7 @@ describe("Procurement basket workspace", () => {
     const user = userEvent.setup();
     try {
       render(<QueryClientProvider client={client}><MemoryRouter><ProjectReturn /></MemoryRouter></QueryClientProvider>);
+      await user.click(await screen.findByRole("button", { name: "By execution mode" }));
       await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
       expect(await screen.findByText("₹75.00")).toBeVisible();
       await user.click(screen.getByRole("button", { name: "Leave project" }));
@@ -320,6 +323,7 @@ describe("Procurement basket workspace", () => {
       await waitFor(() => expect(within(table).getByText("₹85.00")).toBeVisible());
       expect(within(table).getByText("₹93.50")).toBeVisible();
       await user.click(screen.getByRole("button", { name: "Projects" }));
+      await user.click(await screen.findByRole("button", { name: "By execution mode" }));
       expect(within(await screen.findByRole("button", { name: /Open Painting in /i })).getByText("₹93.50")).toBeVisible();
     } finally {
       client.clear();
@@ -341,7 +345,7 @@ describe("Procurement basket workspace", () => {
           standardCost: { state: "unavailable", mode: "sub_vendor", calculationQuantity: null,
             baseRates: [], baseCostPaise: null, adjustedCostPaise: null, issues: [issue] } }] } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     expect(within(table).getByText(issue.message)).toBeVisible();
@@ -354,7 +358,7 @@ describe("Procurement basket workspace", () => {
     const { writes } = installExecutionRate();
     let client!: QueryClient;
     const user = userEvent.setup();
-    renderWorkspace((current) => { client = current; });
+    await renderWorkspace((current) => { client = current; });
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
     expect(within(card).getByText("₹82.50")).toBeVisible();
     await user.click(card);
@@ -401,7 +405,7 @@ describe("Procurement basket workspace", () => {
   it("validates nonnegative paise precision and permits a zero project amount", async () => {
     access.manageBaseRate = true;
     const { writes } = installExecutionRate();
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     await user.click(within(table).getByRole("button", { name: "Edit base amount for POP false ceiling" }));
@@ -426,7 +430,7 @@ describe("Procurement basket workspace", () => {
     installExecutionRate();
     server.use(http.put("/api/v1/procurement/projects/project-one/baskets/basket-painting/base-rate", () =>
       HttpResponse.json({ error: { code: "PROJECT_RATE_VERSION_CONFLICT", message: "The project rate changed. Refresh the basket." } }, { status: 409 })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     await user.click(within(table).getByRole("button", { name: "Edit base amount for POP false ceiling" }));
@@ -444,7 +448,7 @@ describe("Procurement basket workspace", () => {
   it("hides project price editing without permission or after award approval starts", async () => {
     access.manageBaseRate = false;
     installExecutionRate();
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("table", { name: "Included approved source lines for Painting" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Edit base amount for POP false ceiling" })).not.toBeInTheDocument();
@@ -453,7 +457,7 @@ describe("Procurement basket workspace", () => {
   it("locks project price editing while an award is pending", async () => {
     access.manageBaseRate = true;
     installExecutionRate({ ...draftEnquiry, status: "award_pending" });
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("table", { name: "Included approved source lines for Painting" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Edit base amount for POP false ceiling" })).not.toBeInTheDocument();
@@ -462,7 +466,7 @@ describe("Procurement basket workspace", () => {
   it("keeps project price editing available for a sent BOQ revision", async () => {
     access.manageBaseRate = true;
     installExecutionRate({ ...draftEnquiry, status: "sent", boqRevisionId: "revision-one", boqRevision: 1, boqDigest: digest });
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByText("Revise sent BOQ", { selector: "summary" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "Edit base amount for POP false ceiling" })).toBeEnabled();
@@ -483,7 +487,7 @@ describe("Procurement basket workspace", () => {
           comparisonScoreBps: 9_300, eligible: true, blockers: [], recommended: true, priorityRank: 1, bidRevision: 1, lines: [] }],
         bidHistory: [], bidHistoryHasMore: false, counteroffers: [], counteroffersHasMore: false } })));
     let client!: QueryClient;
-    const user = userEvent.setup(); renderWorkspace((current) => { client = current; });
+    const user = userEvent.setup(); await renderWorkspace((current) => { client = current; });
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
     expect(await screen.findByRole("button", { name: "Resend invitation to Sharma Interiors" })).toBeVisible();
@@ -530,7 +534,7 @@ describe("Procurement basket workspace", () => {
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries", () =>
       HttpResponse.json({ data: [draftEnquiry, { ...draftEnquiry, id: "old-issued", status: "issued",
         estimateSource: { ...source, estimateVersion: 1 } }] })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("button", { name: "Edit base amount for POP false ceiling" })).toBeEnabled();
   });
@@ -559,7 +563,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries", () =>
         HttpResponse.json({ data: [draftEnquiry, locked] }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: "Open Painting in Sub-vendor" }));
     const modeAction = await screen.findByRole("button", { name: "Review mode for POP false ceiling" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Review mode for New ceiling line" })).toBeEnabled());
@@ -582,7 +586,7 @@ describe("Procurement basket workspace", () => {
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
       ...detail, lines: [{ ...detail.lines[0]!, mode: resolution }]
     } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(scope).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
@@ -613,7 +617,7 @@ describe("Procurement basket workspace", () => {
       http.post("/api/v1/procurement/projects/project-one/purchase-order-mode-decisions", () => { modeWrites += 1; return HttpResponse.json({ data: {} }); })
     );
     const user = userEvent.setup();
-    const view = renderWorkspace();
+    const view = await renderWorkspace();
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
     expect(within(card).getByText("Current cost")).toBeVisible();
     expect(within(card).getByText("Incomplete")).toBeVisible();
@@ -649,7 +653,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([savedBasket], [22_500]) })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: savedDetail }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
     expect(within(card).getByText("₹225.00")).toBeVisible();
     await user.click(card);
@@ -677,7 +681,7 @@ describe("Procurement basket workspace", () => {
             baseCostPaise: null, adjustedCostPaise: null, issues: [{ code: "MISSING_SCOPE", message: "Pinned Sub-vendor scope is missing." }] } }]
       } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
     expect(within(card).getByText("Incomplete")).toBeVisible();
     await user.click(card);
@@ -715,7 +719,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([draftBasket], [15_000], "sub_vendor") })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: draftDetail }))
     );
-    const user = userEvent.setup(); const view = renderWorkspace();
+    const user = userEvent.setup(); const view = await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const search = await screen.findByRole("searchbox", { name: "Search vendors" });
     expect(search).toBeEnabled();
@@ -754,7 +758,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: observedDetail }))
     );
     const user = userEvent.setup();
-    const view = renderWorkspace();
+    const view = await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(scope).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
@@ -790,7 +794,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([historicalBasket], [15_000], "sub_vendor") })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: historicalDetail }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(screen.getByRole("button", { name: "Choose mode for Primer coat" })).toBeDisabled();
     expect(screen.getByText(status === "missing" ? "Execution details unavailable" : "Mode not recorded")).toBeVisible();
@@ -810,7 +814,7 @@ describe("Procurement basket workspace", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([blockedSpecial], [15_000]) })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: { ...detail, ...blockedSpecial } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(screen.getByRole("button", { name: "Review mode for Primer coat" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "Send bid invitations" })).toBeDisabled();
@@ -852,7 +856,7 @@ describe("Procurement basket workspace", () => {
             recommended: true, priorityRank: 1, bidRevision: 1, lines: [] }],
           bidHistory: [], bidHistoryHasMore: false, counteroffers: [], counteroffersHasMore: false } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const first = await screen.findByRole("checkbox", { name: /Sharma Interiors/u });
     const second = await screen.findByRole("checkbox", { name: /Decor Masters/u });
@@ -879,7 +883,7 @@ describe("Procurement basket workspace", () => {
       workingTotalPaise: 0, workingTotalComplete: true,
       lines: [{ ...detail.lines[0]!, approvedAmountPaise: 0 }]
     } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("No priced approved source lines are available in this basket.")).toBeVisible();
     expect(screen.queryByRole("table", { name: "Included approved source lines for Painting" })).not.toBeInTheDocument();
@@ -888,7 +892,7 @@ describe("Procurement basket workspace", () => {
   });
 
   it("keeps same-named baskets separate by ID and drills into one approved source", async () => {
-    install(); const user = userEvent.setup(); const view = renderWorkspace();
+    install(); const user = userEvent.setup(); const view = await renderWorkspace();
     const paintingCards = await screen.findAllByRole("button", { name: /Open Painting in /i });
     expect(paintingCards).toHaveLength(2);
     await user.click(paintingCards[0]!);
@@ -917,7 +921,7 @@ describe("Procurement basket workspace", () => {
       lines: [{ ...detail.lines[0]!, mode: null, baseUnitRatePaise: null }]
     } })));
     const user = userEvent.setup();
-    renderWorkspace();
+    await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     expect(within(scope).getAllByText("Unavailable")).toHaveLength(2);
@@ -925,7 +929,7 @@ describe("Procurement basket workspace", () => {
   });
 
   it("sends every included approved line on one click without requesting BOQ details", async () => {
-    const { creations, dispatches } = install(); const user = userEvent.setup(); renderWorkspace();
+    const { creations, dispatches } = install(); const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByRole("navigation", { name: "Vendor enquiry progress" })).toBeVisible();
     expect(await screen.findByRole("searchbox", { name: "Search vendors" })).toBeVisible();
@@ -949,7 +953,7 @@ describe("Procurement basket workspace", () => {
       data: { ...detail, preparationDigest: currentDigest,
         lines: [{ ...detail.lines[0]!, approvedAmountPaise: 42_000 }] }
     })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
     await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
@@ -961,7 +965,7 @@ describe("Procurement basket workspace", () => {
 
   it("keeps vendor selections across searches in the visible enquiry panel", async () => {
     const { dispatches } = install(draftEnquiry);
-    const user = userEvent.setup(); const view = renderWorkspace();
+    const user = userEvent.setup(); const view = await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const vendorPanel = await screen.findByRole("region", { name: "Choose vendors" });
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
@@ -1016,7 +1020,7 @@ describe("Procurement basket workspace", () => {
             status: "sent", invitationId: `updated-${vendorId}` })) } });
       })
     );
-    const user = userEvent.setup(); const view = renderWorkspace();
+    const user = userEvent.setup(); const view = await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("Cove in Gypsum")).toBeVisible();
     expect(await screen.findByRole("button", { name: "Comparison" })).toHaveAttribute("aria-current", "step");
@@ -1051,7 +1055,7 @@ describe("Procurement basket workspace", () => {
       return HttpResponse.json({ data: { projectCity: null, items: matched.slice(offset, offset + 50), total: matched.length,
         matchingVendorCount: matched.length, blockedReasonCounts: {}, limit: 50, offset } });
     }));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByRole("button", { name: "Select all eligible (52)" }));
     expect(screen.getByText("52 vendors selected")).toBeVisible();
@@ -1088,7 +1092,7 @@ describe("Procurement basket workspace", () => {
             invitationStatus: null, priorBidId: null }] } });
       })
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const newVendor = await screen.findByRole("checkbox", { name: /Decor Masters/u });
     expect(newVendor).toBeEnabled();
@@ -1151,7 +1155,7 @@ describe("Procurement basket workspace", () => {
               item.action === "first_invitation" ? "pending" : "sent", invitationId: null })) } });
       })
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByRole("button", { name: "Select all eligible (4)" }));
     const plan = await screen.findByRole("region", { name: "Planned invitation actions" });
@@ -1178,7 +1182,7 @@ describe("Procurement basket workspace", () => {
       sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource, preparationDigest: basketDigest,
         unchangedLineKeys: ["room-one:paint-one"] } });
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: { ...detail, preparationSource: finalSource } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("Enquiry reconciled with the final estimate")).toBeVisible();
     expect(screen.queryByText(/These responses belong to the previous frozen BOQ/)).not.toBeInTheDocument();
@@ -1215,7 +1219,7 @@ describe("Procurement basket workspace", () => {
         }))
     );
     let client!: QueryClient;
-    const user = userEvent.setup(); renderWorkspace(value => { client = value; });
+    const user = userEvent.setup(); await renderWorkspace(value => { client = value; });
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
     const resend = await screen.findByRole("button", { name: "Resend invitation to Sharma Interiors" });
@@ -1249,7 +1253,7 @@ describe("Procurement basket workspace", () => {
   it("pauses a stale BOQ send until the current revision is loaded", async () => {
     const { dispatches, setEnquiry } = install(draftEnquiry);
     let client!: QueryClient;
-    const user = userEvent.setup(); renderWorkspace((value) => { client = value; });
+    const user = userEvent.setup(); await renderWorkspace((value) => { client = value; });
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
     setEnquiry({ ...draftEnquiry, version: 2, lines: [{ ...draftEnquiry.lines[0]!, deliveryLocation: "Remote site" }] });
@@ -1267,7 +1271,7 @@ describe("Procurement basket workspace", () => {
   it("removes a selected vendor when refreshed eligibility is revoked", async () => {
     const { dispatches, setVendorEligible } = install(draftEnquiry);
     let client!: QueryClient;
-    const user = userEvent.setup(); renderWorkspace((value) => { client = value; });
+    const user = userEvent.setup(); await renderWorkspace((value) => { client = value; });
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
     await user.click(screen.getByRole("checkbox", { name: /Decor Masters/u }));
@@ -1288,7 +1292,7 @@ describe("Procurement basket workspace", () => {
       HttpResponse.json({ error: { code: "DIRECTORY_UNAVAILABLE", message: "Directory temporarily unavailable" } }, { status: 503 }) :
       HttpResponse.json({ data: { projectCity: { name: "Bengaluru", key: "bengaluru" }, total: 0,
         matchingVendorCount: 1, blockedReasonCounts: { contact_missing: 1 }, limit: 50, offset: 0, items: [] } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Send bid invitations" })).toBeDisabled();
@@ -1312,7 +1316,7 @@ describe("Procurement basket workspace", () => {
       return HttpResponse.json({ data: { ...failedEnquiry, version: 4,
         invitations: [{ ...failedEnquiry.invitations[0], id: "invitation-two", kind: "resend", status: "sent", generation: 2 }] } });
     }));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByRole("button", { name: "Bids" })).toHaveAttribute("aria-current", "step");
     await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
@@ -1337,7 +1341,7 @@ describe("Procurement basket workspace", () => {
         ? { available: true, shareUrl: "https://wa.me/919999999999?text=BOQ", blocker: null, expiresAt: "2099-01-01T00:00:00Z" }
         : { available: false, shareUrl: null, blocker: "No usable phone number", expiresAt: null } });
     }));
-    const user = userEvent.setup(); renderWorkspace((current) => { client = current; });
+    const user = userEvent.setup(); await renderWorkspace((current) => { client = current; });
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(screen.queryByRole("link", { name: /Open WhatsApp message/u })).not.toBeInTheDocument();
     await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
@@ -1372,7 +1376,7 @@ describe("Procurement basket workspace", () => {
         blocker: null, expiresAt: new Date(now + 60_000).toISOString() } });
     }));
     try {
-      const user = userEvent.setup(); renderWorkspace();
+      const user = userEvent.setup(); await renderWorkspace();
       await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
       await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
       await user.click(screen.getByRole("button", { name: "Prepare WhatsApp for Sharma Interiors" }));
@@ -1401,7 +1405,7 @@ describe("Procurement basket workspace", () => {
       setEnquiry(sent);
       return HttpResponse.json({ data: sent });
     }));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("Revise saved BOQ", { selector: "summary" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Send bid invitations" })).toBeDisabled();
@@ -1420,7 +1424,7 @@ describe("Procurement basket workspace", () => {
       lines: [{ id: "boq-line-one", sourceLineItemKey: "room-one:paint-one", roomId: "room-one", roomName: "Living Room", subBasketId: "sub-one", subBasketName: "Interior paint", mainLineId: "main-one", mainLineName: "Primer coat", approvedQuantity: "2", approvedUnit: "sq-ft", uomId: "uom-one", uomCode: "sq-ft", uomDecimalScale: 2, description: "Primer coat", quantityMilliUnits: 2000, scopeType: "execution", targetDate: "2026-11-30", deliveryLocation: "Site" }],
       invitations: [{ id: "invitation-one", vendorId: "vendor-one", vendorName: "Sharma Interiors", vendorCode: "VEN-1", kind: "initial", status: "sent", sentAt: "2026-10-05T00:00:00Z", expiresAt: "2026-10-12T00:00:00Z", generation: 1 }] };
     const { updates, dispatches } = install(sentEnquiry);
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByRole("button", { name: "Comparison" })).toHaveAttribute("aria-current", "step");
     expect(await screen.findByText("Revise sent BOQ", { selector: "summary" })).toBeVisible();
@@ -1453,7 +1457,7 @@ describe("Procurement basket workspace", () => {
         recordedCostPaise: null, paidPaise: null, gstRegistration: { registered: null, gstin: null }, paymentSchedule: [] },
       vendorAlerts: []
     } })));
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const awardedStage = await screen.findByRole("button", { name: "Awarded" });
     expect(awardedStage).toHaveAttribute("aria-current", "step");
@@ -1478,7 +1482,7 @@ describe("Procurement basket workspace", () => {
           recordedCostPaise: null, paidPaise: null, gstRegistration: { registered: null, gstin: null }, paymentSchedule: [] },
         vendorAlerts: [] } }))
     );
-    const user = userEvent.setup(); renderWorkspace();
+    const user = userEvent.setup(); await renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     await user.click(await screen.findByText("Earlier enquiries (1)"));
     await user.click(screen.getByText(/Enquiry older-is/u));

@@ -1,0 +1,51 @@
+.procurement-priority { min-width: 0; container: procurement-priority / inline-size; --basket-muted: #59647a; }
+.procurement-basket__overview-choice { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 12px 18px; }
+.procurement-basket__overview-choice button,
+.procurement-priority__open,
+.procurement-priority__empty button { min-height: 40px; padding: 8px 12px; border: 1px solid var(--basket-border); border-radius: 0; background: var(--basket-surface); color: var(--basket-forest); font-weight: 600; }
+.procurement-basket__overview-choice button[aria-pressed="true"] { background: var(--basket-forest); border-color: var(--basket-forest); color: #f7f7f2; }
+.procurement-priority__toolbar { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.procurement-priority__toolbar h2 { font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }
+.procurement-priority .procurement-priority__toolbar p { margin-top: 5px; color: var(--basket-muted); font-size: 13px; }
+.procurement-priority__search { display: grid; gap: 5px; width: min(100%, 320px); font-size: 12px; font-weight: 600; }
+.procurement-priority__search input { width: 100%; }
+.procurement-priority .procurement-priority__scope { margin-top: 12px; color: var(--basket-muted); font-size: 12px; }
+.procurement-priority .procurement-priority__count { margin-block: 12px 8px; font-size: 13px; }
+.procurement-priority__groups { display: grid; gap: 12px; }
+.procurement-priority__group { min-width: 0; border: 1px solid var(--basket-border); background: var(--basket-surface); }
+.procurement-priority__group [hidden] { display: none; }
+.procurement-priority .procurement-priority__toggle { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 12px 16px; border: 0; border-radius: 0; background: var(--basket-raised); color: var(--basket-ink); text-align: left; }
+.procurement-priority__toggle strong { font-size: 16px; }
+.procurement-priority__toggle > span { font-size: 13px; font-weight: 400; }
+.procurement-priority__toggle .procurement-priority__disclosure { margin-left: auto; font-size: 22px; }
+.procurement-priority__table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.procurement-priority__table th,
+.procurement-priority__table td { padding: 12px 14px; border-top: 1px solid var(--basket-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.procurement-priority__table thead th { font-size: 11px; font-weight: 600; color: var(--basket-muted); }
+.procurement-priority__table th:first-child { width: 27%; }
+.procurement-priority__table th:last-child { width: 135px; }
+.procurement-priority__table th[scope="row"] { font-weight: 400; }
+.procurement-priority__table small { display: block; margin-top: 4px; color: var(--basket-muted); font-size: 11px; line-height: 1.45; }
+.procurement-priority .procurement-priority__open { white-space: nowrap; font-size: 12px; }
+.procurement-priority__empty { display: grid; gap: 12px; justify-items: start; padding: 16px; border: 1px solid var(--basket-border); background: var(--basket-surface); font-size: 13px; }
+@container procurement-priority (max-width: 699px) {
+  .procurement-priority__toolbar { align-items: stretch; }
+  .procurement-priority__search { width: 100%; }
+  .procurement-priority__table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .procurement-priority__table,
+  .procurement-priority__table tbody,
+  .procurement-priority__table tr { display: block; width: 100%; }
+  .procurement-priority__table tr { padding: 10px 14px; border-top: 1px solid var(--basket-border); }
+  .procurement-priority__table th[scope="row"],
+  .procurement-priority__table td { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 3px 10px; width: 100%; padding: 6px 0; border: 0; }
+  .procurement-priority__table :is(th[scope="row"], td)::before { content: attr(data-label); grid-column: 1; grid-row: 1 / span 3; color: var(--basket-muted); font-size: 11px; font-weight: 600; }
+  .procurement-priority__table :is(th[scope="row"], td) > * { grid-column: 2; }
+  .procurement-priority__table small { margin-top: 0; }
+  .procurement-priority__open { justify-self: start; }
+}
+@media (pointer: coarse) {
+  .procurement-basket__overview-choice button,
+  .procurement-priority__search input,
+  .procurement-priority__open,
+  .procurement-priority__empty button { min-height: 44px; }
+}
