@@ -4,13 +4,26 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { ProcurementBasketApprovalQueue } from "./ProcurementBasketApprovalQueue";
 import type { BasketAward } from "./procurementBasketApi";
+import type { ProjectStatusSummary } from "../../api/types";
+import { authorizationFor } from "../../test/authFixtures";
+import * as statusApi from "../project-status/projectStatusApi";
+
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "admin-viewer", role: "super_admin" }, status: "authenticated", authorization: authorizationFor("super_admin") }) }));
+
+beforeEach(() => {
+  vi.spyOn(statusApi, "getProjectStatus").mockImplementation(async projectId => ({
+    projectId, projectName: "Aurora Villa", projectStatus: "active", state: "active", serverNow: "2026-11-24T10:00:00Z", issue: null,
+    currentStage: { key: "procurement", label: "Procurement review" },
+    pendingActions: [{ id: "procurement-review", stageKey: "procurement", stageLabel: "Procurement review", action: "Review award", state: "pending", responsibleRole: "super_admin", people: [{ id: "reviewer", name: "Maya", role: "super_admin" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+  } satisfies ProjectStatusSummary));
+});
 
 const award: BasketAward = {
   id: "award-one", enquiryId: "enquiry-one", projectId: "project-one", mainBasketId: "basket-one",
@@ -36,6 +49,26 @@ function FinanceCacheProbe({ read }: { read: () => Promise<number> }) {
 }
 
 describe("work order approval queue", () => {
+  it.each(["matching", "wrong project", "wrong award"])("shows status only for the selected matching award: %s", async match => {
+    server.use(
+      http.get("/api/v1/work-order-approvals", () => HttpResponse.json({ data: [{ awardId: "award-one", projectId: "project-one", enquiryId: "enquiry-one", mainBasketId: "basket-one", projectName: "Aurora Villa", basketName: "Painting", vendorName: "Sharma Interiors", grossPaise: 70800, slot: "budget_override", status: "pending_approvals" }] })),
+      http.get("/api/v1/work-order-approvals/award-one", () => HttpResponse.json({ data: { ...award, ...(match === "wrong project" ? { projectId: "project-two" } : match === "wrong award" ? { id: "award-two" } : {}) } }))
+    );
+    renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /></MemoryRouter>);
+    const row = await screen.findByRole("button", { name: /Aurora Villa.*Painting.*Sharma Interiors/u });
+    expect(statusApi.getProjectStatus).not.toHaveBeenCalled();
+    await userEvent.click(row);
+    await screen.findByRole("heading", { name: "Sharma Interiors" });
+    if (match === "matching") {
+      const chip = await screen.findByRole("button", { name: "Project status for Aurora Villa" });
+      expect(chip).toHaveTextContent("Maya");
+      expect(chip.closest(".procurement-basket__monitor-head")).not.toBeNull();
+      expect(statusApi.getProjectStatus).toHaveBeenCalledWith("project-one", expect.any(AbortSignal));
+      await userEvent.click(screen.getByRole("button", { name: /Back to approvals/ }));
+    } else expect(statusApi.getProjectStatus).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+  });
+
   it.each([
     { slot: "procurement", label: "procurement", paymentRows: ["Advance", "Final"] },
     { slot: "program_manager", label: "Project Manager", paymentRows: ["Advance"] },

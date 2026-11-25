@@ -9,7 +9,7 @@ import { estimateRevisionKeys, type EstimateRevisionDetail } from "./estimateRev
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import type { EstimateRequirement, ResolveEstimateRequirementInput } from "../client/estimateRequirementsApi";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "sales-one", role: "estimator_sales" }, authorization: { permissions: ["estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"] }, reviewSession: { id: "session-one" }, status: "authenticated" }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "sales-one", role: "estimator_sales" }, authorization: { permissions: ["estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client", "projects.status.read"] }, reviewSession: { id: "session-one" }, status: "authenticated" }) }));
 vi.mock("../messages", () => ({ ProjectChatNavigation: () => null }));
 
 const json = (data: unknown) => Response.json({ data });
@@ -48,6 +48,11 @@ function setup(withRequest = false, initialStatus: EstimateDraft["status"] = "dr
   const resolutions: ResolveEstimateRequirementInput[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input); const method = init?.method ?? "GET"; requests.push({ url, method });
+    if (url === "/api/v1/projects/project/status") return json({
+      projectId: "project", projectName: "Current project", projectStatus: "active", serverNow: "2026-11-24T09:00:00Z", state: "active", issue: null,
+      currentStage: { key: "estimate_preparation", label: "Estimate preparation" },
+      pendingActions: [{ id: "current-task", stageKey: "estimate_preparation", stageLabel: "Estimate preparation", action: "Prepare current estimate", state: "pending", responsibleRole: "estimator_sales", people: [{ id: "sales-one", name: "Current owner", role: "estimator_sales" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+    });
     if (url === "/api/v1/leads/lead") return json({ id: "lead", projectId: "project", clientName: "Client", projectName: "Current project", location: "Pune", propertyType: "2BHK", estimationWorkflowVersion: 2 });
     if (url === "/api/v1/leads/lead/estimate" && method === "GET") return state.savedStatus === 200 ? json(estimate) : failure(state.savedStatus);
     if (url === "/api/v1/leads/lead/estimate" && method === "PUT") {
@@ -108,6 +113,10 @@ describe("Estimate workspace revisions", () => {
     const fixture = setup(); const user = userEvent.setup();
     await screen.findByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
     expect(screen.getByLabelText("Estimate amount including GST: ₹118")).toBeVisible();
+    const chip = await screen.findByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Current owner");
+    expect(chip.closest("header")).toHaveClass("estimate-workspace__view-controls");
+    expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(1);
     expect(screen.queryByText("Total including GST")).not.toBeInTheDocument();
     expect(screen.queryByText("Project ID: Lisno000009")).not.toBeInTheDocument();
     expect(screen.queryByText(/workflow and client requirements/)).not.toBeInTheDocument();
@@ -130,6 +139,8 @@ describe("Estimate workspace revisions", () => {
       await user.click(screen.getByRole("button", { name: view }));
       expect(screen.getByRole("region", { name: view === "Summary" ? "Saved revision summary" : "Saved revision proposal" })).toBeVisible();
       expect(screen.getByText("₹324.50")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Project status" })).toBe(chip);
+      expect(chip).toHaveTextContent("Current owner");
     }
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     await user.click(screen.getByRole("button", { name: "Return to current estimate" }));

@@ -52,6 +52,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
     clientVisible: { type: Boolean, cast: false, default: undefined, immutable: true },
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
+    customizationType: { type: String, enum: ["standard", "custom"], default: undefined, immutable: true },
     modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined, immutable: true },
     dimensionsMandatory: { type: Boolean, cast: false, default: undefined, immutable: true },
     dimensions: { type: Schema.Types.Mixed, default: undefined, immutable: true },

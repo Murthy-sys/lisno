@@ -7,7 +7,7 @@ import type { EstimateTierComparisonInput } from "../estimates/estimateTierCompa
 import { EstimateComponentPricingStatus, EstimateSubBasketAmounts } from "./EstimateComponentBreakdown";
 import { EstimateDimensionsFields } from "./EstimateDimensionsFields";
 import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from "./useConfiguredEstimateViewState";
 import type { LucideIcon } from "lucide-react";
 
@@ -386,6 +386,7 @@ export function ConfiguredEstimateBuilder({
     const row = <ConfiguredLineRow payablePaise={payables && line.included ? payables.get(line.key) ?? null : undefined} modeChangeRestriction={modeChangeRestriction} getPmcToggleTarget={getPmcToggleTarget} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)}
       requiredBy={requiredBy?.get(line.key)}
       tierEditable={Boolean(rowEditable) && !refreshingAvailableItems && availableItemsState === "ready" && !selectionBlocked}
+      customizationEditable={Boolean(rowEditable) && !refreshingAvailableItems && availableItemsState === "ready"}
       onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
     return browseCatalogue ? <div onFocusCapture={() => setFocusedInlineLine({ context: inlineEditContext, key: id })}
       onBlurCapture={event => {
@@ -474,6 +475,7 @@ export function ConfiguredEstimateBuilder({
             return <div className="configured-estimate-saved-line" key={line.key}>
               <strong>{line.mainLineName}</strong>
               <p>Quantity: {line.quantity} {line.uomName} · Before GST: {amount === null ? "Incomplete" : moneyPaise(amount)}</p>
+              <ConfiguredLineCustomization line={line} disabled />
               {requiredBy?.get(line.key)?.length ? <p>Required by {requiredBy.get(line.key)!.join(", ")}.</p> : null}
               <button type="button" className="button button--secondary" disabled={!editable || Boolean(requiredBy?.get(line.key)?.length)} onClick={() => onUpdateLine(line.key, { included: false })}>
                 Remove {line.mainLineName} from {activeRoom?.label}
@@ -486,7 +488,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Items without a positive base price</h2><span>The current tier or pricing method has no usable configured price. Your selections and saved prices are preserved for review.</span></header>
           {unpricedSelections.map(line => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow requiredBy={requiredBy?.get(line.key)} payablePaise={payables && line.included ? payables.get(line.key) ?? null : undefined} modeChangeRestriction={modeChangeRestriction} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} selectionEditable={line.included} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow requiredBy={requiredBy?.get(line.key)} payablePaise={payables && line.included ? payables.get(line.key) ?? null : undefined} modeChangeRestriction={modeChangeRestriction} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} customizationEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} selectionEditable={line.included} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unselected.length ? <section
@@ -598,7 +600,28 @@ function pmcSwitchPricingIssue(line: ConfiguredLineDraft, target: EstimatePricin
   if (rate === null || rate <= 0) return `${tierName} ${methodName} pricing is incomplete for this quantity.`;
 }
 
-function ConfiguredLineRow({ line, payablePaise, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, modeChangeRestriction, onUpdateLine, moneyPaise, getPmcToggleTarget, requiredBy }: {
+function ConfiguredLineCustomization({ line, disabled, onChange }: {
+  line: ConfiguredLineDraft;
+  disabled: boolean;
+  onChange?: (value: NonNullable<ConfiguredLineDraft["customizationType"]>) => void;
+}) {
+  const groupId = useId();
+  if (line.itemType !== "main_line") return null;
+  const label = `${line.mainBasketName}${line.subBasketName ? `, ${line.subBasketName}` : ""}, ${line.mainLineName} in ${line.roomName}`;
+  return <fieldset className="estimate-classification configured-estimate-line__customization"
+    aria-label={`Item type for ${label}`} disabled={disabled}>
+    <legend>Item type</legend>
+    <div className="configured-estimate-line__choices">{(["standard", "custom"] as const).map(value => <label key={value}>
+      <input type="radio" name={`line-customization-${groupId}-${encodeURIComponent(line.key)}`} value={value}
+        checked={(line.customizationType ?? "standard") === value} disabled={disabled}
+        aria-label={`${value === "standard" ? "Standard" : "Custom"} item type for ${label}`}
+        onChange={() => { if (!disabled) onChange?.(value); }} />
+      <span>{value === "standard" ? "Standard" : "Custom"}</span>
+    </label>)}</div>
+  </fieldset>;
+}
+
+function ConfiguredLineRow({ line, payablePaise, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, customizationEditable = false, modeChangeRestriction, onUpdateLine, moneyPaise, getPmcToggleTarget, requiredBy }: {
   modeChangeRestriction?: string;
   getPmcToggleTarget: (line: ConfiguredLineDraft) => PmcToggleTarget;
   line: ConfiguredLineDraft;
@@ -608,16 +631,17 @@ function ConfiguredLineRow({ line, payablePaise, inheritedClassification = "stan
   selectionEditable?: boolean;
   requiredBy?: readonly string[];
   tierEditable?: boolean;
+  customizationEditable?: boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
 }) {
+  const customizationDisabled = !editable || !customizationEditable || !line.included || line.sourceMissing || Boolean(line.roomMismatch);
   const componentCalculated = configuredUsesComponentPricing(line);
   const aggregateOnly = configuredInHouseGoverned(line);
   const rate = parseSellingRate(line.rateInput);
   const amount = configuredLinePreviewAmountPaise(line);
   const grossAmount = payablePaise === undefined ? estimatePriceIncludingGst(amount) : payablePaise;
   const pmcMargin = configuredPmcMargin(line);
-  const showVendorPayable = line.pricingMode === "pmc" && (line.savedPmcAmountPaise === undefined || line.pmcVendorPayable === true);
   const netUnitPrice = aggregateOnly ? amount !== null && line.quantity > 0 ? Math.round(amount / line.quantity) : null
     : componentCalculated ? configuredModeBaseRate(line, "in_house") : rate.kind === "value" ? rate.paise : null;
   const grossUnitPrice = estimatePriceIncludingGst(netUnitPrice);
@@ -651,7 +675,7 @@ function ConfiguredLineRow({ line, payablePaise, inheritedClassification = "stan
     const minimum = line.included ? 1 : 0;
     onUpdateLine(line.key, { quantity: Math.max(minimum, units + direction * 10 ** line.uomDecimalScale) * step });
   };
-  return <EstimateLineLayout included={line.included} pricingBeforeTier
+  return <EstimateLineLayout included={line.included} inlineControls
     choice={<EstimateLineChoice name={line.mainLineName} unit={line.uomName} included={line.included} disabled={!editable || !selectionEditable || required || !line.included && !configuredLineCanInclude(line)}
       accessibleLabel={`Include ${line.mainLineName} in ${line.roomName}${required ? `, required by ${requiredBy!.join(", ")}` : ""}`}
       onToggle={included => onUpdateLine(line.key, { included })} />}
@@ -659,14 +683,16 @@ function ConfiguredLineRow({ line, payablePaise, inheritedClassification = "stan
       value={line.rateSource === "configuration" ? line.modeTier ?? "signature" : null}
       options={tierOptions} disabled={!editable || !tierEditable || line.sourceMissing} availabilityId={tierAvailabilityId}
       onChange={modeTier => { if (editable && tierEditable && !tierOptions.find(option => option.value === modeTier)?.disabledReason) onUpdateLine(line.key, { modeTier, rateSource: "configuration" }); }} /> : null}
+    type={line.itemType === "main_line" ? <ConfiguredLineCustomization line={line} disabled={customizationDisabled}
+      onChange={customizationType => onUpdateLine(line.key, { customizationType })} /> : null}
     pricing={line.included ? <EstimatePricingModeControl variant="pmc-only" mode={line.pricingMode ?? (editable ? referenceMode : undefined)} label={label}
       groupName={`line-pricing-mode-${line.key}`} editable={editable && !modeChangeRestriction && !line.sourceMissing} disabled={Boolean(pmcUnavailableReason)} disabledReason={pmcUnavailableReason ?? undefined}
       onTogglePmc={() => { if (!pmcUnavailableReason) onUpdateLine(line.key, getPmcToggleTarget(line)); }}
       onChange={() => {}} /> : null}
     fields={<>
-      {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
-      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">{aggregateOnly ? "Price incl. GST" : showVendorPayable ? "Vendor rate incl. GST" : "Rate incl. GST"} (₹/{line.uomName})</span><span className="sr-only">{aggregateOnly ? "Price including margin" : "Selling rate"} (₹/{line.uomName}) for {label}, including 18% GST</span><input id={inputId} type="text" inputMode="decimal" value={displayPriceOverflow ? "Too large" : rateInvalid ? line.rateInput : formatRateInput(grossUnitPrice)} disabled aria-label={`${aggregateOnly ? "Price including margin" : "Selling rate"} (₹/${line.uomName}) for ${label}, including 18% GST`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
-      <div className="configured-estimate-line__amount"><span>{showVendorPayable ? "Vendor payable" : "Amount"} incl. GST{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}, including 18% GST` : `Preview amount for ${label}, including 18% GST, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : grossAmount === null ? "Pending" : moneyPaise(grossAmount)}</output></div>
+      {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
+      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Rate</span><span className="sr-only">{aggregateOnly ? "Price including margin" : "Selling rate"} (₹/{line.uomName}) for {label}, including 18% GST</span><input id={inputId} type="text" inputMode="decimal" value={displayPriceOverflow ? "Too large" : rateInvalid ? line.rateInput : formatRateInput(grossUnitPrice)} disabled aria-label={`${aggregateOnly ? "Price including margin" : "Selling rate"} (₹/${line.uomName}) for ${label}, including 18% GST`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
+      <div className="configured-estimate-line__amount"><span>Total{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}, including 18% GST` : `Preview amount for ${label}, including 18% GST, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : grossAmount === null ? "Pending" : moneyPaise(grossAmount)}</output></div>
       <EstimateLineActions name={line.mainLineName} disabled={!editable || !selectionEditable || required || !line.included && !configuredLineCanInclude(line)} included={line.included}
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />

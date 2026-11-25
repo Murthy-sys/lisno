@@ -1,5 +1,5 @@
 import { ProjectId } from "../../components/projects/ProjectId";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
 import { ROLE_LABELS } from "../../api/authorization-contract";
@@ -9,18 +9,22 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
 import { getProjectStatus, projectStatusKeys } from "./projectStatusApi";
+import { presentProjectStatus } from "./projectStatusPresentation";
 import "./projectStatus.css";
 
 const denied = (error: unknown) => error instanceof ApiError && [401, 403, 404].includes(error.status);
 
-/** A known project context can defer its membership check until the panel opens. */
-export function ProjectStatusButton({ projectId, participant, projectName }: { projectId: string; participant?: boolean; projectName?: string }) {
-  const { user, status, authorization } = useAuth();
+/** Header chips stay current; list buttons retain their on-demand behavior. */
+export function ProjectStatusButton({ projectId, participant, projectName, presentation = "button" }: { projectId: string; participant?: boolean; projectName?: string; presentation?: "button" | "chip" }) {
+  const { user, status, authorization, reviewSession } = useAuth();
   if (participant === false || !projectId || !user || status !== "authenticated" || !hasFrontendPermission(authorization, "projects.status.read")) return null;
-  return <StatusControl key={`${projectId}:${user.id}:${user.role}`} projectId={projectId} identity={`${user.id}:${user.role}`} participant={participant} projectName={projectName} />;
+  const identity = `${user.id}:${user.role}${reviewSession?.id ? `:${reviewSession.id}` : ""}`;
+  return <StatusControl key={`${projectId}:${identity}`} projectId={projectId} identity={identity} participant={participant} projectName={projectName} presentation={presentation} />;
 }
 
-function StatusControl({ projectId, identity, participant, projectName }: { projectId: string; identity: string; participant?: boolean; projectName?: string }) {
+function StatusControl({ projectId, identity, participant, projectName, presentation }: { projectId: string; identity: string; participant?: boolean; projectName?: string; presentation: "button" | "chip" }) {
+  const chip = presentation === "chip";
+  const controlId = useId();
   const [open, setOpen] = useState(false);
   const [accessRemoved, setAccessRemoved] = useState(false);
   const [accessVerified, setAccessVerified] = useState(false);
@@ -29,10 +33,10 @@ function StatusControl({ projectId, identity, participant, projectName }: { proj
   const status = useQuery({
     queryKey: projectStatusKeys.detail(projectId, identity),
     queryFn: ({ signal }) => getProjectStatus(projectId, signal),
-    enabled: (open || participant === undefined) && !accessRemoved,
+    enabled: (chip || open || participant === undefined) && !accessRemoved,
     staleTime: 0,
-    refetchOnWindowFocus: open || participant === undefined,
-    refetchInterval: open && !accessRemoved ? 30_000 : false,
+    refetchOnWindowFocus: chip || open || participant === undefined,
+    refetchInterval: (chip || open) && !accessRemoved ? 30_000 : false,
     refetchIntervalInBackground: false,
     retry: (count, error) => !denied(error) && count < 1
   });
@@ -44,14 +48,23 @@ function StatusControl({ projectId, identity, participant, projectName }: { proj
     void queryClient.cancelQueries({ queryKey: projectStatusKeys.project(projectId) });
     queryClient.removeQueries({ queryKey: projectStatusKeys.project(projectId) });
   }, [accessDenied, projectId, queryClient]);
-  const summary = status.data?.projectId === projectId ? status.data : undefined;
+  const matchingSummary = status.data?.projectId === projectId && Array.isArray(status.data.pendingActions) && status.data.state in summaryLabels ? status.data : undefined;
+  // A mounted chip must not disclose retained data before its fresh read succeeds.
+  const summary = !chip || accessVerified ? matchingSummary : undefined;
   useEffect(() => {
-    if (summary && status.isSuccess && status.isFetchedAfterMount) setAccessVerified(true);
-  }, [summary, status.isSuccess, status.isFetchedAfterMount]);
+    if (matchingSummary && status.isSuccess && status.isFetchedAfterMount) setAccessVerified(true);
+  }, [matchingSummary, status.isSuccess, status.isFetchedAfterMount]);
   if (accessRemoved || accessDenied || (participant === undefined && !accessVerified)) return null;
+  const chipSummary = summary ? presentProjectStatus(summary) : null;
+  const loading = status.isPending || !accessVerified && status.isFetching;
+  const chipLabel = chipSummary?.label ?? (loading ? "Loading project status…" : "Status unavailable");
+  const stale = Boolean(summary && status.isError);
   return <>
-    <Button ref={trigger} variant="secondary" className="project-status-button" aria-label={projectName ? `Project status for ${projectName}` : undefined} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(true); if (participant === undefined) void status.refetch(); }}>Project status</Button>
-    <Drawer id={`project-status-${projectId}`} open={open} title="Project status" eyebrow="Project overview" description={summary?.projectName} variant="contextual" width="medium" className="project-status-drawer" onClose={() => setOpen(false)} returnFocusRef={trigger}>
+    <Button ref={trigger} variant="secondary" className={`project-status-button${chip ? " project-status-chip" : ""}`} aria-label={projectName ? `Project status for ${projectName}` : "Project status"} aria-describedby={chip ? `${controlId}-summary` : undefined} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(true); if (chip || participant === undefined) void status.refetch(); }}>
+      {chip ? <><span className="project-status-chip__stage">{chipLabel}</span>{chipSummary?.owner ? <span className="project-status-chip__owner">{chipSummary.owner}</span> : null}{chipSummary?.additional ? <span className="project-status-chip__more">{chipSummary.additional}</span> : null}{stale ? <span className="project-status-chip__notice">Out of date</span> : !loading && !summary ? <span className="project-status-chip__notice">Open to retry</span> : null}</> : "Project status"}
+    </Button>
+    {chip ? <span id={`${controlId}-summary`} className="sr-only">{chipSummary?.description ?? chipLabel}{stale ? ". Out of date. Open project status to refresh." : ". Open project status for details."}</span> : null}
+    <Drawer id={`project-status-${projectId}-${controlId}`} open={open} title="Project status" eyebrow="Project overview" description={summary?.projectName} variant="contextual" width="medium" className="project-status-drawer" onClose={() => setOpen(false)} returnFocusRef={trigger}>
       <div className="project-status-content">
         {summary ? <ProjectId projectNumber={summary.projectNumber} /> : null}
         <div className="project-status-toolbar"><span className="project-status-caption">Current progress and responsibility</span><Button variant="secondary" busy={status.isFetching} onClick={() => void status.refetch()}>Refresh</Button></div>

@@ -7,11 +7,12 @@ import type { AuthService } from "../src/services/auth.service.js";
 import type { ProcurementBasketAwardService } from "../src/services/procurement-basket-award.service.js";
 import type { ProcurementBasketEnquiryService } from "../src/services/procurement-basket-enquiry.service.js";
 import type { ProcurementBasketService } from "../src/services/procurement-basket.service.js";
+import { PROCUREMENT_BASKET_TENDER_SCHEMAS } from "../src/openapi/procurement-basket-tender.js";
 
 function setup() {
   const auth = { authenticate: vi.fn(async (role: string) => ({ id: role, name: role,
     email: `${role}@example.test`, role })) } as unknown as AuthService;
-  const basket = { list: vi.fn(async () => ({ projectId: "project-a", estimateSource: {}, baskets: [], modeGroups: [
+  const basket = { list: vi.fn(async () => ({ projectId: "project-a", estimateSource: {}, baskets: [], priorityGroups: [], modeGroups: [
     { mode: "in_house", basketCount: 0, baskets: [], includedLineCount: 0, boqReadyLineCount: 0, readinessPercent: null,
       approvedEstimatePaise: 0, currentCostPaise: 0, currentCostComplete: true, unpricedLineCount: 0,
       committedNetPaise: 0, modeIssueCount: 0 }
@@ -63,7 +64,7 @@ describe("basket tender HTTP boundaries", () => {
       "project-a", "basket-a", "enquiry-a", input);
   });
 
-  it("returns additive mode groups only through the current private authorized list route", async () => {
+  it("returns additive mode and priority groups only through the current private authorized list route", async () => {
     const { app, basket, enquiry, award, issue } = setup();
     const path = "/api/v1/procurement/projects/project-a/baskets";
     await request(app).get(path).expect(401);
@@ -71,12 +72,24 @@ describe("basket tender HTTP boundaries", () => {
     expect(basket.list).not.toHaveBeenCalled();
     const result = await request(app).get(path).set("Authorization", "Bearer procurement").expect(200);
     expect(result.headers["cache-control"]).toBe("private, no-store");
-    expect(result.body.data).toMatchObject({ projectId: "project-a", baskets: [],
+    expect(result.body.data).toMatchObject({ projectId: "project-a", baskets: [], priorityGroups: [],
       modeGroups: [{ mode: "in_house", currentCostPaise: 0, currentCostComplete: true, readinessPercent: null }] });
     expect(basket.list).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ role: "procurement" }), "project-a");
     expect(enquiry.dispatch).not.toHaveBeenCalled();
     expect(award.decide).not.toHaveBeenCalled();
     expect(issue.issue).not.toHaveBeenCalled();
+  });
+  it("documents the additive read-only priority metadata with exact priority and resolution values", () => {
+    const schemas = PROCUREMENT_BASKET_TENDER_SCHEMAS;
+    expect(schemas.ProcurementBasketList.required).toContain("priorityGroups");
+    expect(schemas.ProcurementBasketPriorityGroup.properties).toMatchObject({
+      priority: { enum: ["P1", "P2", "P3", "unassigned"] }, items: { minItems: 1 }
+    });
+    expect(schemas.ProcurementPriorityResolution.properties).toMatchObject({
+      state: { enum: ["resolved", "unset", "unavailable", "invalid", "legacy"] },
+      value: { enum: ["P1", "P2", "P3"], nullable: true }
+    });
+    expect(schemas.ProcurementBasketEnquiryCreate.properties).not.toHaveProperty("priorityGroups");
   });
   it("validates and authorizes the sent-revision batch preview and send routes", async () => {
     const { app, enquiry } = setup();

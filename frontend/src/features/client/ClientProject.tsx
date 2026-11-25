@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
@@ -6,52 +7,51 @@ import { Link, useParams } from "react-router-dom";
 
 import { PageHeader } from "../../components/ui/PageHeader";
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
-import { estimateWorkflowKeys, getClientEstimates } from "../estimates/estimateWorkflowApi";
+import { ClientEstimateQueryProvider, useClientEstimates } from "../estimates/clientEstimateQuery";
 import type { ClientDesignVersion } from "../../api/types";
 import { FilePreview } from "../../components/ui/FilePreview";
 import { AsyncState } from "../../components/ui/AsyncState";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 import { clientKeys, getClientProject, getClientVersions } from "./clientApi";
 import { DesignSectionReview } from "./DesignSectionReview";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { ClientVendorWorkReview } from "./ClientVendorWorkReview";
 import { ClientSiteCompletionReview } from "./ClientSiteCompletionReview";
-import { ClientEstimateRequirements } from "./ClientEstimateRequirements";
 import { ClientEstimateTiers } from "./ClientEstimateTiers";
 import { ClientEstimationWorkspace } from "./ClientEstimationWorkspace";
-import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import "./clientWorkflow.css";
 
 export function ClientProject() {
+  return <ClientEstimateQueryProvider><ProjectContent /></ClientEstimateQueryProvider>;
+}
+
+function ProjectContent() {
   const { projectId = "" } = useParams();
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const projectQuery = useQuery({ queryKey: clientKeys.project(projectId), queryFn: () => getClientProject(projectId), enabled: Boolean(projectId) });
   const versionsQuery = useQuery({ queryKey: clientKeys.versions(projectId), queryFn: () => getClientVersions(projectId), enabled: Boolean(projectId) });
   const requiresPublication = projectQuery.data?.estimationWorkflowVersion === 2 || projectQuery.data?.estimationWorkflowVersion === 3;
-  const reviews = useQuery({ queryKey: estimateWorkflowKeys.client, queryFn: getClientEstimates, enabled: projectQuery.isSuccess && requiresPublication, retry: false });
+  const reviews = useClientEstimates();
   if (projectQuery.isPending) return <AsyncState state="loading" message="Loading your project…" />;
   if (projectQuery.isError) return <AsyncState state="error" message="We couldn't load this project." actionLabel="Try again" onAction={() => void projectQuery.refetch()} />;
   const project = projectQuery.data;
   const sharedEstimation = project.estimationWorkflowVersion === 3;
-  const matchingReviews = reviews.isSuccess ? reviews.data.filter(estimate => estimate.projectId === projectId) : [];
+  const matchingReviews = reviews.isSuccess ? (reviews.data ?? []).filter(estimate => estimate.projectId === projectId) : [];
   const showSubmittedSections = !requiresPublication || matchingReviews.length === 1 && Boolean(matchingReviews[0]!.publishedReview) && !matchingReviews[0]!.reviewSourceIssue;
   const versions = (versionsQuery.data ?? []).filter((version) => version.approvalStatus === "approved" && version.clientVisible);
   return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
-    <PageHeader id="client-project-title" title={project.name} description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<><ProjectId projectNumber={project.projectNumber} /><span className="client-project-status">{project.status.replaceAll("_", " ")}</span></>} actions={sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} presentation="client-project" /> : undefined} />
-    {!sharedEstimation ? <><ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />{showSubmittedSections ? <PMCounterpartPanel projectId={projectId} /> : null}</> : null}
-    {project.estimationWorkflowVersion === 2 && showSubmittedSections ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
+    <PageHeader id="client-project-title" title={project.name} description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<><ProjectId projectNumber={project.projectNumber} /><span className="client-project-status">{project.status.replaceAll("_", " ")}</span></>} actions={<div className="project-status-header-actions">{sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} presentation="client-project" showStatus={false} /> : null}<ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" /></div>} />
+    {!sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} showStatus={false} /> : null}
     {project.estimationWorkflowVersion === 2 ? <ClientEstimateTiers key={`tiers-${projectId}`} projectId={projectId} /> : null}
     {project.estimationWorkflowVersion === 3 ? <ClientEstimationWorkspace key={`quotation-${projectId}`} projectId={projectId} />
       : <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} />}
-    {sharedEstimation && showSubmittedSections ? <><ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} compact /><PMCounterpartPanel key={`coordination-${projectId}`} projectId={projectId} /></> : null}
     <div className="client-project-workflow" ref={setTimelineContainer} />
     <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" showDesignRequirements={showSubmittedSections} />
     <ClientSiteCompletionReview key={`site-completion-${projectId}`} projectId={projectId} />
     <ClientVendorWorkReview key={`vendor-work-${projectId}`} projectId={projectId} />
     {project.floors.length ? <details key={`floors-${projectId}`} className="client-project-disclosure">
-      <summary>Floor progress <span>{project.floors.length} {project.floors.length === 1 ? "floor" : "floors"}</span></summary>
-      <section className="client-floor-progress" aria-label="Floor progress">
-        {project.floors.slice().sort((left, right) => left.order - right.order).map((floor) => <article key={floor.id} className="client-floor-card"><div><p>Floor {floor.number}</p><h3>{floor.name}</h3></div><div><strong>{floor.progress}% complete</strong><ProgressBar value={floor.progress} label={`${floor.name}: ${floor.progress}% complete`} /></div></article>)}
+      <summary>Floors <span>{project.floors.length} {project.floors.length === 1 ? "floor" : "floors"}</span></summary>
+      <section className="client-floor-progress" aria-label="Floors">
+        {project.floors.slice().sort((left, right) => left.order - right.order).map((floor) => <article key={floor.id} className="client-floor-card"><div><p>Floor {floor.number}</p><h3>{floor.name}</h3></div></article>)}
       </section>
     </details> : null}
     <DesignSectionReview key={`reviews-${projectId}`} projectId={projectId} mode="client" hideWhenEmpty collapsible />

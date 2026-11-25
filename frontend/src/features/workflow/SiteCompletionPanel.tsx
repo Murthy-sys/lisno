@@ -63,7 +63,7 @@ export function SiteCompletionPanel({ projectId, projectName, onDirty, onBusy }:
     save.mutate({ progress: value, note: shownNote.trim() });
   }
   return <section className="site-completion" aria-labelledby={`site-completion-${projectId}`}>
-    <div className="site-completion__heading"><div><p>Project Manager handoff</p><h2 id={`site-completion-${projectId}`}>{projectName} completion</h2></div><div className="site-completion__saved"><span>Saved progress</span><strong>{current.progress}%</strong></div></div>
+    <div className="site-completion__heading"><div><p>Project Manager handoff</p><h2 id={`site-completion-${projectId}`}>{projectName} completion</h2></div></div>
     {message ? <p role="status">{message}</p> : null}
     {current.status === "changes_requested" && current.review?.decision?.reason ? <p className="site-completion__change">Client requested changes: {current.review.decision.reason}</p> : null}
     {current.status === "pending_client" ? <p role="status">Completion is with the Client for review.</p> : null}

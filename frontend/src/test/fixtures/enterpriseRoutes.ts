@@ -658,11 +658,11 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     if (galleryProject && galleryProject.projectId !== "project-one" && path.endsWith("/baskets")) return {
       projectId: galleryProject.projectId,
       estimateSource: { estimateId: galleryProject.estimateId, estimateVersion: galleryProject.estimateVersion, estimateReviewRoundId: null },
-      baskets: [], modeGroups: procurement.qaEmptyModeGroups()
+      baskets: [], modeGroups: procurement.qaEmptyModeGroups(), priorityGroups: []
     };
   }
   if (groupFixture && path === "/procurement/projects/project-one/baskets") return empty
-    ? { ...groupFixture.list, baskets: [], modeGroups: procurement.qaEmptyModeGroups() } : groupFixture.list;
+    ? { ...groupFixture.list, baskets: [], modeGroups: procurement.qaEmptyModeGroups(), priorityGroups: [] } : groupFixture.list;
   if (groupFixture && /^\/procurement\/projects\/project-one\/baskets\/[^/]+(?:\/enquiries|\/vendor-candidates)?$/.test(path)) {
     if (path.endsWith("/enquiries")) return [];
     if (path.endsWith("/vendor-candidates")) return { projectCity: { name: "Bengaluru", key: "bengaluru" },
@@ -671,6 +671,7 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   }
   if (path === "/procurement/projects/project-one/baskets") return syntheticBasketReady ? {
     projectId: "project-one", estimateSource: visibleCompactBasket.estimateSource,
+    priorityGroups: procurement.qaUnassignedPriorityGroups(visibleCompactBasket),
     modeGroups: compactBasketModeGroups(visibleCompactBasket, standardBasketReady || standardBasketUnverified ? "sub_vendor" : "pmc"),
     baskets: [{ id: visibleCompactBasket.id, name: visibleCompactBasket.name,
       classification: visibleCompactBasket.classification, automaticSubVendor: visibleCompactBasket.automaticSubVendor,
@@ -682,6 +683,12 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
       committedNetPaise: visibleCompactBasket.committedNetPaise, state: visibleCompactBasket.state }]
   } : {
     projectId: "project-one", estimateSource: qaProcurementModePreparation.estimateSource,
+    priorityGroups: empty ? [] : [{ priority: "unassigned", lineCount: 2, items: [
+      { sourceLineItemKey: "living-room:CA01", mainLineName: "Wardrobe plywood and laminate", roomId: "living-room", roomName: "Living Room" },
+      { sourceLineItemKey: "bedroom:CA02", mainLineName: "Bedside table", roomId: "bedroom", roomName: "Bedroom" }
+    ].map(line => ({ ...line, basketId: "basket-carpentry", basketName: "Carpentry", mainLineId: null,
+      subBasketId: null, subBasketName: null, mode: "unrecorded", scope: "included",
+      resolution: { state: "legacy", value: null, revision: null } })) }],
     modeGroups: empty ? procurement.qaEmptyModeGroups() : [...procurement.qaEmptyModeGroups(), {
       ...procurement.qaEmptyModeMetrics, mode: "unrecorded", basketCount: 1, includedLineCount: 2,
       readinessPercent: 0, approvedEstimatePaise: 250_000, currentCostPaise: null,

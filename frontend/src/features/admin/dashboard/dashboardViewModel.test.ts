@@ -44,7 +44,7 @@ describe("dashboard presentation sources", () => {
   });
   it.each(DASHBOARD_TABS)("selects the expected headline metrics without discarding secondary values for %s", (tab) => {
     const metrics = getDashboardMetrics(tab, fixture);
-    expect(metrics.primary).toHaveLength(tab === "overview" ? 5 : 4);
+    expect(metrics.primary).toHaveLength(tab === "overview" ? 5 : tab === "execution" ? 3 : 4);
     expect(new Set([...metrics.primary, ...metrics.secondary].map((metric) => metric.label)).size)
       .toBe(metrics.primary.length + metrics.secondary.length);
     expect(metricsTable(tab, fixture).rows).toHaveLength(metrics.primary.length + metrics.secondary.length);
@@ -84,7 +84,11 @@ describe("dashboard presentation sources", () => {
   it("describes average denominators without presenting summed scores as record counts", () => {
     const workforce = getDashboardMetrics("workforce", fixture);
     expect(workforce.primary.find((metric) => metric.label === "Average calculated KPI")?.detail).toBe("Based on 1 eligible worker");
-    const procurement = getDashboardMetrics("procurement", fixture);
-    expect([...procurement.primary, ...procurement.secondary].find((metric) => metric.label === "Average persisted progress")?.detail).toBe("Average across 1 tracked task");
+  });
+
+  it.each(["overview", "procurement", "execution"] as const)("omits project progress from %s metrics and their reports", (tab) => {
+    const metrics = getDashboardMetrics(tab, fixture);
+    expect([...metrics.primary, ...metrics.secondary].map((metric) => metric.label)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^(Procurement progress|Execution progress|Weighted progress|Average persisted progress)$/)]));
+    expect(JSON.stringify(metricsTable(tab, fixture))).not.toMatch(/Weighted progress|Average persisted progress|Procurement progress|Execution progress/);
   });
 });

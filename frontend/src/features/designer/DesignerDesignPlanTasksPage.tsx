@@ -10,6 +10,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
@@ -244,10 +245,10 @@ export function DesignerDesignPlanTasksPage() {
                   <h2 id="designer-plan-project-title">{task.projectName}</h2>
                   <ProjectId projectNumber={task.projectNumber} />
                 </div>
-                <StatusBadge
-                  tone={statusTones[task.status]}
-                  label={statusLabels[task.status]}
-                />
+                <div className="project-status-header-actions">
+                  <StatusBadge tone={statusTones[task.status]} label={statusLabels[task.status]} />
+                  {task.projectId ? <ProjectStatusButton projectId={task.projectId} projectName={task.projectName} presentation="chip" /> : null}
+                </div>
               </div>
               <dl>
                 <div><dt>Client</dt><dd>{task.clientName}</dd></div>

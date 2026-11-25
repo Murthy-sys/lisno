@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -103,7 +104,8 @@ function EstimatePageContent({ projectId, returnTo }: { projectId: string; retur
           <div className="pm-estimates__source"><PMBadge value="Read only" />{estimate.source ? <span>{pmApprovedPhaseLabel(estimate.source.phase)} · Version {estimate.source.estimateVersion}</span> : null}</div>
           {estimate.approvedAt ? <p className="pm-estimates__approval">Approved {pmDate(estimate.approvedAt)}</p> : null}
         </div>
-        <Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh estimate</Button>
+        <div className="project-status-header-actions"><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh estimate</Button>
+          {estimate.project.id === projectId ? <ProjectStatusButton projectId={estimate.project.id} projectName={estimate.project.name} presentation="chip" /> : null}</div>
       </header>
       {estimate.availability !== "available" || !estimate.source ? <PMEmpty title="Approved estimate unavailable">{estimate.reason ?? "An approved estimate will appear here when its source is ready."}</PMEmpty> : <>
         <section className="pm-estimates__commercial" aria-label="Approved commercial summary">

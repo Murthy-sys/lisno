@@ -414,6 +414,26 @@
   position: relative;
 }
 
+.ui-drawer__header:has(.ui-drawer__header-actions) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.ui-drawer__header-actions {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ui-drawer__header:has(.ui-drawer__header-actions) > .ui-drawer__close {
+  grid-column: 2;
+  grid-row: 1;
+}
+
 .ui-drawer--contextual .ui-drawer__header {
   padding-block: max(var(--space-4), env(safe-area-inset-top)) var(--space-4);
   padding-inline: max(var(--space-4), env(safe-area-inset-left)) max(var(--space-4), env(safe-area-inset-right));

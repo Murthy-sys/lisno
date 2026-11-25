@@ -3,13 +3,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { Button } from "../../../components/ui/Button";
-import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { StatusBadge } from "../../../components/ui/StatusBadge";
 import { Surface } from "../../../components/ui/Surface";
 import {
   formatBps,
   formatDashboardDate,
-  formatDashboardRatio,
   formatNullablePaise,
   formatPaise,
   humanize,
@@ -44,12 +42,11 @@ function ModuleSummary({ tab, row, dataQuality }: { tab: DashboardTab; row: Dash
   if (tab === "procurement") {
     if (!row.procurement) return <span>Not available · not eligible</span>;
     const metrics = [
-      dashboardMetricPresentation(dataQuality, "procurement.averageProgress", `${row.procurement.progress}%`),
       dashboardMetricPresentation(dataQuality, "procurement.postedSpendPaise", formatPaise(row.procurement.postedSpendPaise)),
       dashboardMetricPresentation(dataQuality, "procurement.approvedAmountPaise", formatNullablePaise(row.procurement.approvedAmountPaise))
     ];
     const unavailable = metrics.find((metric) => metric.unavailable);
-    return <span>{humanize(row.procurement.status)} · {metrics[0].value} · {metrics[1].value} posted of {metrics[2].value} approved{unavailable ? <small>{unavailable.detail}</small> : null}</span>;
+    return <span>{humanize(row.procurement.status)} · {metrics[0].value} posted of {metrics[1].value} approved{unavailable ? <small>{unavailable.detail}</small> : null}</span>;
   }
   if (tab === "finance") {
     if (!row.finance) return <span>Not available · no approved finance baseline</span>;
@@ -64,11 +61,10 @@ function ModuleSummary({ tab, row, dataQuality }: { tab: DashboardTab; row: Dash
   if (tab === "execution") {
     const metrics = [
       dashboardMetricPresentation(dataQuality, "execution.taskCount", row.execution.taskCount),
-      dashboardMetricPresentation(dataQuality, "execution.overdueTaskCount", row.execution.overdueTaskCount),
-      dashboardMetricPresentation(dataQuality, "execution.weightedProgress", formatDashboardRatio(row.execution.progress))
+      dashboardMetricPresentation(dataQuality, "execution.overdueTaskCount", row.execution.overdueTaskCount)
     ];
     const unavailable = metrics.find((metric) => metric.unavailable);
-    return <span>{metrics[0].value} tasks · {metrics[1].value} overdue · {metrics[2].value} weighted progress{unavailable ? <small>{unavailable.detail}</small> : null}</span>;
+    return <span>{metrics[0].value} tasks · {metrics[1].value} overdue{unavailable ? <small>{unavailable.detail}</small> : null}</span>;
   }
   if (tab === "risk") return (
     isDashboardMetricUnavailable(dataQuality, "risk.factorDistribution") ? (
@@ -112,7 +108,7 @@ function ProjectRow({ tab, row, dataQuality, mobile = false }: { tab: DashboardT
     <tr>
       <th scope="row"><Link to={link}>{row.projectName}</Link><small><ProjectId projectNumber={row.projectNumber} /></small><small>{row.location}</small></th>
       <td>{humanize(row.projectStatus)}</td>
-      <td><ModuleSummary tab={tab} row={row} dataQuality={dataQuality} />{tab === "procurement" && row.procurement && !isDashboardMetricUnavailable(dataQuality, "procurement.averageProgress") ? <ProgressBar value={row.procurement.progress} label={`${row.projectName} procurement progress`} valueText={`${row.procurement.progress}%`} /> : null}</td>
+      <td><ModuleSummary tab={tab} row={row} dataQuality={dataQuality} /></td>
       <td>{formatDashboardDate(row.plannedEndAt)}</td>
       <td><StatusBadge label={risk.label} tone={risk.tone} reason={riskUnavailable ? dashboardMetricUnavailableReason(dataQuality, "risk.projectDistribution") : row.risk.factors[0]?.reason} /></td>
       <td><Link to={link}>Open</Link></td>

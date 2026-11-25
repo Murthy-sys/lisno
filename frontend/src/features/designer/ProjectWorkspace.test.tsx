@@ -492,6 +492,9 @@ describe("ProjectWorkspace", () => {
 
     expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
     const floorButton = screen.getByRole("button", { name: /Ground Floor/ });
+    expect(floorButton).toHaveAccessibleName("Floor G Ground Floor");
+    expect(within(floorButton).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(floorButton).queryByText(/\d+%/)).not.toBeInTheDocument();
     expect(floorButton).toHaveAttribute("aria-expanded", "false");
     await expandTask();
     expect(floorButton).toHaveAttribute("aria-expanded", "true");

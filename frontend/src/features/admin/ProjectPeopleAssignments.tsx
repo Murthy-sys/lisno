@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { AdminProjectSummary } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
@@ -7,39 +8,50 @@ import { canAssignProjectCoordination, isDesignerAssignmentPending } from "./adm
 
 export type ProjectAssignmentArea = "procurement" | "manager" | "designer" | "trades";
 
-export function ProjectPeopleAssignments({ project, canAssignDesigner, canAssignWorkers, canManageProjectManager, area, onAreaChange }: {
+interface ProjectPeopleAssignmentsProps {
   project: AdminProjectSummary;
   canAssignDesigner: boolean;
   canAssignWorkers: boolean;
   canManageProjectManager: boolean;
   area: ProjectAssignmentArea | null;
   onAreaChange: (area: ProjectAssignmentArea) => void;
-}) {
+  presentation?: "standard" | "primary";
+}
+
+export function ProjectPeopleAssignments(props: ProjectPeopleAssignmentsProps) {
+  return <AssignmentsForProject key={`${props.project.id}:${props.presentation ?? "standard"}`} {...props} />;
+}
+
+function AssignmentsForProject({ project, canAssignDesigner, canAssignWorkers, canManageProjectManager, area, onAreaChange, presentation = "standard" }: ProjectPeopleAssignmentsProps) {
+  const primary = presentation === "primary";
   const areas: Array<{ id: ProjectAssignmentArea; label: string }> = [
+    ...(primary ? [{ id: "designer" as const, label: "Designer" }] : []),
     ...(canAssignWorkers ? [{ id: "procurement" as const, label: "Procurement" }] : []),
     ...(canManageProjectManager || canAssignWorkers ? [{ id: "manager" as const, label: "Project Manager" }] : []),
-    { id: "designer", label: "Designer" },
-    ...(canAssignWorkers ? [{ id: "trades" as const, label: "Trade teams" }] : [])
+    ...(!primary ? [{ id: "designer" as const, label: "Designer" }] : []),
+    ...(!primary && canAssignWorkers ? [{ id: "trades" as const, label: "Trade teams" }] : [])
   ];
-  const initialArea = canAssignWorkers && canAssignProjectCoordination(project) && !isDesignerAssignmentPending(project) ? "procurement" : "designer";
-  const active = areas.some(item => item.id === area) ? area : initialArea;
-  return <section id="project-people-assignments" className="project-people-assignments" aria-labelledby="project-people-assignments-title">
-    <header><h2 id="project-people-assignments-title">People &amp; assignments</h2><p>Choose a responsibility to view its current owner and manage the assignment.</p></header>
+  const initialArea = !primary && canAssignWorkers && canAssignProjectCoordination(project) && !isDesignerAssignmentPending(project) ? "procurement" : "designer";
+  const active = area && areas.some(item => item.id === area) ? area : initialArea;
+  const [visited, setVisited] = useState<ReadonlySet<ProjectAssignmentArea>>(() => new Set());
+  useEffect(() => {
+    if (primary) setVisited(previous => previous.has(active) ? previous : new Set([...previous, active]));
+  }, [active, primary]);
+
+  function editor(responsibility: ProjectAssignmentArea) {
+    if (responsibility === "designer") return <DesignAssignmentPanel project={project} canManage={canAssignDesigner} />;
+    if (responsibility === "manager" && canManageProjectManager) return <ProcurementProjectIdentityPanel projectId={project.id} defaultOpen assignmentOnly={primary} />;
+    return <WorkerAssignmentPanel project={project} assignmentArea={responsibility} defaultExpanded={responsibility === "trades"} />;
+  }
+
+  return <section id="project-people-assignments" className="project-people-assignments" data-presentation={presentation} aria-labelledby="project-people-assignments-title">
+    <header><h2 id="project-people-assignments-title" tabIndex={-1}>People &amp; assignments</h2><p>Choose a responsibility to view its current owner and manage the assignment.</p></header>
     <div className="project-people-assignments__navigation" role="group" aria-label="Assignment responsibility">
       {areas.map(item => <Button key={item.id} variant="quiet" aria-pressed={active === item.id} aria-controls={`project-people-${item.id}`}
         onClick={() => onAreaChange(item.id)}>{item.label}</Button>)}
     </div>
-    {canAssignWorkers ? <div id="project-people-procurement" hidden={active !== "procurement"}>
-      <WorkerAssignmentPanel project={project} assignmentArea="procurement" />
-    </div> : null}
-    {canManageProjectManager || canAssignWorkers ? <div id="project-people-manager" hidden={active !== "manager"}>
-      {canManageProjectManager ? <ProcurementProjectIdentityPanel key={project.id} projectId={project.id} defaultOpen /> : <WorkerAssignmentPanel project={project} assignmentArea="manager" />}
-    </div> : null}
-    <div id="project-people-designer" hidden={active !== "designer"}>
-      <DesignAssignmentPanel key={project.id} project={project} canManage={canAssignDesigner} />
-    </div>
-    {canAssignWorkers ? <div id="project-people-trades" hidden={active !== "trades"}>
-      <WorkerAssignmentPanel project={project} assignmentArea="trades" defaultExpanded />
-    </div> : null}
+    {areas.map(item => <div key={item.id} id={`project-people-${item.id}`} hidden={active !== item.id} inert={active !== item.id}>
+      {!primary || active === item.id || visited.has(item.id) ? editor(item.id) : null}
+    </div>)}
   </section>;
 }

@@ -192,7 +192,7 @@ describe("staff immutable estimate revision reads", () => {
       lineItems: [{ id: "configured-line", source: "configuration", catalogueId: "line-old", roomId: "room-a", roomName: "Saved kitchen", specification: null,
         unit: "sq-ft", quantity: 12, included: true, rate: 275, amount: 3300, ratePaise: 27500, amountPaise: 330000,
         mainBasketId: "basket-old", subBasketId: "sub-old", mainLineId: "line-old", revisionId: "configuration-rev-old", mainBasketName: "Saved basket", subBasketName: "Saved sub-basket", mainLineName: "Saved line",
-        uomId: "uom-old", uomName: "sq-ft", uomCode: "SQFT", uomDecimalScale: 2, classification: "special", modeTier: "premium", pricingMode: "pmc", rateSource: "manual",
+        uomId: "uom-old", uomName: "sq-ft", uomCode: "SQFT", uomDecimalScale: 2, classification: "special", customizationType: "custom", modeTier: "premium", pricingMode: "pmc", rateSource: "manual",
         sourceItemStatus: "draft", sourceRevisionStatus: "superseded", sourceItemVersion: 2, sourceRevisionVersion: 3, clientVisible: false,
         dimensionsMandatory: true, dimensions: { length: "3", width: "4", height: "", privateToken: "must-not-leak" },
         dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom-old", decimalScale: 2, privateToken: "must-not-leak" } }] };
@@ -200,7 +200,7 @@ describe("staff immutable estimate revision reads", () => {
     const data = (await get("/round-configured").expect(200)).body.data;
     expect(data.snapshot.lineItems).toHaveLength(1);
     expect(data.snapshot.lineItems[0]).toMatchObject({ amountPaise: 330000, mainLineName: "Saved line", revisionId: "configuration-rev-old", sourceRevisionVersion: 3, sourceRevisionStatus: "superseded", clientVisible: false,
-      dimensions: { length: "3", width: "4", height: "" }, modeTier: "premium", classification: "special" });
+      dimensions: { length: "3", width: "4", height: "" }, modeTier: "premium", classification: "special", customizationType: "custom" });
     expect(data.subtotalPaise).toBe(330000);
     expect(JSON.stringify(data)).not.toContain("must-not-leak");
   });

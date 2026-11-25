@@ -42,15 +42,18 @@ describe("client screen visibility projection", () => {
     expect(screen.queryByText(/Rate unavailable|Component selling amounts|Finishes/)).not.toBeInTheDocument();
   });
 
-  it("shows the submitted rounding adjustment alongside the saved GST without changing line amounts", () => {
+  it("includes saved GST and rounding in the single submitted total without changing line amounts", () => {
     const estimate = projectedEstimate(true);
     Object.assign(estimate.publishedReview!.snapshot, { subtotal: 86.64, subtotalPaise: 8664, gst: 15.6, gstPaise: 1560,
       total: 102, totalPaise: 10200, roundOffPaise: -24 });
     renderWithQuery(<ClientQuotationSubmittedView estimate={estimate} workspace={false} canDecide={false}
       refreshing={false} onEdit={() => {}} onRefresh={async () => true} />);
-    expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹102");
-    expect(screen.getByText("GST").nextElementSibling).toHaveTextContent("₹15.6");
-    expect(screen.getByText("Round off").nextElementSibling).toHaveTextContent("−₹0.24");
+    expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹102.00");
+    expect(screen.getByText("Total payable inclusive of all charges").nextElementSibling).toHaveTextContent("₹102.00");
+    const summary = screen.getByRole("region", { name: "Price summary" });
+    expect(within(summary).queryByText("GST")).not.toBeInTheDocument();
+    expect(within(summary).queryByText("Round off")).not.toBeInTheDocument();
+    expect(summary.querySelectorAll("dd")).toHaveLength(1);
     expect(screen.getByText("Rate").nextElementSibling).toHaveTextContent("₹100.00");
   });
   it.each([undefined, 48])("preserves published totals and only displays recorded round off (%s)", roundOffPaise => {
@@ -192,13 +195,16 @@ it.each([0, 29500])("shows the frozen PMC obligation and recipients in approval 
   expect(dialog.getByRole("button", { name: "Confirm approval" })).toBeEnabled();
 });
 
-it("retains authorized PMC recipient totals when all item details are hidden", () => {
+it("retains the authorized total including PMC charges when all item details are hidden", () => {
   const estimate = splitEstimate();
   estimate.publishedReview!.snapshot.lineItems = [];
   renderWithQuery(<ClientQuotationSubmittedView estimate={estimate} workspace={false} canDecide refreshing={false}
     onEdit={() => {}} onRefresh={async () => true} />);
-  expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹442.5");
-  expect(screen.getByText("PMC payable to Lisno").nextElementSibling).toHaveTextContent("₹29.5");
+  expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹442.50");
+  expect(screen.getByText("Total payable inclusive of all charges").nextElementSibling).toHaveTextContent("₹442.50");
+  const summary = screen.getByRole("region", { name: "Price summary" });
+  expect(within(summary).queryByText(/PMC payable to/)).not.toBeInTheDocument();
+  expect(summary.querySelectorAll("dd")).toHaveLength(1);
   expect(screen.queryByText("Wall painting")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Approve quotation" })).toBeEnabled();
 });

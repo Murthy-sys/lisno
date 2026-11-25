@@ -6,6 +6,7 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { formatPaise } from "../finance/ProjectFinancePanel";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { vendorWorkProgressKey } from "../workflow/VendorWorkProgressPanel";
 import { purchaseOrderKeys } from "./purchaseOrderApi";
 import {
@@ -82,7 +83,9 @@ function ApprovalDetail({ item, onBack }: { item: BasketApprovalQueueItem; onBac
   const roleSlot = item.slot === "budget_override" ? null : item.slot;
   const roleRows = roleSlot ? award.proposal.milestones.filter((milestone) => milestone.reviewerSlots?.includes(roleSlot)) : [];
   const recordedChips = award.proposal.milestones.every((milestone) => milestone.reviewerSlots !== undefined);
-  return <section className="procurement-basket__approval-detail" aria-labelledby="approval-detail-title"><button type="button" onClick={onBack}>← Back to approvals</button><div className="procurement-basket__monitor-head"><div><p className="eyebrow">{item.projectName} / {item.basketName}</p><h2 id="approval-detail-title">{item.vendorName}</h2><p>{approvalName(item.slot)} decision · Proposal revision {award.proposal.revision}</p></div><strong>{formatPaise(award.proposal.totals.totalPaise)}</strong></div>
+  return <section className="procurement-basket__approval-detail" aria-labelledby="approval-detail-title"><button type="button" onClick={onBack}>← Back to approvals</button><div className="procurement-basket__monitor-head"><div><p className="eyebrow">{item.projectName} / {item.basketName}</p><h2 id="approval-detail-title">{item.vendorName}</h2><p>{approvalName(item.slot)} decision · Proposal revision {award.proposal.revision}</p></div><div className="project-status-header-actions"><strong>{formatPaise(award.proposal.totals.totalPaise)}</strong>
+      {award.id === item.awardId && award.projectId === item.projectId && award.projectId?.trim() ? <ProjectStatusButton projectId={award.projectId} projectName={item.projectName} presentation="chip" /> : null}
+    </div></div>
     <p className="procurement-basket__approval-note">Review the frozen bid, approved estimate comparison and payment schedule before deciding. Your decision applies only to this proposal revision.</p>
     <dl className="procurement-basket__monitor-totals"><div><dt>Quote before GST</dt><dd>{formatPaise(award.proposal.totals.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(award.proposal.totals.gstPaise)}</dd></div><div><dt>Gross award</dt><dd>{formatPaise(award.proposal.totals.totalPaise)}</dd></div><div><dt>Approved basket estimate</dt><dd>{formatPaise(award.proposal.approvedEstimatePaise)}</dd></div><div><dt>Already committed net</dt><dd>{formatPaise(award.proposal.committedNetPaise)}</dd></div></dl>
     <div className="procurement-basket__table-wrap"><table aria-label="Proposed work order lines and details"><thead><tr><th scope="col">Awarded line</th><th scope="col">Quantity</th><th scope="col">Rate</th><th scope="col">Net</th><th scope="col">Scope</th><th scope="col">Target date</th><th scope="col">Delivery location</th></tr></thead><tbody>{award.lines.map((line) => {

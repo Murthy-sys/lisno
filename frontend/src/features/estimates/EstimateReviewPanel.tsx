@@ -14,10 +14,10 @@ import {
   downloadClientEstimatePdf,
   estimateWorkflowKeys,
   type EstimateQueueItem,
-  getClientEstimates,
   getEstimateDesigners,
   getEstimateReviewQueue
 } from "./estimateWorkflowApi";
+import { useClientEstimates } from "./clientEstimateQuery";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { ClientPublishedEstimate } from "./ClientPublishedEstimate";
 import { clientEstimateMoney, clientEstimateTotal } from "./estimatePmcPaymentPresentation";
@@ -31,11 +31,12 @@ export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlo
   const queryClient = useQueryClient();
   const [designerByEstimate, setDesignerByEstimate] = useState<Record<string, string>>({});
   const [noteByEstimate, setNoteByEstimate] = useState<Record<string, string>>({});
-  const queue = useQuery({
-    queryKey: role === "client" ? estimateWorkflowKeys.client : estimateWorkflowKeys.reviewQueue,
-    queryFn: role === "client" ? getClientEstimates : getEstimateReviewQueue,
-    refetchOnMount
+  const clientQueue = useClientEstimates(role === "client");
+  const staffQueue = useQuery({
+    queryKey: estimateWorkflowKeys.reviewQueue, queryFn: getEstimateReviewQueue,
+    enabled: role !== "client", refetchOnMount
   });
+  const queue = role === "client" ? clientQueue : staffQueue;
   const designers = useQuery({
     queryKey: estimateWorkflowKeys.designers,
     queryFn: getEstimateDesigners,
@@ -60,7 +61,7 @@ export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlo
   const panelTitle = projectId ? "Project estimate" : role === "client" ? "Estimates ready for you" : "Estimate approvals";
   if (queue.isPending) return <section className={panelClass}><h2>{panelTitle}</h2><p role="status">Loading submitted estimates…</p></section>;
   if (queue.isError) return <section className={panelClass}><h2>{panelTitle}</h2><p role="alert">Submitted estimates could not be loaded. Refresh before reviewing or making a decision.</p><Button variant="secondary" disabled={queue.isFetching} onClick={() => void queue.refetch()}>Retry estimates</Button></section>;
-  const visibleEstimates = workflowFilter === "legacy" ? queue.data.filter((estimate) => clientEstimateWorkflowVersion(estimate) !== 3) : queue.data;
+  const visibleEstimates = workflowFilter === "legacy" ? (queue.data ?? []).filter((estimate) => clientEstimateWorkflowVersion(estimate) !== 3) : queue.data ?? [];
   const estimates = projectId ? visibleEstimates.filter((estimate) => estimate.projectId === projectId) : visibleEstimates;
   if (projectId && estimates.length > 1) return <section className={panelClass}><h2>{panelTitle}</h2><p role="alert">The current estimate for this project could not be verified. Please contact your Sales team.</p></section>;
   if (!estimates.length) return <section className={panelClass}><p className="eyebrow">Estimate review</p><h2>{panelTitle}</h2><p className="inline-empty">{projectId ? "No submitted estimate is linked to this project yet. Your Sales team will share it here when it is ready." : "Nothing needs your action right now."}</p></section>;

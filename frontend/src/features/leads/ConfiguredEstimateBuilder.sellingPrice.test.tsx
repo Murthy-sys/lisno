@@ -94,14 +94,15 @@ describe("configured estimate selling prices", () => {
     const user = userEvent.setup();
     render(<SellingPriceBuilder paintClassification="special" />);
     const paint = paintRow();
-    expect(paint.queryByRole("group", { name: /Item type/ })).not.toBeInTheDocument();
+    expect(paint.getByRole("group", { name: /Item type/ })).toBeVisible();
     expect(paint.getByRole("radio", { name: /Signature tier for/ })).toBeChecked();
     expect(paint.getByRole("radio", { name: /Functional tier/ })).toBeDisabled();
     const inclusion = paint.getByRole("checkbox", { name: "Include Wall painting in Living room" });
     inclusion.focus();
     const controls = [
-      paint.getByRole("switch", { name: /PMC pricing mode/ }),
       paint.getByRole("radio", { name: /Signature tier for/ }),
+      paint.getByRole("switch", { name: /PMC pricing mode/ }),
+      paint.getByRole("radio", { name: /^Standard item type/ }),
       paint.getByRole("button", { name: /Decrease quantity/ }),
       paint.getByRole("spinbutton", { name: /Quantity/ }),
       paint.getByRole("button", { name: /Increase quantity/ }),

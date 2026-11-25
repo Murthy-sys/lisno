@@ -39,6 +39,7 @@ function installApi({ projectError, detail = false }: { projectError?: () => num
       if (status) return Response.json({ error: { code: "UNAVAILABLE", message: "Project list unavailable." } }, { status });
       return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
     }
+    if (url.endsWith("/client/estimates")) return Response.json({ data: [] });
     if (detail) {
       if (url.endsWith("/projects/project-villa")) return Response.json({ data: {
         ...summaries[0]!, clientId: client.id, initiatingDesignerId: "designer-1",
@@ -103,9 +104,9 @@ describe("Client project table interactions and authorization", () => {
     const rows = within(screen.getByRole("table", { name: "Projects" })).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByRole("link", { name: "Open project: Aurora Villa" })).toHaveAttribute("href", "/client/projects/project-villa");
-    expect(within(rows[0]!).getByText("64%")).toBeVisible();
+    expect(within(rows[0]!).queryByText("64%")).not.toBeInTheDocument();
     expect(within(rows[1]!).getByRole("link", { name: "Open project: Cedar Loft" })).toHaveAttribute("href", "/client/projects/project-loft");
-    expect(within(rows[1]!).getByText("0%")).toBeVisible();
+    expect(within(rows[1]!).queryByText("0%")).not.toBeInTheDocument();
     projectError = undefined;
     await userEvent.click(screen.getByRole("button", { name: "Refresh projects" }));
     await waitFor(() => expect(screen.queryByText(/Previously loaded projects are shown/)).not.toBeInTheDocument());
@@ -124,7 +125,7 @@ describe("Client project table interactions and authorization", () => {
     expect(within(rows[0]!).getByText("Project ID: Lisno000083")).toBeVisible();
     expect(within(rows[1]!).getByRole("link", { name: "Renamed villa" })).toHaveAttribute("href", "/client/projects/project-villa");
     expect(within(rows[1]!).getByText("Project ID: Lisno000021")).toBeVisible();
-    expect(within(rows[1]!).getByText("64%")).toBeVisible();
+    expect(within(rows[1]!).queryByText("64%")).not.toBeInTheDocument();
 
     act(() => queryClient.setQueryData(clientKeys.projects, [summaries[1]]));
     await waitFor(() => expect(screen.queryByRole("link", { name: "Open project: Renamed villa" })).not.toBeInTheDocument());

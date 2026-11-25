@@ -401,6 +401,7 @@ describe("ProcurementProjectPage", () => {
     const user = userEvent.setup();
     renderApp(["/procurement/projects/project-one"]);
 
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     expect(await screen.findByRole("heading", { name: "Main baskets" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Project baskets" })).toBeVisible();
     expect(screen.queryByText("History and open purchase requests")).not.toBeInTheDocument();
@@ -411,6 +412,7 @@ describe("ProcurementProjectPage", () => {
 
     await user.click(screen.getByRole("link", { name: "Back to projects" }));
     await user.click(await screen.findByRole("link", { name: "View procurement items for Aurora Villa" }));
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     expect(await screen.findByRole("heading", { name: "Main baskets" })).toBeVisible();
     expect(screen.queryByText("History and open purchase requests")).not.toBeInTheDocument();
     expect(screen.queryByText("Existing vendor work progress")).not.toBeInTheDocument();

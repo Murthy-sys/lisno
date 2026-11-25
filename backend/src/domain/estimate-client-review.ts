@@ -44,6 +44,7 @@ export type EstimateClientProofMimeType =
 
 export type ConfiguredEstimateItemType = "main_line" | "temporary";
 export type EstimateClassification = "standard" | "special";
+export type EstimateCustomizationType = "standard" | "custom";
 export interface SelectedMainBasketClassification {
   mainBasketId: string;
   classification: EstimateClassification;
@@ -80,6 +81,7 @@ export interface EstimateClientReviewSnapshot {
     /** Client quotation visibility; absent historical values remain visible. */
     clientVisible?: boolean;
     classification?: EstimateClassification;
+    customizationType?: EstimateCustomizationType;
     modeTier?: KnowledgeModeTier;
     dimensionsMandatory?: boolean;
     dimensions?: EstimateDimensions;

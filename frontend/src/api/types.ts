@@ -310,6 +310,7 @@ export interface EstimateClientReviewSnapshot {
     mainBasketId?: string;
     itemType?: "main_line" | "temporary";
     classification?: "standard" | "special";
+    customizationType?: "standard" | "custom";
     pricingMode?: "pmc" | "sub_vendor" | "in_house";
     pmcPaymentSplit?: EstimatePmcPaymentSplit;
     pmcVendorPayable?: true;

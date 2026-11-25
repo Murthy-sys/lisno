@@ -7,6 +7,7 @@ import { allocateEstimatePayables, estimatePriceIncludingGst } from "../../../..
 import { ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import { canonicalEstimateDimensions, estimateDimensionRulesEqual } from "../../../../shared/estimation/estimateDimensions";
 import { ProjectChatNavigation } from "../messages";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { Dialog } from "../../components/ui/Dialog";
 import { EstimateSubmissionChecklist } from "./EstimateSubmissionChecklist";
 import { EstimateSetupFields } from "../estimates/EstimateSetupFields";
@@ -518,6 +519,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         source: "configuration" as const,
         ...(supportsExpandedCatalogue ? { itemType: line.itemType } : {}),
         classification: line.classification ?? "standard",
+        ...(line.itemType === "main_line" ? { customizationType: line.customizationType ?? "standard" } : {}),
         modeTier: line.modeTier ?? "signature",
         ...(line.pricingMode !== undefined ? { pricingMode: line.pricingMode } : {}),
         ...(!configuredInHouseGoverned(line) && line.selectedInHouseComponentIds !== undefined ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}),
@@ -663,6 +665,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       const selectionUnchanged = submitted && submitted.included === line.included &&
         JSON.stringify(submitted.recommendationSourceMainLineIds) ===
           JSON.stringify(line.recommendationSourceMainLineIds);
+      const customizationUnchanged = submitted &&
+        (submitted.customizationType ?? "standard") === (line.customizationType ?? "standard");
       const snapshot = submittedState.get(line.key);
       const sourceUnchanged = snapshot && (snapshot.modeTier ?? "signature") === (line.modeTier ?? "signature") && snapshot.revisionId === line.revisionId &&
         snapshot.mainBasketId === line.mainBasketId && snapshot.subBasketId === line.subBasketId &&
@@ -680,6 +684,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       return stored ? {
         ...line,
         persistedId: stored.id,
+        ...(customizationUnchanged && line.itemType === "main_line"
+          ? { customizationType: stored.customizationType ?? "standard" } : {}),
         ...(sourceUnchanged ? {
           mainBasketId: stored.mainBasketId,
           mainBasketName: stored.mainBasketName,
@@ -1225,6 +1231,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (change.rateInput !== undefined || change.rateSource === "manual") return;
     if (change.included === false && !canRemoveConfiguredLines(new Set([key]))) return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
+    if (change.customizationType !== undefined && (!line?.included || line.itemType !== "main_line" ||
+      line.sourceMissing || line.roomMismatch || !catalogue.data || catalogue.isError || catalogue.isFetching || saved.isFetching)) return;
     if (line?.roomMismatch) {
       if (change.included !== false) return;
       const original = saved.data?.lineItems.find((entry): entry is ConfiguredEstimateLine =>
@@ -1504,9 +1512,11 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       }
     setPendingRemoval(null);
   };
-  const projectNavigation = leadItem.projectId && (!saved.data?.projectId || saved.data.projectId === leadItem.projectId)
-    ? <ProjectChatNavigation projectId={leadItem.projectId} overviewTo={`/estimator-sales/leads/${leadId}/estimate`} overviewLabel="Estimate" />
+  const statusProjectId = leadItem.projectId && (!saved.data?.projectId || saved.data.projectId === leadItem.projectId) ? leadItem.projectId : null;
+  const projectNavigation = statusProjectId
+    ? <ProjectChatNavigation projectId={statusProjectId} overviewTo={`/estimator-sales/leads/${leadId}/estimate`} overviewLabel="Estimate" showStatus={false} />
     : null;
+  const projectStatus = statusProjectId ? <ProjectStatusButton projectId={statusProjectId} presentation="chip" /> : null;
 
   const boundedBuilder = !historical && tab === "builder" && configuredMode && Boolean(catalogue.data || hasConfiguredSaved);
   const currentTools = <>
@@ -1580,7 +1590,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       className="estimate-workspace__back lead-detail__back-link">
       {navigationSaving ? "Saving…" : historical || !draftEditable ? "View baskets" : hasUnsavedChanges ? "Save and edit baskets" : "Edit baskets"}
     </button>;
-  const viewControls = tab !== "configure" ? <div className="estimate-workspace__view-controls">
+  const viewControls = tab !== "configure" ? <header className="estimate-workspace__view-controls">
     {backControl}
     <nav aria-label="Estimate views" className="estimate-workspace__tabs">{(["builder", "summary", "proposal"] as const).map(value =>
       <button type="button" key={value} disabled={navigationSaving} onClick={() => setTab(value)} aria-pressed={tab === value}><TabIcon tab={value} /> {value === "builder" ? "Estimate Builder" : value === "summary" ? "Summary" : "Proposal"}</button>
@@ -1588,11 +1598,12 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     <strong className="estimate-workspace__amount" aria-label={`Estimate amount including GST: ${displayedAmount}`}>{displayedAmount}<small className="estimate-workspace__amount-label" aria-hidden="true">incl. GST</small></strong>
     {!historical ? <div className="estimate-workspace__current-tools">{currentTools}{historyDenied ? <button type="button" className="button button--secondary" disabled={revisions.isFetching || saved.isFetching || lead.isFetching} onClick={() => void retryRevisionHistory()}>Retry revisions</button> : null}</div> : null}
     {projectNavigation ? <div className="estimate-workspace__messages">{projectNavigation}</div> : null}
-  </div> : null;
+    {projectStatus ? <div className="project-status-header-actions">{projectStatus}</div> : null}
+  </header> : null;
   return <section ref={workspaceRef} className={`estimate-workspace estimator-dashboard${tab === "configure" ? " estimate-workspace--configure-view" : " estimate-workspace--item-view estimate-workspace--revision-workspace"}${boundedBuilder || historical ? " estimate-workspace--compact-builder" : ""}`} aria-labelledby="estimate-title">
     {tab === "configure" ? <>
       {backControl}
-      <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">Configure estimate</h1><p>{leadItem.projectName} · {leadItem.location}<ProjectId className="estimate-workspace__project-number" projectNumber={saved.data?.projectNumber ?? leadItem.projectNumber} /></p></div><div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span></div></header>
+      <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">Configure estimate</h1><p>{leadItem.projectName} · {leadItem.location}<ProjectId className="estimate-workspace__project-number" projectNumber={saved.data?.projectNumber ?? leadItem.projectNumber} /></p></div><div className="project-status-header-actions"><div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span></div>{projectStatus}</div></header>
       {projectNavigation}
     </> : <><h1 id="estimate-title" className="sr-only">Estimate workspace</h1>{viewControls}</>}
     {!historical && publicationBlocked ? <p className="estimate-notice" role="status">{quotationWorkflow ? "Resolve client requests before submitting this quotation." : "Submission is unavailable until client requests are resolved and the current design scope is approved for post-estimation."}</p> : null}

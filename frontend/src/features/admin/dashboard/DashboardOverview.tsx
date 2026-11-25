@@ -65,22 +65,20 @@ function Ring({ percent, value }: { percent: number | null; value: string }) {
 
 function ModuleRings({ data, periodDays, showComparison }: { data: SuperAdminDashboardOverview; periodDays: number; showComparison: boolean }) {
   const ratios = [
-    { tab: "design" as const, label: "Design approval", key: "design.approvalRate", ratio: data.design.approvalRate },
-    { tab: "procurement" as const, label: "Procurement progress", key: "procurement.averageProgress", ratio: data.procurement.averageProgress },
-    { tab: "execution" as const, label: "Execution progress", key: "execution.weightedProgress", ratio: data.execution.weightedProgress }
+    { tab: "design" as const, label: "Design approval", key: "design.approvalRate", ratio: data.design.approvalRate }
   ].filter((item) => hasValue(data, item.key, item.ratio.rateBps) && item.ratio.denominator > 0);
   const estimationAvailable = hasValue(data, "estimation.clientApproved", data.estimation.clientApproved);
   if (!estimationAvailable && !ratios.length) return null;
   const tracked = hasValue(data, "estimation.trackedProjects", data.estimation.trackedProjects) ? data.estimation.trackedProjects : null;
   const estimationPercent = tracked !== null && tracked > 0 && data.estimation.clientApproved >= 0 && data.estimation.clientApproved <= tracked ? data.estimation.clientApproved * 100 / tracked : null;
   return <Surface as="section" className="dashboard-visual-panel dashboard-visual-panel--modules" aria-labelledby="dashboard-module-rings-heading">
-    <div className="dashboard-section-heading"><h3 id="dashboard-module-rings-heading">Module progress</h3><span>Current portfolio</span></div>
+    <div className="dashboard-section-heading"><h3 id="dashboard-module-rings-heading">Module approvals</h3><span>Current portfolio</span></div>
     <div className="dashboard-module-rings">
       {estimationAvailable ? <DetailLink target={{ tab: "estimation" }} origin="dashboard-module-estimation" data={data} periodDays={periodDays} showComparison={showComparison} className="dashboard-module-ring">
         <Ring percent={estimationPercent} value={data.estimation.clientApproved.toLocaleString("en-IN")} /><span className="dashboard-ring-label">Estimation approvals</span><small className="dashboard-ring-context">{tracked === null ? "Client approved" : `${data.estimation.clientApproved} of ${tracked} tracked`}</small>
       </DetailLink> : null}
       {ratios.map((item) => <DetailLink key={item.tab} target={{ tab: item.tab }} origin={`dashboard-module-${item.tab}`} data={data} periodDays={periodDays} showComparison={showComparison} className="dashboard-module-ring">
-        <Ring percent={item.ratio.rateBps! >= 0 && item.ratio.rateBps! <= 10_000 ? item.ratio.rateBps! / 100 : null} value={formatBps(item.ratio.rateBps)} /><span className="dashboard-ring-label">{item.label}</span><small className="dashboard-ring-context">{item.tab === "procurement" ? `Average across ${item.ratio.denominator} tracked tasks` : `${item.ratio.numerator} of ${item.ratio.denominator} ${item.tab === "execution" ? "effort units" : "eligible plans"}`}</small>
+        <Ring percent={item.ratio.rateBps! >= 0 && item.ratio.rateBps! <= 10_000 ? item.ratio.rateBps! / 100 : null} value={formatBps(item.ratio.rateBps)} /><span className="dashboard-ring-label">{item.label}</span><small className="dashboard-ring-context">{item.ratio.numerator} of {item.ratio.denominator} eligible plans</small>
       </DetailLink>)}
     </div>
   </Surface>;

@@ -28,7 +28,7 @@ const pendingTask: EstimateClientResponseTaskListItem = {
   createdAt: "2026-08-23T10:00:00.000Z"
 };
 
-function installAdmin() {
+function installAdmin(statusAccess = false) {
   tokenStorage.set("admin-client-response-token");
   server.use(
     http.get("/api/v1/auth/me", () =>
@@ -48,7 +48,8 @@ function installAdmin() {
           "identity.authorization.read",
           "estimation.client_response_tasks.read",
           "estimation.client_response_tasks.decide",
-          "estimation.client_response_proof.read"
+          "estimation.client_response_proof.read",
+          ...(statusAccess ? ["projects.status.read" as const] : [])
         ])
       })
     )
@@ -64,19 +65,59 @@ function page(
 
 describe("ClientResponseInboxPage", () => {
   it("opens a contextual summary for the selected response while retaining its full review route", async () => {
-    installAdmin();
-    server.use(http.get("/api/v1/admin/estimate-client-response-tasks", () => HttpResponse.json(page([pendingTask]))));
+    installAdmin(true);
+    const statusReads: string[] = [];
+    const otherTask = { ...pendingTask, id: "round-other", client: { name: "Nila", email: "nila@example.test" }, project: { id: "project-2", name: "Garden home" } };
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks", () => HttpResponse.json(page([pendingTask, otherTask]))),
+      http.get("/api/v1/projects/:projectId/status", ({ params }) => {
+        const projectId = String(params.projectId); statusReads.push(projectId);
+        return HttpResponse.json({ data: {
+          projectId, projectName: projectId === "project-1" ? "Aurora Villa" : "Garden home", projectStatus: "active", state: "active", serverNow: "2026-11-24T10:00:00Z", issue: null,
+          currentStage: { key: "estimate_approval", label: "Estimate approval" },
+          pendingActions: [{ id: `review-${projectId}`, stageKey: "estimate_approval", stageLabel: "Estimate approval", action: "Review quotation", state: "pending", responsibleRole: "client", people: [{ id: `owner-${projectId}`, name: projectId === "project-1" ? "First owner" : "Second owner", role: "client" }], scheduledAt: null, deadlineAt: null, blocker: null }]
+        } });
+      })
+    );
     const user = userEvent.setup();
     const { router } = renderApp(["/admin/client-responses"]);
     const trigger = await screen.findByRole("button", { name: "Summary Priya Shah response" });
+    expect(statusReads).toEqual([]);
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
     await user.click(trigger);
     const panel = screen.getByRole("dialog", { name: "Client response summary" });
+    const chip = await within(panel).findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(chip.closest(".ui-drawer__header")).not.toBeNull();
+    expect(chip).toHaveTextContent("First owner");
+    expect(statusReads).toEqual(["project-1"]);
+    expect(screen.getAllByRole("button", { name: /Project status/ })).toHaveLength(1);
     expect(within(panel).getByText("round-pending")).toBeVisible();
     expect(within(panel).getByText("Email sent")).toBeVisible();
     expect(within(panel).getByRole("link", { name: "Open full review" })).toHaveAttribute("href", "/admin/client-responses/round-pending");
     expect(router.state.location.pathname).toBe("/admin/client-responses");
     await user.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Summary Nila response" }));
+    const secondChip = await screen.findByRole("button", { name: "Project status for Garden home" });
+    expect(secondChip).toHaveTextContent("Second owner");
+    expect(screen.queryByText(/First owner/)).not.toBeInTheDocument();
+    expect(statusReads).toEqual(["project-1", "project-2"]);
+  });
+
+  it("omits a summary chip when the selected response has no linked project", async () => {
+    installAdmin(true);
+    const statusReads: string[] = [];
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks", () => HttpResponse.json(page([{ ...pendingTask, project: null }]))),
+      http.get("/api/v1/projects/:projectId/status", ({ params }) => { statusReads.push(String(params.projectId)); return HttpResponse.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 }); })
+    );
+    renderApp(["/admin/client-responses"]);
+    await userEvent.click(await screen.findByRole("button", { name: "Summary Priya Shah response" }));
+    expect(screen.getByRole("dialog", { name: "Client response summary" })).toHaveTextContent("Project unavailable");
+    expect(screen.queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(statusReads).toEqual([]);
+    expect(screen.getByRole("link", { name: "Open full review" })).toHaveAttribute("href", "/admin/client-responses/round-pending");
   });
 
   it("marks the inbox busy while loading and renders its server-scoped empty state", async () => {

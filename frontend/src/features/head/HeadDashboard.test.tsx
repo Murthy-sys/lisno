@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -81,10 +81,12 @@ describe("HeadDashboard", () => {
     expect(screen.getByRole("button", { name: /Aarav Shah/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /Meera Iyer/ })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: /Aarav Shah/ }));
-    expect(screen.getByRole("link", { name: /Aurora Villa/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Aurora Villa" })).toHaveAttribute(
       "href",
       "/head/projects/project-1"
     );
+    expect(within(screen.getByRole("list", { name: "Ananya Rao projects" })).queryByText(/\d+%/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Aarav Shah/ })).toHaveTextContent("100% evaluated");
     expect(screen.getByText("Zoya Sen")).toBeVisible();
     expect(await screen.findByText(/Head correction/)).toBeVisible();
     expect(screen.getByText(/design_head \(user-head\).*revision of evaluation-previous/)).toBeVisible();

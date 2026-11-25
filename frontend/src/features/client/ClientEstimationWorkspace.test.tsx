@@ -13,7 +13,7 @@ import { canReviewCurrentQuotation } from "./clientQuotationReview";
 import { estimateTiersKeys, type EstimateTiersDetail } from "./estimateTiersApi";
 import { quotationKeys, type QuotationDetail, type QuotationRevision } from "./quotationApi";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "client-one", role: "client" }, reviewSession: null }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "client-one", role: "client" }, reviewSession: null }) }));
 
 function fixture(phase: "pre" | "post" = "pre") {
   const source = { revisionId: "revision-one", itemVersion: 2, revisionVersion: 3, uomId: "unit" };
@@ -205,7 +205,7 @@ describe("Unified Client estimation", () => {
     expect(submitted).toHaveFocus();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     expect(within(submitted).getByRole("article", { name: "Submitted cabinet in Kitchen" })).toBeVisible();
-    expect(within(submitted).getByText("₹826")).toBeVisible();
+    expect(within(within(submitted).getByText("Submitted total including GST").closest("dl")!).getByText("₹826.00")).toBeVisible();
     expect(within(submitted).queryByText("₹1,180.00")).not.toBeInTheDocument();
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Approve quotation" }));

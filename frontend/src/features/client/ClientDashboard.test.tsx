@@ -1,10 +1,11 @@
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
-import type { ClientProjectSummary } from "../../api/types";
+import type { ClientProjectSummary, ProjectStatusSummary } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
+import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
 import { renderApp } from "../../test/render";
 
 const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
@@ -25,24 +26,60 @@ const summaries: ClientProjectSummary[] = [
   }
 ];
 
+const visibility = new Map<Element, IntersectionObserverCallback>();
+beforeEach(() => {
+  visibility.clear();
+  vi.stubGlobal("IntersectionObserver", class {
+    readonly root = null; readonly rootMargin = "0px"; readonly thresholds = [0];
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) { visibility.set(target, this.callback); }
+    unobserve(target: Element) { visibility.delete(target); }
+    disconnect() { for (const [target, callback] of visibility) if (callback === this.callback) visibility.delete(target); }
+    takeRecords() { return []; }
+  });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+async function showRows(rows: Element[]) {
+  await act(async () => {
+    rows.forEach(target => visibility.get(target)?.([{ target, isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+  });
+}
+
+function workflowStatus(projectId: string): ProjectStatusSummary {
+  const label = projectId.includes("loft") ? "Design approval" : "Estimate preparation";
+  return {
+    projectId, projectName: "Shared home", projectStatus: "planning", state: "active", serverNow: "2026-11-24T00:00:00Z", issue: null,
+    currentStage: { key: "estimate_approval", label },
+    pendingActions: [{ id: "action", stageKey: "estimate_approval", stageLabel: label, action: "Complete the current stage", state: "pending", responsibleRole: "client", people: [], scheduledAt: null, deadlineAt: null, blocker: null }]
+  };
+}
+
 function projectPage(items: readonly unknown[], offset = 0, total = items.length) {
   return Response.json({ data: { items, pagination: { limit: 100, offset, total, hasMore: offset + 100 < total } } });
 }
 
-function installApi(projectResponse: (url: string) => Response | Promise<Response> = () => projectPage(summaries)) {
+function installApi(projectResponse: (url: string) => Response | Promise<Response> = () => projectPage(summaries), noEstimates = false) {
   tokenStorage.set("client-token");
   return vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
     const url = String(input);
     if (url.endsWith("/auth/me")) return Response.json({ data: client });
     if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
     if (url.includes("/client/project-summaries?")) return projectResponse(url);
-    if (url.endsWith("/client/estimates")) return Response.json({ data: [] });
+    const status = url.match(/\/projects\/([^/]+)\/status$/);
+    if (status) return Response.json({ data: workflowStatus(decodeURIComponent(status[1]!)) });
+    if (url.endsWith("/client/estimates")) return Response.json({ data: noEstimates ? [] : ["project-villa", "project-loft", "project/villa ?#1", "project loft%2", "project-new"].map(projectId => withPublishedReview({
+      id: `estimate-${projectId}`, projectId, version: projectId.includes("loft") ? 4 : 3,
+      status: projectId.includes("loft") ? "client_approved" : "sent_to_client", propertyType: "Villa", rooms: [], scopes: [], lineItems: [],
+      subtotal: 0, gst: 0, total: 0, approvalRequired: true,
+      lead: { _id: `lead-${projectId}`, projectId, clientName: "Client", projectName: "Shared home", location: "Test" }
+    })) });
     throw new Error(`Unhandled request: ${url}`);
   });
 }
 
 describe("ClientDashboard project table", () => {
-  it("shows each project's existing values with direct links and no dashboard-only reads", async () => {
+  it("shows workflow stages for visible rows while preserving the other project values and direct links", async () => {
     const api = installApi();
     renderApp(["/client"]);
 
@@ -50,18 +87,25 @@ describe("ClientDashboard project table", () => {
     expect(screen.getByRole("heading", { name: "My projects", level: 1 })).toBeVisible();
     expect(screen.getByText("2 projects")).toBeVisible();
     expect(within(table).getAllByRole("columnheader").map(header => header.textContent)).toEqual([
-      "Project", "Location", "Status", "Progress", "Expected completion", "Action"
+      "Project", "Location", "Status", "Expected completion", "Action"
     ]);
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
+    expect(api.mock.calls.map(([input]) => String(input)).filter(url => !url.includes("/auth/"))).toEqual([
+      "/api/v1/client/project-summaries?limit=100&offset=0",
+      "/api/v1/client/estimates"
+    ]);
+    await showRows(rows);
+    await within(rows[0]!).findByText("Estimate");
+    await within(rows[1]!).findByText("Post approval");
     const expected = [
-      ["Bengaluru", "Active", "64%", "30 Sept 2026"],
-      ["Mysuru", "On hold", "17%", "30 Oct 2026"]
+      ["Bengaluru", "Estimate", "30 Sept 2026"],
+      ["Mysuru", "Post approval", "30 Oct 2026"]
     ];
     rows.forEach((row, index) => {
       const project = summaries[index]!;
       const cells = within(row).getAllByRole("cell");
-      expect(cells).toHaveLength(5);
+      expect(cells).toHaveLength(4);
       expect(within(within(row).getByRole("rowheader")).getByText(`Project ID: ${project.projectNumber}`)).toBeVisible();
       expected[index]!.forEach((value, column) => expect(cells[column]).toHaveTextContent(value));
       const name = within(row).getByRole("link", { name: project.name });
@@ -75,14 +119,17 @@ describe("ClientDashboard project table", () => {
     expect(screen.queryByRole("button", { name: /Project details:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.mock.calls.map(([input]) => String(input)).filter(url => !url.includes("/auth/"))).toEqual([
-      "/api/v1/client/project-summaries?limit=100&offset=0"
+      "/api/v1/client/project-summaries?limit=100&offset=0",
+      "/api/v1/client/estimates",
+      "/api/v1/projects/project-villa/status",
+      "/api/v1/projects/project-loft/status"
     ]);
   });
 
-  it("keeps public numbers and encoded destinations attached to stable IDs for same-named projects", async () => {
+  it("keeps different workflow stages, public numbers and destinations attached to same-named planning projects", async () => {
     const rows = [
-      { ...summaries[0]!, id: "project/villa ?#1", name: "Shared home" },
-      { ...summaries[1]!, id: "project loft%2", name: "Shared home" },
+      { ...summaries[0]!, id: "project/villa ?#1", name: "Shared home", status: "planning" },
+      { ...summaries[1]!, id: "project loft%2", name: "Shared home", status: "planning" },
       { ...summaries[0]!, id: "project-new", name: "New home", projectNumber: null }
     ];
     installApi(() => projectPage(rows));
@@ -90,6 +137,12 @@ describe("ClientDashboard project table", () => {
 
     const table = await screen.findByRole("table", { name: "Projects" });
     const displayed = within(table).getAllByRole("row").slice(1);
+    await showRows(displayed);
+    expect(await within(displayed[0]!).findByText("Estimate")).toBeVisible();
+    expect(await within(displayed[1]!).findByText("Post approval")).toBeVisible();
+    expect(within(displayed[0]!).queryByText("Post approval")).not.toBeInTheDocument();
+    expect(within(displayed[1]!).queryByText("Estimate")).not.toBeInTheDocument();
+    expect(screen.queryByText("Planning")).not.toBeInTheDocument();
     rows.forEach((project, index) => {
       const row = within(displayed[index]!);
       expect(row.getByRole("link", { name: project.name })).toHaveAttribute("href", `/client/projects/${encodeURIComponent(project.id)}`);
@@ -116,6 +169,7 @@ describe("ClientDashboard project table", () => {
     expect(rows).toHaveLength(201);
     expect(screen.getByText("201 projects")).toBeVisible();
     expect(rows.map(row => within(row).getAllByRole("link")[0]!.textContent)).toEqual(projects.map(project => project.name));
+    expect(api.mock.calls.some(([input]) => String(input).endsWith("/status"))).toBe(false);
     expect(api.mock.calls.map(([input]) => String(input)).filter(url => url.includes("project-summaries"))).toEqual([
       "/api/v1/client/project-summaries?limit=100&offset=0",
       "/api/v1/client/project-summaries?limit=100&offset=100",
@@ -127,7 +181,7 @@ describe("ClientDashboard project table", () => {
     installApi(() => projectPage([{ ...summaries[0]!, plannedEndAt }]));
     renderApp(["/client"]);
     const table = await screen.findByRole("table", { name: "Projects" });
-    expect(within(within(table).getAllByRole("row")[1]!).getAllByRole("cell")[3]).toHaveTextContent("Not available");
+    expect(within(within(table).getAllByRole("row")[1]!).getAllByRole("cell")[2]).toHaveTextContent("Not available");
     expect(screen.queryByText(/Invalid Date|1970/)).not.toBeInTheDocument();
   });
 
@@ -172,7 +226,7 @@ describe("ClientDashboard project table", () => {
   });
 
   it.each(["missing-estimate", ""])("retains estimate review only for an explicit estimate query parameter (%s)", async estimateId => {
-    const api = installApi();
+    const api = installApi(undefined, true);
     renderApp([`/client?estimate=${estimateId}`]);
     const review = await screen.findByRole("region", { name: "Estimate review" });
     expect(await within(review).findByText("No estimates are available yet. Your team will share them here when ready.")).toBeVisible();

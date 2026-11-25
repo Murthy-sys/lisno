@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, configuredTierSelectionUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, createConfiguredLine, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
 import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
+import type { ConfiguredEstimateLine } from "./leadsApi";
+import { componentDraftFixture } from "./estimateComponentPricing.testFixtures";
 
 const catalogue: EstimationCatalogue = {
   ineligibleLineCount: 0,
@@ -14,6 +16,46 @@ const catalogue: EstimationCatalogue = {
 };
 
 describe("configured estimate line state", () => {
+  it("changes only customization metadata across Sub-vendor, PMC, and In-house pricing", () => {
+    const inHouse = componentDraftFixture();
+    const lines = [
+      { ...inHouse, pricingMode: "sub_vendor" as const, classification: "standard" as const, rateInput: "72.15", pricingBasis: undefined, componentPricing: undefined },
+      { ...inHouse, pricingMode: "pmc" as const, rateInput: "14.73", pricingBasis: undefined, componentPricing: undefined,
+        savedPmcAmountPaise: 2971, pmcVendorPayable: true as const, pmcMarginSnapshot: { pmcMarginBps: 2000, pmcMarginAmountPaise: 594 } },
+      inHouse
+    ];
+    for (const line of lines) {
+      const beforeAmount = configuredLineAmountPaise(line);
+      const custom = updateConfiguredLinePricing(line, { customizationType: "custom" });
+      expect(custom).toEqual({ ...line, customizationType: "custom" });
+      expect(configuredLineAmountPaise(custom)).toBe(beforeAmount);
+      expect(custom.componentPricing).toBe(line.componentPricing);
+      expect(custom.pmcMarginSnapshot).toBe(line.pmcMarginSnapshot);
+      expect(updateConfiguredLinePricing(custom, { customizationType: "standard" })).toEqual({ ...line, customizationType: "standard" });
+    }
+  });
+
+  it("defaults and restores customization independently of classification and room", () => {
+    const rooms = [{ id: "room-a", label: "Bedroom" }, { id: "room-b", label: "Other bedroom" }];
+    const baskets = new Set(["basket-a"]);
+    const initial = configuredLineFixtures(catalogue, rooms, baskets);
+    expect(initial.map(line => line.customizationType)).toEqual(["standard", "standard"]);
+    const customized = initial.map((line, index) => ({ ...line, included: true, persistedId: `saved-${index}`,
+      customizationType: index ? "standard" as const : "custom" as const }));
+    for (const preservePersisted of [false, true]) {
+      const refreshed = buildConfiguredLines(catalogue, rooms, baskets, customized, preservePersisted);
+      expect(refreshed.map(line => line.customizationType)).toEqual(["custom", "standard"]);
+    }
+    const removed = deselectConfiguredRecommendationSources(customized, new Set([customized[0]!.key]));
+    expect(removed[0]).toMatchObject({ customizationType: "custom", included: false });
+    expect(updateConfiguredLinePricing(removed[0]!, { included: true })).toMatchObject({ customizationType: "custom", included: true });
+    expect(updateConfiguredLinePricing(customized[0]!, { quantity: 8 }).customizationType).toBe("custom");
+    const saved = { ...customized[0]!, id: "saved-0", source: "configuration", unit: "sq ft", uomCode: "SQFT", ratePaise: 2100,
+      rate: 21, amount: 21, amountPaise: 2100, specification: null } as ConfiguredEstimateLine;
+    expect(restoreConfiguredLine(saved).customizationType).toBe("custom");
+    expect(restoreConfiguredLine({ ...saved, customizationType: undefined }).customizationType).toBe("standard");
+  });
+
   it("refreshes tier descriptions and specifications without changing selected values or another Main Line", () => {
     const current = structuredClone(catalogue);
     const first = current.items[0]!.subBaskets[0]!.mainLines[0]!;

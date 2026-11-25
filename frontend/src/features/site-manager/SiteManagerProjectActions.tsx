@@ -7,7 +7,6 @@ import { ContextPanel } from "../../components/ui/ContextPanel";
 import type { ExecutionProjectMetadata } from "../execution/executionApi";
 import { ExecutionPolicyPanel } from "../execution/ExecutionPolicyPanel";
 import { ProjectChatLink } from "../messages";
-import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { OperationalTaskQueue } from "../workflow/OperationalTaskQueue";
 import { SiteCompletionPanel } from "../workflow/SiteCompletionPanel";
 
@@ -27,7 +26,6 @@ export function SiteManagerProjectActions({ project, canManagePolicy, onDirty, o
       {canManagePolicy ? <Button size="compact" variant="secondary" disabled={disabled} onClick={() => setPanel("policy")}>Reporting schedule</Button> : null}
       {hasFrontendPermission(auth.authorization, "procurement.work_order_approval.read") ? <Link to="/work-order-approvals">Work order approvals</Link> : null}
       {hasFrontendPermission(auth.authorization, "access_request.self.read") ? <Link to="/access-requests/mine">My access requests</Link> : null}
-      <ProjectStatusButton projectId={project.id} projectName={project.name} participant />
       <ProjectChatLink projectId={project.id}>Project messages</ProjectChatLink>
     </div></details>
     {panel === "completion" ? <ContextPanel className="site-workspace-panel" title="Completion & Client handoff" description={project.name} width="medium" dirty={dirty} busy={busy} onClose={() => { setPanel(null); setDirty(false); }}><SiteCompletionPanel projectId={project.id} projectName={project.name} onDirty={setDirty} onBusy={setBusy} /></ContextPanel> : null}

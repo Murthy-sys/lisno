@@ -128,6 +128,6 @@ export function SubmittedEstimateBuilder({ snapshot, workspace = false, onRefres
     baskets={baskets.map(basket => ({ ...basket, detail: visibleSubtotal(roomRows.filter(row => row.basketId === basket.id).map(row => row.line)) }))}
     groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState}
     onRefresh={onRefresh} refreshing={refreshing} scrollMode={workspace ? "pane" : "document"}
-    beforeGroups={<p className="client-quotation__hint">Submitted items are read-only. Visible subtotals exclude GST and may not include internal scope.</p>}
+    beforeGroups={<p className="client-quotation__hint">Submitted items are read-only. Item amounts, rates and section subtotals are before tax unless labelled otherwise. Total payable includes all taxes and all submitted scope.</p>}
     emptyMessage={!groups.length ? "No submitted items match your search." : undefined} />;
 }

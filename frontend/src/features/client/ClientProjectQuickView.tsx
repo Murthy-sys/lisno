@@ -5,7 +5,6 @@ import { Link } from "react-router-dom";
 import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 
 interface ClientProjectQuickViewProps {
   project: ClientProjectSummary | undefined;
@@ -41,11 +40,6 @@ export function ClientProjectQuickView({ project, stale, latest, loading, failed
         <div><dt>Planned start</dt><dd>{formatDate(project.plannedStartAt)}</dd></div>
         <div><dt>Expected completion</dt><dd>{formatDate(project.plannedEndAt)}</dd></div>
       </dl>
-      <section className="client-project-quick-view__section" aria-label="Project progress">
-        <h3>Project progress</h3>
-        <strong>{project.progress}% complete</strong>
-        <ProgressBar value={project.progress} label={`${project.name}: ${project.progress}% complete`} />
-      </section>
       <section className="client-project-quick-view__section" aria-label="Latest approved update">
         <h3>Latest approved update</h3>
         {loading ? <p role="status">Loading approved plans…</p> : failed ? <>

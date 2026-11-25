@@ -13,12 +13,69 @@ import { ExecutionDetailPanel } from "./ExecutionDetailPanel";
 import { ExecutionPolicyPanel } from "./ExecutionPolicyPanel";
 import { executionFixture, executionPageFixture } from "./executionTestFixtures";
 import type { ExecutionWork } from "./executionApi";
-const authState = vi.hoisted(() => ({ user: { id: "manager-one", role: "site_manager" }, authorization: null as AuthorizationSnapshot | null }));
+const authState = vi.hoisted(() => ({ status: "authenticated", user: { id: "manager-one", role: "site_manager" }, authorization: null as AuthorizationSnapshot | null }));
 vi.mock("../../auth/AuthProvider",() => ({ useAuth: () => authState }));
 beforeEach(() => { authState.authorization = authorizationFor("site_manager", []); });
 vi.mock("./ExecutionLiveProvider",() => ({useExecutionConnection:() => "live"}));
 
 describe("execution project workflow", () => {
+  it.each([false, true])("owns the outer project chip only when embedded is %s", async embedded => {
+    authState.authorization = authorizationFor("site_manager", ["projects.status.read"]);
+    let statusReads = 0;
+    server.use(http.get("/api/v1/projects/project-one/execution", () => HttpResponse.json({ data: executionPageFixture([]) })),
+      http.get("/api/v1/projects/project-one/status", () => { statusReads++; return HttpResponse.json({ data: {
+        projectId: "project-one", projectName: "Oak residence", projectStatus: "active", serverNow: "2026-11-24T09:00:00Z",
+        state: "no_pending", currentStage: null, issue: null, pendingActions: []
+      } }); }));
+    renderWithQuery(<MemoryRouter><ProjectExecutionPage projectId="project-one" embedded={embedded} /></MemoryRouter>);
+    await screen.findByText("No issued vendor work for this project yet.");
+    if (embedded) {
+      expect(screen.queryByRole("button", { name: /^Project status/ })).not.toBeInTheDocument();
+      expect(statusReads).toBe(0);
+    } else {
+      const chip = await screen.findByRole("button", { name: /^Project status/ });
+      expect(chip).toHaveClass("project-status-chip");
+      expect(chip.closest("header")).toContainElement(screen.getByRole("heading", { level: 1 }));
+      expect(screen.getAllByRole("button", { name: /^Project status/ })).toHaveLength(1);
+    }
+  });
+
+  it("keeps vendor portfolio project controls in non-polling button presentation", async () => {
+    authState.authorization = authorizationFor("site_manager", ["projects.status.read"]);
+    let statusReads = 0;
+    server.use(http.get("/api/v1/vendor/work/execution", () => HttpResponse.json({ data: executionPageFixture([executionFixture, { ...executionFixture, id: "work-two", projectId: "project-two" }]) })),
+      http.get("/api/v1/projects/:projectId/status", () => { statusReads++; return HttpResponse.json({ data: null }); }));
+    renderWithQuery(<MemoryRouter><VendorExecutionWorkspace /></MemoryRouter>);
+    await screen.findByRole("region", { name: "Main Line assignments" });
+    const buttons = screen.getAllByRole("button", { name: "Project status" });
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) expect(button).not.toHaveClass("project-status-chip");
+    expect(statusReads).toBe(0);
+  });
+
+  it.each([true, false])("uses selected detail project evidence only when assignment identity matches (%s)", async matches => {
+    authState.authorization = authorizationFor("site_manager", ["projects.status.read"]);
+    let statusReads = 0;
+    server.use(http.get("/api/v1/execution/work/work-one", () => HttpResponse.json({ data: { ...executionFixture, id: matches ? "work-one" : "other-work", allowedActions: [] } })),
+      http.get("/api/v1/execution/work/work-one/history", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
+      http.get("/api/v1/projects/project-one/status", () => { statusReads++; return HttpResponse.json({ data: {
+        projectId: "project-one", projectName: executionFixture.projectName, projectStatus: "active", serverNow: "2026-11-24T09:00:00Z",
+        state: "active", currentStage: { key: "client", label: "Client work review" }, issue: null,
+        pendingActions: [{ id: "review-a", stageKey: "client", stageLabel: "Client work review", action: "Review submitted work", responsibleRole: "client", people: [{ id: "client-a", name: "Maya Client", role: "client" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
+      } }); }));
+    renderWithQuery(<MemoryRouter><ExecutionDetailPanel assignmentId="work-one" vendor={false} expectedProjectId="project-one" onClose={vi.fn()} /></MemoryRouter>);
+    const detail = await screen.findByRole("dialog", { name: executionFixture.itemName });
+    if (matches) {
+      const chip = await within(detail).findByRole("button", { name: `Project status for ${executionFixture.projectName}` });
+      expect(chip).toHaveClass("project-status-chip");
+      expect(chip.closest(".ui-drawer__header")).not.toBeNull();
+      expect(chip).toHaveTextContent("Maya Client");
+    } else {
+      expect(within(detail).queryByRole("button", { name: /^Project status/ })).not.toBeInTheDocument();
+      expect(statusReads).toBe(0);
+    }
+  });
+
   it("shows the authorized execution identity without general project read permission", async () => {
     const page = executionPageFixture([]);
     server.use(http.get("/api/v1/projects/project-one/execution", () => HttpResponse.json({ data: { ...page, project: { ...page.project!, projectNumber: "Lisno000011" } } })));

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { ClientEstimateQueryProvider, useClientEstimates } from "../estimates/clientEstimateQuery";
 import { Link } from "react-router-dom";
 import type { ClientProjectSummary } from "../../api/types";
 import { Button } from "../../components/ui/Button";
@@ -9,7 +9,7 @@ import {
   currentQuotationIsApproved,
   quotationApprovalNeedsClient
 } from "../estimates/quotationApproval";
-import { estimateWorkflowKeys, getClientEstimates, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
+import { type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
 
 interface ClientEstimateSummaryProps {
   projects: readonly Pick<ClientProjectSummary, "id" | "name">[];
@@ -18,13 +18,17 @@ interface ClientEstimateSummaryProps {
 }
 
 /** Dashboard navigation only. All estimate editing and decisions stay in the project workspace. */
-export function ClientEstimateSummary({ projects, projectsFresh, selectedEstimateId }: ClientEstimateSummaryProps) {
-  const query = useQuery({ queryKey: estimateWorkflowKeys.client, queryFn: getClientEstimates, retry: false });
+export function ClientEstimateSummary(props: ClientEstimateSummaryProps) {
+  return <ClientEstimateQueryProvider><EstimateSummary {...props} /></ClientEstimateQueryProvider>;
+}
+
+function EstimateSummary({ projects, projectsFresh, selectedEstimateId }: ClientEstimateSummaryProps) {
+  const query = useClientEstimates();
   if (query.isPending) return <section className="client-estimate-summary" aria-label="Estimation"><h2>Estimation</h2><p role="status">Loading your estimates…</p></section>;
   // Do not retain actionable project links after a failed or denied estimate refresh.
   if (query.isError) return <section className="client-estimate-summary" aria-label="Estimation"><h2>Estimation</h2><p role="alert">Your estimates could not be refreshed. Retry before opening an estimation workspace.</p><Button variant="secondary" disabled={query.isFetching} onClick={() => void query.refetch()}>Retry estimates</Button></section>;
 
-  const estimates = query.data;
+  const estimates = query.data ?? [];
   const current = estimates.filter(estimate => clientEstimateWorkflowVersion(estimate) === 3);
   const legacy = estimates.filter(estimate => clientEstimateWorkflowVersion(estimate) !== 3);
   const selected = selectedEstimateId ? estimates.filter(estimate => estimate.id === selectedEstimateId) : [];

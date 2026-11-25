@@ -32,3 +32,27 @@
   .project-status-toolbar { align-items: flex-start; }
   .project-chat-header:has(.project-status-button) { flex-wrap: wrap; }
 }
+
+.project-status-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2, .5rem); min-width: 0; max-width: 100%; margin-inline-start: auto; }
+.project-status-button.project-status-chip,
+.project-chat-header .project-status-button.project-status-chip {
+  display: inline-flex; min-width: 0; max-width: min(100%, 28rem); min-height: 44px; height: auto;
+  margin-inline-start: auto; padding: .45rem .7rem; border: 1px solid var(--color-border, #d8d9d1);
+  border-radius: 3px; background: var(--color-surface, #fbfaf7); color: var(--color-text, #242b20);
+  box-shadow: none; white-space: normal; text-align: start; line-height: 1.4; font-size: .8rem;
+}
+.project-status-chip .ui-button__content > span:not(.ui-button__icon) { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .55rem; min-width: 0; max-width: 100%; }
+.project-status-chip :is(.project-status-chip__stage, .project-status-chip__owner, .project-status-chip__more, .project-status-chip__notice) { overflow-wrap: anywhere; white-space: normal; }
+.project-status-chip .project-status-chip__stage { flex-basis: 100%; font-weight: 600; }
+.project-status-chip .project-status-chip__owner,
+.project-status-chip .project-status-chip__more { font-weight: 400; }
+.project-status-chip .project-status-chip__notice { font-weight: 600; }
+@media (max-width: 767px) {
+  .project-status-header-actions { flex-basis: 100%; }
+  .project-status-button.project-status-chip { max-width: 100%; }
+  .project-chat-header .project-status-chip { margin-inline-start: auto; }
+}
+.estimation-progress__header-controls > .project-status-header-actions { flex-basis: 100%; }
+.estimate-workspace__view-controls > .project-status-header-actions { flex: 1 1 16rem; }
+.project-chat-header:has(.project-status-chip) { flex-wrap: wrap; }
+.project-chat-header__actions:has(.project-status-chip) { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; margin-inline-start: auto; }

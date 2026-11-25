@@ -138,7 +138,8 @@ export function estimateQuotationContentChanged(before: Row, after: Row): boolea
 export function estimateQuotationContent(value: Row): Record<string, unknown> {
   return { propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
     rooms: value.rooms ?? [], scopes: value.scopes ?? [], selectedMainBasketIds: value.selectedMainBasketIds ?? [],
-    selectedMainBasketClassifications: value.selectedMainBasketClassifications ?? [], lineItems: value.lineItems ?? [],
+    selectedMainBasketClassifications: value.selectedMainBasketClassifications ?? [],
+    lineItems: (value.lineItems ?? []).map(({ customizationType: _customizationType, ...commercialLine }: Row) => commercialLine),
     subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise,
     ...(value.roundOffPaise === undefined ? {} : { roundOffPaise: value.roundOffPaise }) };
 }

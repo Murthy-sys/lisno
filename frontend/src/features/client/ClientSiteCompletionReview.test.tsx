@@ -74,6 +74,7 @@ describe("ClientSiteCompletionReview", () => {
     );
     renderWithQuery(<ClientSiteCompletionReview projectId="project-a" />);
     expect(await screen.findByRole("heading", { name: "Project completion review" })).toBeVisible();
+    expect(screen.queryByText("100% complete")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "View images (1)" })).toBeVisible();
     const accept = screen.getByRole("button", { name: "Accept completion" });
     expect(accept).toBeEnabled();

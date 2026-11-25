@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
@@ -91,9 +92,9 @@ export function ManagementProjectWorkspace() {
       className="designer-page management-workspace"
       aria-labelledby="management-project-title"
     >
-      <PageHeader id="management-project-title" title={data.name} metadata={<ProjectId projectNumber={data.projectNumber} />} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} />
+      <PageHeader id="management-project-title" title={data.name} metadata={<ProjectId projectNumber={data.projectNumber} />} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} actions={<ProjectStatusButton projectId={data.id} projectName={data.name} presentation="chip" />} />
 
-      <ProjectChatNavigation projectId={projectId} overviewTo={`${base}/projects/${projectId}`} />
+      <ProjectChatNavigation projectId={projectId} overviewTo={`${base}/projects/${projectId}`} showStatus={false} />
       <ProjectWorkflowPanel projectId={projectId} />
 
       <section aria-labelledby="delivery-structure-title">
@@ -101,7 +102,7 @@ export function ManagementProjectWorkspace() {
         {data.floors.map((floor) => (
           <article key={floor.id} className="floor-card">
             <h3>
-              Floor {floor.number}: {floor.name} · {floor.progress}%
+              Floor {floor.number}: {floor.name}
             </h3>
             {floor.stages.map((stage) => (
               <section key={stage.id} className="stage-card">

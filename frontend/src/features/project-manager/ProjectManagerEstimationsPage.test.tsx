@@ -10,7 +10,8 @@ import { ProjectManagerEstimationsPage, pmEstimateReturnPath } from "./ProjectMa
 import { pmEstimateKeys } from "./pmEstimatesApi";
 import type { PMApprovedSourceRef, PMEstimateView, PMMainLineScope, PMVendorCandidate, PMVendorSuggestion, PMVendorSuggestionCreate, PMVendorSuggestionUpdate } from "./pmEstimateTypes";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-a", role: "site_manager", name: "Manager A" } }) }));
+const statusAccess = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-a", role: "site_manager", name: "Manager A" }, authorization: { role: "site_manager", permissions: statusAccess.enabled ? ["projects.status.read"] : [] } }) }));
 
 const source: PMApprovedSourceRef = { estimateId: "estimate-a", estimateVersion: 3, estimateReviewRoundId: "approved-round-a", phase: "post", designPlanVersion: 0, sourceSnapshotId: "approved-round-a", sourceDigest: "a".repeat(64) };
 const lineOne: PMMainLineScope = { mainLineId: "main-line-one", mainLineName: "Oak panelling", mainBasketId: "basket-one", mainBasketName: "Carpentry", occurrences: [
@@ -51,7 +52,7 @@ function mount(path = "/projects/project-a/estimations") {
 }
 
 beforeEach(() => {
-  view = structuredClone(approved); records = []; creates = []; updates = [];
+  statusAccess.enabled = false; view = structuredClone(approved); records = []; creates = []; updates = [];
   const shared: PMVendorCandidate = { id: "vendor-one", code: "V-01", name: "Oak Works", classification: ["Carpentry"], canSuggest: true, bidEligible: true, reasons: [] };
   linkedVendors = {
     "main-line-one": [shared, { id: "vendor-two", code: "V-02", name: "Inactive Works", classification: ["Carpentry"], canSuggest: false, bidEligible: false, reasons: ["Vendor is inactive."] }],
@@ -105,6 +106,21 @@ it("shows the canonical ID beside the loaded estimate project name", async () =>
 });
 
 describe("Project Manager approved estimations", () => {
+  it("shows current responsibility beside refresh without changing the approved estimate", async () => {
+    statusAccess.enabled = true;
+    server.use(http.get("/api/v1/projects/project-a/status", () => HttpResponse.json({ data: {
+      projectId: "project-a", projectName: approved.project.name, projectStatus: "active", serverNow: "2026-11-24T09:00:00Z",
+      state: "active", currentStage: { key: "purchase_order", label: "Purchase order" }, issue: null,
+      pendingActions: [{ id: "order-a", stageKey: "purchase_order", stageLabel: "Purchase order", action: "Prepare purchase order", responsibleRole: "procurement", people: [{ id: "buyer-a", name: "Arun Procurement", role: "procurement" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
+    } })));
+    mount();
+    const chip = await screen.findByRole("button", { name: `Project status for ${approved.project.name}` });
+    expect(chip).toHaveClass("project-status-chip");
+    expect(chip).toHaveTextContent("Arun Procurement");
+    expect(chip.closest("header")).toContainElement(screen.getByRole("button", { name: "Refresh estimate" }));
+    expect(screen.getByRole("region", { name: "Approved commercial summary" })).toHaveTextContent("₹586.34");
+  });
+
   it("shows the chosen Main Line's linked vendors in the shared picker", async () => {
     mount();
     let dialog = await openCreate();

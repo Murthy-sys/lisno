@@ -8,6 +8,8 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import "../../styles/client-dashboard.css";
 import { getClientProjectSummaries, clientKeys } from "./clientApi";
 import { ClientEstimateSummary } from "./ClientEstimateSummary";
+import { ClientEstimateQueryProvider } from "../estimates/clientEstimateQuery";
+import { ClientProjectStatus } from "./ClientProjectStatus";
 import { PageHeader } from "../../components/ui/PageHeader";
 
 export function ClientDashboard() {
@@ -27,7 +29,7 @@ export function ClientDashboard() {
   if (projectsQuery.isPending) return <AsyncState state="loading" message="Loading your projects…" />;
   if (projectsQuery.isError && !canRetainProjects) return <AsyncState state="error" message="We couldn't load your projects." actionLabel="Try again" onAction={() => void projectsQuery.refetch()} />;
 
-  return <section className="client-page client-dashboard" aria-labelledby="client-dashboard-title">
+  return <ClientEstimateQueryProvider><section className="client-page client-dashboard" aria-labelledby="client-dashboard-title">
     <PageHeader id="client-dashboard-title" title="My projects" titleAction={<span className="client-dashboard__project-count">{projects.length} {projects.length === 1 ? "project" : "projects"}</span>} />
     {projectsQuery.isError ? <AsyncState state="error" message="Your project list could not be refreshed. Previously loaded projects are shown." actionLabel="Refresh projects" onAction={() => void projectsQuery.refetch()} /> : null}
     {searchParams.has("estimate") ? <section className="client-dashboard__estimates" aria-label="Estimate review">
@@ -41,7 +43,6 @@ export function ClientDashboard() {
             <th scope="col">Project</th>
             <th scope="col">Location</th>
             <th scope="col">Status</th>
-            <th scope="col">Progress</th>
             <th scope="col">Expected completion</th>
             <th scope="col">Action</th>
           </tr>
@@ -55,8 +56,7 @@ export function ClientDashboard() {
                 <ProjectId projectNumber={project.projectNumber} />
               </th>
               <td>{project.location}</td>
-              <td>{project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}</td>
-              <td className="client-dashboard__progress">{project.progress}%</td>
+              <td><ClientProjectStatus projectId={project.id} projectName={project.name} projectNumber={project.projectNumber} /></td>
               <td>{formatDate(project.plannedEndAt)}</td>
               <td><Link className="client-dashboard__open-project" to={projectPath} aria-label={`Open project: ${project.name}`}>Open project</Link></td>
             </tr>;
@@ -64,7 +64,7 @@ export function ClientDashboard() {
         </tbody>
       </table>
     </div> : <AsyncState state="empty" message="No projects shared yet." />}
-  </section>;
+  </section></ClientEstimateQueryProvider>;
 }
 
 function isTransientReadError(error: Error) {

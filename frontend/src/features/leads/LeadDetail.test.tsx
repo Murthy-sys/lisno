@@ -72,7 +72,8 @@ function mockLeadApi(leads: Lead[]) {
     if (url === "/api/v1/projects/project-cedar/design-workflow") return Response.json({ data: workflow });
     if (url === "/api/v1/projects/project-cedar/status") return Response.json({ data: {
       projectId: workflow.projectId, projectName: workflow.projectName, serverNow: workflow.serverNow,
-      state: "no_pending", currentStage: null, pendingActions: []
+      projectStatus: "active", state: "active", currentStage: { key: "estimate_preparation", label: "Estimate preparation" }, issue: null,
+      pendingActions: [{ id: "prepare-cedar", stageKey: "estimate_preparation", stageLabel: "Estimate preparation", action: "Prepare the estimate", state: "pending", responsibleRole: "estimator_sales", people: [{ id: "sales-1", name: "Cedar Sales", role: "estimator_sales" }], scheduledAt: null, deadlineAt: null, blocker: null }]
     } });
     if (url === "/api/v1/admin/design-plan-response-tasks?projectId=project-cedar") return Response.json({ data: [] });
     throw new Error(`Unhandled request: ${method} ${url}`);
@@ -118,6 +119,19 @@ function expectLatestLayout(lead: Lead, action: string) {
 }
 
 describe("Lead details", () => {
+  it("shows one status-and-owner chip in the linked lead header without opening the drawer", async () => {
+    const lead = makeLead();
+    const api = mockLeadApi([lead]);
+    renderApp([`/estimator-sales/leads/${lead.id}`]);
+    const chip = await screen.findByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Estimate preparation");
+    expect(chip).toHaveTextContent("Cedar Sales");
+    expect(chip.closest("header")).toContainElement(screen.getByRole("heading", { name: lead.projectName }));
+    expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(1);
+    expect(screen.queryByRole("dialog", { name: "Project status" })).not.toBeInTheDocument();
+    expect(api.updates).toEqual([]);
+  });
+
   it.each([undefined, null, "Lisno000042"])("shows the saved project reference %s without allocating on entry", async (projectNumber) => {
     const lead = makeLead({ projectNumber });
     const api = mockLeadApi([lead]);

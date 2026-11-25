@@ -14,6 +14,16 @@ const draft: EstimateDraftInput = {
 };
 
 describe("estimate draft semantic comparison", () => {
+  it("tracks customization edits while treating an absent label as Standard", () => {
+    const saved = componentDraftFixture();
+    expect(configuredLineEditingFingerprint({ ...saved, customizationType: "standard" })).toBe(configuredLineEditingFingerprint(saved));
+    expect(configuredLineEditingFingerprint({ ...saved, customizationType: "custom" })).not.toBe(configuredLineEditingFingerprint(saved));
+    expect(estimateDraftFingerprint({ ...draft, lineItems: draft.lineItems.map(value => ({ ...value, customizationType: "standard" as const })) }))
+      .toBe(estimateDraftFingerprint(draft));
+    expect(estimateDraftFingerprint({ ...draft, lineItems: [{ ...line, customizationType: "custom" as const }, draft.lineItems[1]!] }))
+      .not.toBe(estimateDraftFingerprint(draft));
+  });
+
   it("does not mark description, specification or brand metadata refreshes as estimate edits", () => {
     const saved = { ...componentDraftFixture(), tierDescriptions: { signature: "Original finish." }, tierDetails: { signature: { specifications: [
       { id: "spec", name: "Original board", brands: [{ id: "brand", name: "Original brand" }] }

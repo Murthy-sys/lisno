@@ -27,6 +27,7 @@ const estimateLineSchema = new Schema({
   itemType: { type: String, enum: ["main_line", "temporary"] },
   clientVisible: { type: Boolean, cast: false, default: undefined },
   classification: { type: String, enum: ["standard", "special"], default: undefined },
+  customizationType: { type: String, enum: ["standard", "custom"], default: undefined },
   pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
   modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined },
   rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },

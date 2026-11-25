@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import type { ProjectStatusSummary } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { ProjectStatusButton } from "./ProjectStatusButton";
 import * as api from "./projectStatusApi";
 
@@ -17,9 +18,9 @@ const fixture = (projectId = "project-a"): ProjectStatusSummary => ({
   currentStage: { key: "estimate_review", label: "Estimate approval" }, issue: null,
   pendingActions: [{ id: "review-a", stageKey: "estimate_review", stageLabel: "Estimate approval", action: "Review the submitted estimate", responsibleRole: "client", people: [{ id: "client-a", name: "Maya Client", role: "client" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
 });
-function mount(participant: boolean | "verify" = true, projectId = "project-a") {
+function mount(participant: boolean | "verify" = true, projectId = "project-a", presentation: "button" | "chip" = "button") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const control = (id: string, member: boolean | "verify") => <ProjectStatusButton projectId={id} {...(member === "verify" ? {} : { participant: member })} />;
+  const control = (id: string, member: boolean | "verify") => <ProjectStatusButton projectId={id} presentation={presentation} {...(member === "verify" ? {} : { participant: member })} />;
   const view = render(<QueryClientProvider client={client}><main><h1>Project workspace</h1>{control(projectId, participant)}</main></QueryClientProvider>);
   return { ...view, client, change: (id: string, member: boolean | "verify" = true) => view.rerender(<QueryClientProvider client={client}><main><h1>Project workspace</h1>{control(id, member)}</main></QueryClientProvider>) };
 }
@@ -252,5 +253,157 @@ describe("Project status", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
       expect(api.getProjectStatus).toHaveBeenCalledTimes(closed);
     } finally { focusManager.setFocused(undefined); vi.useRealTimers(); }
+  });
+});
+
+
+describe("Project status header chip", () => {
+  it("shows current ownership before opening and retains all people and tasks in details", async () => {
+    const data = fixture();
+    data.pendingActions[0]!.people.push({ id: "client-b", name: "Noah Client", role: "client" });
+    data.pendingActions.push({ ...data.pendingActions[0]!, id: "measure", stageKey: "measurement", stageLabel: "Site measurement", action: "Take measurements", people: [{ id: "designer-b", name: "Arun Designer", role: "designer" }] });
+    vi.mocked(api.getProjectStatus).mockResolvedValue(data);
+    mount(true, "project-a", "chip");
+    const chip = screen.getByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Loading project status");
+    await waitFor(() => expect(chip).toHaveTextContent("Owner: Maya Client +1"));
+    expect(chip).toHaveTextContent("Estimate approval");
+    expect(chip).toHaveTextContent("+1 task");
+    expect(chip).toHaveAccessibleDescription(expect.stringContaining("Noah Client (Client)"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    chip.focus(); await userEvent.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", { name: "Project status" });
+    expect(within(dialog).getByText("Noah Client")).toBeVisible();
+    expect(within(dialog).getByText("Arun Designer")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(chip).toHaveFocus());
+  });
+
+  it.each([
+    ["paused", "pending", "On hold · Estimate approval", true],
+    ["scheduled", "scheduled", "Scheduled · Estimate approval", true],
+    ["active", "blocked", "Blocked · Estimate approval", true],
+    ["completed", "pending", "Completed", false],
+    ["no_pending", "pending", "No pending tasks", false],
+    ["unavailable", "pending", "Status needs review", false]
+  ] as const)("presents %s / %s without inventing an owner", async (state, actionState, label, owner) => {
+    const data = fixture(); data.state = state; data.pendingActions[0]!.state = actionState;
+    vi.mocked(api.getProjectStatus).mockResolvedValue(data);
+    mount(true, "project-a", "chip");
+    const chip = screen.getByRole("button", { name: "Project status" });
+    await waitFor(() => expect(chip).toHaveTextContent(label));
+    expect(chip.textContent?.includes("Owner: Maya Client")).toBe(owner);
+  });
+
+  it("labels unassigned work with its responsible role and never the viewer", async () => {
+    const data = fixture(); data.pendingActions[0]!.people = []; data.pendingActions[0]!.responsibleRole = "designer";
+    vi.mocked(api.getProjectStatus).mockResolvedValue(data);
+    mount(true, "project-a", "chip");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Unassigned · Designer"));
+    expect(screen.queryByText(/Owner:/)).not.toBeInTheDocument();
+  });
+
+  it("does not assign an unrelated action's owner to the current stage", async () => {
+    const data = fixture(); data.currentStage = { key: "other", label: "Other stage" };
+    vi.mocked(api.getProjectStatus).mockResolvedValue(data);
+    mount(true, "project-a", "chip");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Status needs review"));
+    expect(screen.queryByText(/Owner:/)).not.toBeInTheDocument();
+  });
+
+  it("waits for a fresh read before revealing cached header ownership", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(api.projectStatusKeys.detail("project-a", "viewer-a:client"), fixture());
+    let resolve!: (value: ProjectStatusSummary) => void;
+    vi.mocked(api.getProjectStatus).mockImplementation(() => new Promise(done => { resolve = done; }));
+    render(<QueryClientProvider client={client}><ProjectStatusButton projectId="project-a" participant presentation="chip" /></QueryClientProvider>);
+    expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Loading project status");
+    expect(screen.queryByText(/Maya Client/)).not.toBeInTheDocument();
+    const fresh = fixture(); fresh.pendingActions[0]!.people = [{ id: "new-owner", name: "New Owner", role: "designer" }];
+    await act(async () => { resolve(fresh); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Owner: New Owner"));
+  });
+
+  it("shows retry on an initial failure and marks previously verified owners as out of date", async () => {
+    vi.mocked(api.getProjectStatus).mockRejectedValue(new ApiError(503, "UNAVAILABLE", "Unavailable"));
+    const view = mount(true, "project-a", "chip");
+    const key = api.projectStatusKeys.detail("project-a", "viewer-a:client");
+    await waitFor(() => expect(view.client.getQueryState(key)?.status).toBe("error"), { timeout: 3000 });
+    const chip = screen.getByRole("button", { name: "Project status" });
+    expect(chip).toHaveTextContent("Status unavailable");
+    expect(chip).toHaveTextContent("Open to retry");
+    vi.mocked(api.getProjectStatus).mockResolvedValue(fixture());
+    await userEvent.click(chip);
+    await waitFor(() => expect(chip).toHaveTextContent("Owner: Maya Client"));
+    await userEvent.keyboard("{Escape}");
+    vi.mocked(api.getProjectStatus).mockRejectedValue(new ApiError(503, "UNAVAILABLE", "Unavailable"));
+    await act(async () => { await view.client.refetchQueries({ queryKey: key }); });
+    expect(chip).toHaveTextContent("Owner: Maya Client");
+    await waitFor(() => expect(chip).toHaveTextContent("Out of date"));
+  });
+
+  it("clears the chip and cached people after access is revoked", async () => {
+    const view = mount(true, "project-a", "chip");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Owner: Maya Client"));
+    vi.mocked(api.getProjectStatus).mockRejectedValue(new ApiError(403, "FORBIDDEN", "Unavailable"));
+    await act(async () => { await view.client.refetchQueries({ queryKey: api.projectStatusKeys.project("project-a") }); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Project status" })).not.toBeInTheDocument());
+    expect(screen.queryByText(/Maya Client/)).not.toBeInTheDocument();
+    expect(view.client.getQueriesData({ queryKey: api.projectStatusKeys.project("project-a") }).every(([, data]) => data === undefined)).toBe(true);
+  });
+
+  it("never flashes old ownership on project or viewer changes or a mismatched response", async () => {
+    const view = mount(true, "project-a", "chip");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Maya Client"));
+    let resolve!: (value: ProjectStatusSummary) => void;
+    vi.mocked(api.getProjectStatus).mockImplementation(() => new Promise(done => { resolve = done; }));
+    view.change("project-b");
+    expect(screen.queryByText(/Maya Client/)).not.toBeInTheDocument();
+    await act(async () => { resolve(fixture("project-a")); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Status unavailable"));
+    const other = fixture("project-b"); other.pendingActions[0]!.people = [{ id: "owner-b", name: "Owner B", role: "designer" }];
+    vi.mocked(api.getProjectStatus).mockResolvedValue(other);
+    await act(async () => { await view.client.invalidateQueries({ queryKey: api.projectStatusKeys.project("project-b") }); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project status" })).toHaveTextContent("Owner B"));
+    vi.mocked(api.getProjectStatus).mockImplementation(() => new Promise(done => { resolve = done; }));
+    mocks.id = "viewer-b"; view.change("project-b");
+    expect(screen.queryByText(/Owner B/)).not.toBeInTheDocument();
+  });
+
+  it("polls a visible chip with its drawer closed and stops for hidden or unmounted views", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const view = mount(true, "project-a", "chip");
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      const before = vi.mocked(api.getProjectStatus).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_100); });
+      expect(api.getProjectStatus).toHaveBeenCalledTimes(before + 1);
+      act(() => focusManager.setFocused(false));
+      const hidden = vi.mocked(api.getProjectStatus).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(api.getProjectStatus).toHaveBeenCalledTimes(hidden);
+      await act(async () => { focusManager.setFocused(true); await vi.advanceTimersByTimeAsync(100); });
+      expect(api.getProjectStatus).toHaveBeenCalledTimes(hidden + 1);
+      view.unmount(); const unmounted = vi.mocked(api.getProjectStatus).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(api.getProjectStatus).toHaveBeenCalledTimes(unmounted);
+    } finally { focusManager.setFocused(undefined); vi.useRealTimers(); }
+  });
+
+  it("deduplicates same-project reads and returns focus to the contextual chip after nested status dismissal", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><main><h1>Work list</h1><ProjectStatusButton projectId="project-a" presentation="chip" participant />
+      <ContextPanel title="Selected work" onClose={vi.fn()} headerActions={<ProjectStatusButton projectId="project-a" presentation="chip" participant />}><p>Selected project work</p></ContextPanel>
+    </main></QueryClientProvider>);
+    const detail = screen.getByRole("dialog", { name: "Selected work" });
+    const chip = within(detail).getByRole("button", { name: "Project status" });
+    await waitFor(() => expect(chip).toHaveTextContent("Maya Client"));
+    expect(api.getProjectStatus).toHaveBeenCalledTimes(1);
+    chip.focus(); await userEvent.keyboard("{Enter}");
+    const status = await screen.findByRole("dialog", { name: "Project status" });
+    expect((await axe.run(status, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(chip).toHaveFocus());
+    expect(detail).toBeVisible();
   });
 });

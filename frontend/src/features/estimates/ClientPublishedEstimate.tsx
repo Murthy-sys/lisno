@@ -179,7 +179,7 @@ export function ClientEstimateDecision({ estimate, review, decisionBlocked, fall
       setNeedsRefresh(true);
       setDialog(null);
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-        queryClient.setQueryData(estimateWorkflowKeys.client, []);
+        queryClient.setQueriesData({ queryKey: estimateWorkflowKeys.client }, []);
         await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client });
       }
     }

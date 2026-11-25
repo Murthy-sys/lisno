@@ -53,6 +53,22 @@ beforeEach(() => server.use(http.get("/api/v1/projects/:projectId/status", ({ pa
 afterEach(() => { statusAuth.role = "worker_carpenter"; vi.restoreAllMocks(); });
 
 describe("OperationalTaskQueue", () => {
+  it("adds a chip only to selected task details while keeping queue controls compact", async () => {
+    server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [carpenterTask] })));
+    renderWithQuery(<OperationalTaskQueue role="worker_carpenter" />);
+    const queueControl = await screen.findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(queueControl).not.toHaveClass("project-status-chip");
+    await userEvent.click(screen.getByRole("button", { name: "Update progress for Carpentry · Living Room" }));
+    const detail = await screen.findByRole("dialog", { name: "Update Carpentry · Living Room progress" });
+    const chip = await within(detail).findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(chip).toHaveClass("project-status-chip");
+    expect(chip.closest(".ui-drawer__header")).not.toBeNull();
+    expect(within(detail).getByRole("spinbutton", { name: "Progress percentage" })).toHaveValue(25);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(queueControl).not.toHaveClass("project-status-chip");
+  });
+
   it("preserves an unsaved progress draft when the worker keeps editing", async () => {
     server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [carpenterTask] })));
     const user = userEvent.setup();

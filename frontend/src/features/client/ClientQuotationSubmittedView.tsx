@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { ClientSubmittedQuotationPdf } from "./ClientSubmittedQuotationPdf";
 import { ClientEstimateDecision, PreEstimateComparison } from "../estimates/ClientPublishedEstimate";
-import { PmcPaymentSummary, clientEstimateMoney, clientEstimateTotal } from "../estimates/estimatePmcPaymentPresentation";
+import { clientEstimateTotal } from "../estimates/estimatePmcPaymentPresentation";
 import { EstimateBuilderArea } from "../estimates/EstimateBuilderArea";
 import { SubmittedEstimateBuilder } from "../estimates/SubmittedEstimateBuilder";
 import type { EstimateQueueItem } from "../estimates/estimateWorkflowApi";
@@ -16,6 +16,7 @@ export function ClientQuotationSubmittedView({ estimate, workspace, projectNumbe
   const [pdfNeedsRefresh, setPdfNeedsRefresh] = useState(false);
   const [narrow, setNarrow] = useState(() => window.innerWidth < 768);
   const review = estimate.publishedReview!;
+  const total = clientEstimateTotal(review.snapshot);
   useEffect(() => {
     section.current?.focus({ preventScroll: true });
     section.current?.scrollIntoView?.({ block: "start" });
@@ -31,15 +32,23 @@ export function ClientQuotationSubmittedView({ estimate, workspace, projectNumbe
   return <section ref={section} tabIndex={-1} className={`client-quotation client-quotation--submitted estimate-workspace estimator-dashboard estimate-workspace--item-view${workspace ? " client-quotation--workspace" : ""}`} aria-label="Submitted estimate">
     <header className="client-quotation__header"><div className="client-quotation__submitted-heading"><div className="client-quotation__identity"><h2>{review.phase === "post" ? "Post-design quotation review" : "Pre-design quotation review"}</h2>
       {workspace ? <ProjectId projectNumber={projectNumber} /> : null}</div><p>Submitted version {review.estimateVersion} · Submission {review.sendGeneration} · Read-only</p></div>
-      <dl><dt>Submitted total including GST</dt><dd>{clientEstimateMoney(clientEstimateTotal(review.snapshot))}</dd></dl></header>
+      <dl><dt>Submitted total including GST</dt><dd>{submittedMoney(total)}</dd></dl></header>
     <div className="client-quotation__navigation"><Button variant="secondary" onClick={onEdit}>Back to estimate</Button>
       <ClientSubmittedQuotationPdf estimate={estimate} onVerificationError={() => setPdfNeedsRefresh(true)} /></div>
     {pdfNeedsRefresh || !canDecide && review.status === "pending" ? <div role="status"><p>{pdfNeedsRefresh ? "Refresh the submitted version before making a decision." : "This submission is not available for approval. Refresh to check the latest confirmed version."}</p><Button variant="secondary" disabled={refreshing} onClick={() => void refresh()}>Refresh estimate</Button></div> : null}
     {review.phase === "post" ? <PreEstimateComparison estimate={estimate} /> : null}
     <EstimateBuilderArea documentFlow={!bounded} className={`client-quotation__builder${bounded ? "" : " client-quotation__builder--embedded"}`}>{builder}</EstimateBuilderArea>
     <footer className="estimate-workspace__footer client-quotation__footer client-quotation__review-footer">
-      {review.snapshot.pmcPaymentSummary !== undefined ? <PmcPaymentSummary value={review.snapshot.pmcPaymentSummary} /> : <dl className="client-quotation__submitted-taxes"><div><dt>Submitted subtotal</dt><dd>{clientEstimateMoney(review.snapshot.subtotalPaise === undefined ? review.snapshot.subtotal : review.snapshot.subtotalPaise / 100)}</dd></div><div><dt>GST</dt><dd>{clientEstimateMoney(review.snapshot.gstPaise === undefined ? review.snapshot.gst : review.snapshot.gstPaise / 100)}</dd></div>{review.snapshot.roundOffPaise !== undefined && review.snapshot.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{review.snapshot.roundOffPaise < 0 ? "−" : "+"}{clientEstimateMoney(Math.abs(review.snapshot.roundOffPaise) / 100)}</dd></div> : null}</dl>}
+      <section className="client-quotation__price-summary" aria-label="Price summary">
+        <h3>Price summary</h3>
+        <dl className="client-quotation__payable"><div><dt>Total payable inclusive of all charges</dt><dd>{submittedMoney(total)}</dd></div></dl>
+      </section>
       <ClientEstimateDecision key={`${review.id}:${review.version}`} estimate={estimate} review={review} decisionBlocked={!canDecide || pdfNeedsRefresh} fallbackRef={section} approvalLabel="Approve quotation" />
     </footer>
   </section>;
+}
+
+const submittedCurrency = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function submittedMoney(value: number | null) {
+  return value === null || !Number.isFinite(value) || value < 0 ? "Estimate unavailable" : submittedCurrency.format(value);
 }

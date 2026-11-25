@@ -38,7 +38,7 @@ describe("ManagementProjectWorkspace", () => {
                 name: "Ground floor",
                 number: "G",
                 order: 1,
-                progress: 80,
+                progress: 37,
                 plannedStartAt: "2026-07-01T09:00:00.000Z",
                 plannedEndAt: "2026-09-01T17:00:00.000Z",
                 actualStartAt: null,
@@ -216,6 +216,9 @@ describe("ManagementProjectWorkspace", () => {
       await screen.findByRole("heading", { name: "Aurora Villa" })
     ).toBeVisible();
     expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Floor G: Ground floor" })).toBeVisible();
+    expect(screen.queryByText(/37%/)).not.toBeInTheDocument();
+    expect(screen.getByText("in_progress · 80%")).toBeVisible();
     expect(await screen.findByText(/Second page.pdf/)).toBeVisible();
     expect(screen.getByText("Original deadline: 20 Jul 2026")).toBeVisible();
     expect(screen.getByText("Current deadline: 03 Aug 2026")).toBeVisible();

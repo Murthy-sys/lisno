@@ -31,17 +31,18 @@ vi.mock("./projectChatStream", () => ({ runProjectChatStream: async (options: St
 
 interface NavigationOptions {
   projectId: string;
+  showStatus?: boolean;
   overviewTo?: string;
   destination: "inline" | "portal" | "pending";
   presentation: "default" | "estimate-progress" | "client-project";
 }
-function NavigationHarness({ projectId, overviewTo, destination, presentation }: NavigationOptions) {
+function NavigationHarness({ projectId, overviewTo, destination, presentation, showStatus }: NavigationOptions) {
   const [header, setHeader] = useState<HTMLElement | null>(null);
   return <main>
     <h1>Estimate in progress</h1>
     <section aria-label="Header alerts" ref={setHeader} />
     <section aria-label="Project navigation">
-      <ProjectChatNavigation projectId={projectId} overviewTo={overviewTo} overviewLabel="Lead" presentation={presentation}
+      <ProjectChatNavigation projectId={projectId} showStatus={showStatus} overviewTo={overviewTo} overviewLabel="Lead" presentation={presentation}
         summaryContainer={destination === "inline" ? undefined : destination === "pending" ? null : header} />
     </section>
   </main>;
@@ -230,4 +231,13 @@ describe("project navigation summary composition", () => {
     expect(screen.getByLabelText("5 unread messages")).toBeVisible();
     await waitFor(() => expect(mocks.streams.filter(stream => !stream.signal.aborted).map(stream => stream.projectId)).toEqual(["project-b"]));
   });
+});
+
+
+it.each([true, false])("suppresses the duplicate navigation status with chat enabled=%s", async allowed => {
+  mocks.chatAllowed = allowed;
+  mount({ showStatus: false, destination: "inline", presentation: "client-project" });
+  if (allowed) expect(await screen.findByRole("link", { name: /Messages/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Project status" })).not.toBeInTheDocument();
+  expect(projectStatusApi.getProjectStatus).not.toHaveBeenCalled();
 });

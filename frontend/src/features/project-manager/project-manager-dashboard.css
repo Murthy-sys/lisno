@@ -330,13 +330,12 @@
 .pm-dashboard .pm-dashboard__table thead th { position: sticky; top: -5px; z-index: 1; padding-block: 12px; background: #efefe7; color: #5c6556; font-size: 10px; font-weight: 600; }
 .pm-dashboard .pm-dashboard__table tbody th { font-weight: 400; }
 .pm-dashboard .pm-dashboard__cell--number { width: 3.5%; color: #727868; font-variant-numeric: tabular-nums; }
-.pm-dashboard .pm-dashboard__cell--identity { width: 24%; }
-.pm-dashboard .pm-dashboard__cell--client { width: 10%; }
-.pm-dashboard .pm-dashboard__cell--location { width: 11%; }
-.pm-dashboard .pm-dashboard__cell--status { width: 9%; }
+.pm-dashboard .pm-dashboard__cell--identity { width: 29%; }
+.pm-dashboard .pm-dashboard__cell--client { width: 12%; }
+.pm-dashboard .pm-dashboard__cell--location { width: 13%; }
+.pm-dashboard .pm-dashboard__cell--status { width: 10%; }
 .pm-dashboard .pm-dashboard__cell--health { width: 11%; }
-.pm-dashboard .pm-dashboard__cell--progress { width: 12%; }
-.pm-dashboard .pm-dashboard__cell--handover { width: 12%; }
+.pm-dashboard .pm-dashboard__cell--handover { width: 14%; }
 .pm-dashboard .pm-dashboard__cell--open { width: 7.5%; text-align: center; }
 .pm-dashboard .pm-dashboard__field-label { display: none; }
 .pm-dashboard .pm-dashboard__project-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -351,10 +350,6 @@
 .pm-dashboard .pm-dashboard__open svg { width: 13px; height: 13px; }
 .pm-dashboard .pm-dashboard__location { display: flex; align-items: flex-start; gap: 4px; }
 .pm-dashboard .pm-dashboard__location svg { width: 12px; height: 14px; margin-top: 1px; color: #62714f; }
-.pm-dashboard .pm-dashboard__table .pm-progress__label { justify-content: flex-end; gap: 0; font-size: 10px; }
-.pm-dashboard .pm-dashboard__table .pm-progress__label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.pm-dashboard .pm-progress__track { height: 6px; border-radius: 2px; background: #e4e6dc; }
-.pm-dashboard .pm-progress__track > span { border-radius: 2px; background: #657250; }
 .pm-dashboard .pm-dashboard__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; list-style: none; margin: 0; padding: 0; }
 .pm-dashboard .pm-dashboard__grid > li { min-width: 0; }
 .pm-dashboard .pm-dashboard__project-card { display: grid; align-content: start; gap: 16px; height: 100%; min-width: 0; padding: 16px; border: 1px solid var(--pm-border); border-radius: 3px; background: #fcfbf7; }
@@ -444,8 +439,6 @@
   .pm-dashboard .pm-dashboard__project-copy > a { font-size: 14px; }
   .pm-dashboard .pm-dashboard__project-value { font-size: 11px; }
   .pm-dashboard .pm-dashboard__open { min-height: 44px; font-size: 12px; }
-  .pm-dashboard .pm-dashboard__table .pm-progress__label { justify-content: flex-start; }
-  .pm-dashboard .pm-dashboard__table .pm-progress__label strong { font-size: 12px; }
   .pm-dashboard .pm-dashboard__grid { grid-template-columns: minmax(0, 1fr); }
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { unchangedSavedEstimatePrice } from "../src/domain/estimate-price-ownership.js";
+import { estimatePhysicalScopeChanged, estimateQuotationContent, estimateQuotationContentChanged } from "../src/services/estimate-collaboration-policy.service.js";
 
 const saved = { id: "saved-id", source: "configuration", catalogueId: "source-a", mainLineId: "source-a",
   roomId: "room-a", roomName: "Study", mainBasketId: "basket-a", subBasketId: "sub-a", uomId: "uom-a",
@@ -10,6 +11,17 @@ const input = { ...saved, itemVersion: 2, revisionVersion: 3 };
 const current = { revisionId: "current-revision", itemVersion: 5, revisionVersion: 6 };
 
 describe("unchanged saved estimation prices", () => {
+  it("treats Standard/Custom only as saved metadata across price, design and approval comparisons", () => {
+    const before = { propertyType: "Apartment", lineItems: [saved], subtotalPaise: 2468, gstPaise: 444, totalPaise: 2900 };
+    for (const customizationType of [undefined, "standard", "custom"]) {
+      const after = { ...before, lineItems: [{ ...saved, customizationType }] };
+      expect(unchangedSavedEstimatePrice({ ...input, customizationType }, saved, current)).toBe(true);
+      expect(estimatePhysicalScopeChanged(before, after)).toBe(false);
+      expect(estimateQuotationContentChanged(before, after)).toBe(false);
+      expect(estimateQuotationContent(after)).toEqual(estimateQuotationContent(before));
+    }
+    expect(estimateQuotationContentChanged(before, { ...before, lineItems: [{ ...saved, ratePaise: 9999 }] })).toBe(true);
+  });
   it("requires a real explicit ID and preserves exact saved rates while quantity or inclusion changes", () => {
     expect(unchangedSavedEstimatePrice(input, undefined, current)).toBe(false);
     expect(unchangedSavedEstimatePrice({ ...input, id: undefined }, saved, current)).toBe(false);

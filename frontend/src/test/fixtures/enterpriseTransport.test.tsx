@@ -261,6 +261,7 @@ describe("synthetic enterprise route harness", () => {
   it("renders Procurement component targets and links them to the original source basket", async () => {
     const user = userEvent.setup();
     const { client } = mount("/procurement/projects/project-one?qaComponentAmounts=ready", "procurement");
+    await user.click(await screen.findByRole("button", { name: "By execution mode" }));
     const group = await screen.findByRole("region", { name: "Current In-house component costs by Sub-Basket" });
     expect(group).toHaveTextContent("1,150");
     await user.click(within(group).getByText(/Finishes \/ Ceiling/));
@@ -752,6 +753,7 @@ describe("Procurement project gallery browser scenario", () => {
     expect(transport!.requests).toEqual(before);
     await userEvent.click(within(workspace).getByRole("link", { name: "View procurement items for Aurora Villa" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/procurement/projects/project-one"));
+    await userEvent.click(await screen.findByRole("button", { name: "By execution mode" }));
     const card = await screen.findByRole("button", { name: "Open POP / Gypsum in PMC" });
     await userEvent.click(card);
     expect(await screen.findByText("PMC ceiling supervision")).toBeVisible();

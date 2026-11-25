@@ -78,6 +78,7 @@ const configuredEstimateLineSchema = z.object({
   mainBasketId: stableIdSchema, subBasketId: stableIdSchema.nullable(),
   itemType: z.enum(["main_line", "temporary"]).default("main_line"),
   classification: estimateClassificationSchema.optional(),
+  customizationType: z.enum(["standard", "custom"]).optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
@@ -95,6 +96,9 @@ const configuredEstimateLineSchema = z.object({
   quantity: z.number().finite().nonnegative(), included: z.boolean(),
   ratePaise: z.number().int().nonnegative().safe().nullable()
 }).strict().superRefine((line, context) => {
+  if (line.itemType === "temporary" && line.customizationType !== undefined) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["customizationType"], message: "Only Main Lines have a Standard or Custom label."
+  });
   if (line.rateSource === "configuration" && line.pricingMode === undefined) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["pricingMode"], message: "Configuration pricing requires a pricing mode."
   });
@@ -604,6 +608,7 @@ export function createEstimatesRouter(
           const savedId = String(prior.id);
           preservedSnapshotIds.add(savedId);
           return { ...prior, id: savedId, source: "configuration" as const, roomName: line.roomName,
+            customizationType: line.customizationType ?? prior.customizationType,
             ratePaise: prior.ratePaise as number | null, included: line.included,
             amountPaise: line.included ? prior.amountPaise as number | null : 0, amount: line.included ? prior.amount as number | null : 0,
             recommendationSourceMainLineIds: line.included ? prior.recommendationSourceMainLineIds : [] };
@@ -684,6 +689,8 @@ export function createEstimatesRouter(
           source: "configuration" as const, catalogueId: line.mainLineId,
           roomId: line.roomId, roomName: line.roomName,
           classification,
+          ...(line.itemType === "main_line" ? { customizationType: line.customizationType ??
+            (prior?.customizationType === "custom" ? "custom" : "standard") } : {}),
           ...(pricingMode === undefined ? {} : { pricingMode }),
           ...(rateSource === undefined ? {} : { rateSource }),
           ...(selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds }),

@@ -3,14 +3,12 @@ import { Link, useSearchParams } from "react-router-dom";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Dialog } from "../../components/ui/Dialog";
 import { Button } from "../../components/ui/Button";
-import type { PMItem, PMPanel, PMProgress } from "./projectManagerTypes";
+import type { PMItem, PMPanel } from "./projectManagerTypes";
 import { pmDenied, pmError, uploadPMEvidence } from "./projectManagerApi";
 export const pmLabel = (value:string) => value.replaceAll("_"," ").replace(/^./,s=>s.toUpperCase());
 export const pmMoney = (value:number|null|undefined) => value==null?"Unavailable":new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(value/100);
 export const pmDate = (value:string|null|undefined) => value?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",year:"numeric"}).format(new Date(value)):"Not scheduled";
 export function PMBadge({value,severity="neutral"}:{value:string;severity?:string}) {return <span className="pm-badge" data-severity={severity}>{pmLabel(value)}</span>;}
-export function PMProgressBar({value,label="Execution progress"}:{value:number|null;label?:string}) {return <div className="pm-progress"><div className="pm-progress__label"><span>{label}</span><strong>{value===null?"Unavailable":`${value}%`}</strong></div><div className="pm-progress__track" {...(value!==null?{role:"progressbar","aria-label":label,"aria-valuenow":value,"aria-valuemin":0,"aria-valuemax":100}:{})}><span style={{width:`${value??0}%`}}/></div></div>;}
-export function PMProgressBasis({progress}:{progress:PMProgress}) {return <details className="pm-disclosure"><summary>How progress is measured</summary><p>Vendor-reported execution, weighted by approved quantities and approved value before GST. Unissued work contributes zero when its execution scope is established. Missing scope or progress keeps the total unavailable.</p><p>{progress.coveredLines} of {progress.requiredLines} execution lines covered · {progress.siteVerified} site verified · {progress.clientAccepted} client accepted.</p><p>Planned progress follows confirmed calendar dates. Reporting 100% does not replace verification or client acceptance.</p></details>;}
 export function PMQueryState<T>({query,children}:{query:UseQueryResult<T,Error>;children:(data:T)=>ReactNode}) {
  if(pmDenied(query.error))return <div className="pm-empty" role="alert"><h2>Project access unavailable</h2><p>Your assignment may have changed. Return to the dashboard to refresh your projects.</p><Link to="/execution">Dashboard</Link></div>;
  if(query.isPending)return <div className="pm-loading" role="status">Loading workspace…</div>;

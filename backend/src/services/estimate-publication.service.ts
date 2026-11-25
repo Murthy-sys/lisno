@@ -573,6 +573,7 @@ export function toEstimateSnapshot(
     lineItems: estimate.lineItems.map((line, index) => ({
       source: line.source,
       itemType: line.itemType,
+      ...(line.customizationType === undefined ? {} : { customizationType: line.customizationType }),
       ...(line.clientVisible === undefined ? {} : { clientVisible: line.clientVisible }),
       classification: line.source === "configuration"
         ? line.classification === "special" ? "special" : "standard"

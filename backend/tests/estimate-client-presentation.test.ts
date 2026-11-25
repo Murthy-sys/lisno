@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparePublishedEstimateSnapshots, presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { comparePublishedEstimateSnapshots, parseClientQuotationSource, presentClientEstimate } from "../src/services/estimate-client-presentation.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 
@@ -26,6 +26,15 @@ const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
 };
 
 describe("published Client estimate presentation", () => {
+  it("retains optional frozen customization metadata without inferring labels or changing historical money", () => {
+    const legacy = visibilitySnapshot([visibilityLine("custom-line")]);
+    expect(parseClientQuotationSource(legacy)?.lineItems[0]).not.toHaveProperty("customizationType");
+    const custom = { ...legacy, lineItems: [{ ...legacy.lineItems[0], customizationType: "custom" }] };
+    const frozen = structuredClone(custom);
+    expect(parseClientQuotationSource(custom)?.lineItems[0]).toMatchObject({ customizationType: "custom", amountPaise: 10_000 });
+    expect(custom).toEqual(frozen);
+    expect(parseClientQuotationSource({ ...custom, lineItems: [{ ...custom.lineItems[0], customizationType: "special" }] })).toBeNull();
+  });
   it("presents frozen rounding and rejects a manipulated adjustment while preserving historical totals", () => {
     const original = visibilitySnapshot([visibilityLine("rounded", true, 10_252)]);
     const rounded = { ...original, total: 103, totalPaise: 10_300, roundOffPaise: 48 };

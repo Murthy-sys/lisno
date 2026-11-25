@@ -1,3 +1,4 @@
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { ProjectChatNavigation } from "../messages";
@@ -25,7 +26,6 @@ import { TaskRow } from "../../components/tasks/TaskRow";
 import { TaskUpdateDialog } from "../../components/tasks/TaskUpdateDialog";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { PageHeader } from "../../components/ui/PageHeader";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
@@ -116,10 +116,10 @@ export function ProjectWorkspace() {
         eyebrow="Project workspace"
         breadcrumb={<Link to="/designer" className="back-link"><ArrowLeft aria-hidden="true" /> Back to dashboard</Link>}
         metadata={<div className="project-hero__meta"><ProjectId projectNumber={project.projectNumber} /><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
-        actions={<StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} />}
+        actions={<div className="project-status-header-actions"><StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} /><ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" /></div>}
       />
 
-      <ProjectChatNavigation projectId={projectId} overviewTo={`/designer/projects/${projectId}`} />
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/designer/projects/${projectId}`} showStatus={false} />
       {project.estimationWorkflowVersion === 3 ? <DesignTeamPicker key={`team-${projectId}`} projectId={projectId} /> : null}
 
       {notice ? (
@@ -210,13 +210,6 @@ export function ProjectWorkspace() {
                       <span className="disclosure__title">
                         <span>Floor {floor.number}</span>
                         <strong>{floor.name}</strong>
-                      </span>
-                      <span className="disclosure__progress">
-                        <b>{floor.progress}%</b>
-                        <ProgressBar
-                          value={floor.progress}
-                          label={`${floor.name}: ${floor.progress}% complete`}
-                        />
                       </span>
                       <ChevronDown
                         className={floorOpen ? "chevron chevron--open" : "chevron"}

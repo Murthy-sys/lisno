@@ -45,7 +45,7 @@ export function ClientSiteCompletionReview({ projectId }: { projectId: string })
   if (!review) return null;
   const pending = review.status === "pending" && current?.projectStatus === "active";
   return <section className="client-site-completion" aria-labelledby="client-site-completion-title">
-    <header><div><p>Site execution</p><h2 id="client-site-completion-title">Project completion review</h2><span>Submitted by the Project Manager · Round {review.round}</span></div><strong>{review.progress}% complete</strong></header>
+    <header><div><p>Site execution</p><h2 id="client-site-completion-title">Project completion review</h2><span>Submitted by the Project Manager · Round {review.round}</span></div></header>
     <p>{review.note}</p>
     {review.status !== "pending" ? <p role="status">{current?.projectStatus === "completed" ? "Project completed. No further action is needed." : review.status === "approved" ? "You accepted this completion. Super Admin will close the project." : "You requested changes. The Project Manager will submit an updated completion."}</p> : null}
     <div className="client-site-completion__sections">{review.sections.map(section => <article key={section.assignmentId}>
