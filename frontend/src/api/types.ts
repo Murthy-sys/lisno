@@ -1,5 +1,5 @@
 import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "../../../shared/estimation/estimatePmcPaymentSplit";
-import type { ProjectInitiationMetadata } from "../../../shared/projects/projectInitiation";
+import type { ProjectInitiationMetadata, ProjectLanguage } from "../../../shared/projects/projectInitiation";
 import type { EstimateProposalMetadata } from "../../../shared/estimation/estimateProposal";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
 import type { EstimateAggregatePricing } from "../../../shared/estimation/estimateAggregatePricing";
@@ -13,6 +13,14 @@ import type {
 } from "./authorization-contract";
 
 export type { Role } from "./authorization-contract";
+export type {
+  AssignmentPagination, AssignmentPerson, DesignerAssignmentRequestStatus, DesignerAssignmentClosureReason,
+  DesignerSuggestion, DesignerSuggestionsPage, DesignerAssignmentRequestSummary,
+  DesignerAssignmentRequestPage, DesignerAssignmentInboxItem, DesignerAssignmentInboxPage,
+  CreateDesignerAssignmentRequestInput, CancelDesignerAssignmentRequestInput,
+  DecideDesignerAssignmentRequestInput, KeyCollectionAppointmentMode,
+  KeyCollectionScheduleData, KeyCollectionAppointmentView, DesignerHandoffView
+} from "../../../shared/projects/designerAssignment";
 
 export type WorkflowAssignmentRole = WorkerRole | "procurement" | "site_manager";
 
@@ -1002,6 +1010,9 @@ export interface CreateUserInvitationInput {
   email: string;
   role: InvitableRole;
   mobile: string;
+  location?: string | null;
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
 }
 
 export interface UserInvitationInspection {
@@ -1017,6 +1028,9 @@ export interface UserInvitationItem {
   email: string;
   role: InvitableRole;
   mobile: string;
+  location?: string | null;
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
   status: UserInvitationPresentationStatus;
   currentLinkAvailable: boolean;
   availableActions: UserInvitationAction[];
@@ -1058,6 +1072,9 @@ export interface UserDirectoryItem {
   version: number;
   avatar?: string;
   title?: string;
+  location?: string | null;
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1076,8 +1093,10 @@ export interface UserDirectoryPage extends PageData<UserDirectoryItem> {
 }
 
 export type UpdateManagedUserInput =
-  | { version: number; role: Role; active?: never }
-  | { version: number; active: boolean; role?: never };
+  | { version: number; role: Role; active?: never; location?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; active: boolean; role?: never; location?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; location: string | null; role?: never; active?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; languagesKnown: ProjectLanguage[]; preferredLanguage: ProjectLanguage | null; role?: never; active?: never; location?: never };
 
 export interface DeleteManagedUserInput {
   version: number;

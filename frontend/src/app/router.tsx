@@ -75,6 +75,7 @@ import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage
 import { VendorInductionPublicPage } from "../features/procurement/VendorInductionPublicPage";
 import { VendorBoqPublicPage } from "../features/procurement/VendorBoqPublicPage";
 import { ProcurementBasketApprovalQueue } from "../features/procurement/ProcurementBasketApprovalQueue";
+import { WorkflowTimelinesPage } from "../features/workflow-timelines/WorkflowTimelinesPage";
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
@@ -361,6 +362,7 @@ const stagedElements = {
   "/admin/configuration/estimation": <KnowledgeBaseIndexPage />,
   "/admin/configuration/estimation/items/:itemId": <KnowledgeItemWorkspacePage />,
   "/admin/configuration/estimation/reusable-values": <KnowledgeReusableValuesPage />,
+  "/admin/configuration/estimation/workflow-timelines": <WorkflowTimelinesPage />,
   "/admin/client-responses": <ClientResponseInboxPage />,
   "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
   "/admin/design-approvals": <DesignPlanResponseInboxPage />,
@@ -565,6 +567,13 @@ export function AppRoutes() {
           element={registeredElement(
             "/admin/configuration/estimation/reusable-values",
             stagedElements["/admin/configuration/estimation/reusable-values"]
+          )}
+        />
+        <Route
+          path="/admin/configuration/estimation/workflow-timelines"
+          element={registeredElement(
+            "/admin/configuration/estimation/workflow-timelines",
+            stagedElements["/admin/configuration/estimation/workflow-timelines"]
           )}
         />
         <Route

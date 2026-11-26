@@ -13,6 +13,8 @@ const BASE_SESSION_PERMISSIONS = [
 
 const DEFAULT_PERMISSIONS_BY_ROLE = {
   super_admin: [
+    "workflow_timelines.read",
+    "workflow_timelines.update",
     "projects.initiation_defaults.read",
     "projects.initiation_defaults.manage",
     ...BASE_SESSION_PERMISSIONS,
@@ -87,6 +89,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "estimation.estimate.read"
   ],
   designer: [
+    "design.key_collection_reminders.read",
+    "design.assignment_requests.read",
+    "design.assignment_requests.decide",
     ...BASE_SESSION_PERMISSIONS,
     "projects.list",
     "projects.read",

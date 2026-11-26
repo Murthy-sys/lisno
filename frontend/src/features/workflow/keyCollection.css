@@ -1,0 +1,25 @@
+.key-collection-header { display: inline-flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 0; max-width: 100%; min-width: 0; min-height: 44px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.key-collection-clock { display: grid; gap: 2px; min-width: 0; max-width: 100%; padding: 8px 12px; border: 1px solid currentColor; background: var(--color-surface-subtle); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.key-collection-clock[data-zone="green"] { color: #1b5a36; background: #f0f5ed; }
+.key-collection-clock[data-zone="orange"] { color: #894200; background: #fff3e3; }
+.key-collection-clock[data-zone="red"] { color: #982322; background: #fff0ed; }
+.key-collection-clock[data-zone="unavailable"] { color: var(--color-text-muted); }
+.key-collection-clock__label { font-weight: 600; }
+.key-collection-clock time { font-weight: 700; font-variant-numeric: tabular-nums; }
+.key-collection-clock--chip { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 3px 10px; box-sizing: border-box; min-height: 36px; padding: 7px 14px; border-radius: 999px; font-size: 12px; }
+.key-collection-clock--chip time { white-space: nowrap; }
+.key-collection-header:focus-visible, .key-collection-reminder:focus-visible { outline: 3px solid var(--color-text); outline-offset: 3px; }
+.key-collection-stale { font-size: 12px; padding-top: 3px; color: var(--color-text-muted); }
+.key-collection-dialog { width: min(42rem, calc(100vw - 32px)); }
+.key-collection-details { display: grid; gap: var(--space-3); padding: 0 var(--space-4) var(--space-4); min-width: 0; }
+.key-collection-details p, .key-collection-details ul { margin: 0; overflow-wrap: anywhere; }
+.key-collection-details ul { padding-inline-start: var(--space-5); }
+.key-collection-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.key-collection-actions .ui-button { white-space: normal; }
+.key-collection-reminder { min-height: 44px; max-width: 100%; padding: 8px 12px; border: 1px solid #982322; background: #fff0ed; color: #982322; font: inherit; font-size: 13px; font-weight: 700; line-height: 1.4; text-align: center; overflow-wrap: anywhere; cursor: pointer; }
+.key-collection-reminder[data-state="unavailable"] { color: var(--color-text); border-color: var(--color-border); background: var(--color-surface-subtle); }
+.key-collection-reminders { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-4); }
+.key-collection-reminders > li { display: grid; gap: var(--space-2); padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); min-width: 0; }
+.key-collection-reminders h3 { margin: 0; font: var(--type-heading-3); overflow-wrap: anywhere; }
+.key-collection-reminders a { color: #982322; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; padding-block: 8px; }
+@media (max-width: 600px) { .project-status-header-actions .key-collection-header { flex: 0 1 auto; } .key-collection-actions > * { flex: 1 1 auto; } }

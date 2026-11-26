@@ -244,6 +244,8 @@ describe("authorization policy", () => {
           permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
           permission !== "projects.design_requirements.act" &&
           permission !== "projects.status.read" &&
+          !permission.startsWith("design.assignment_requests.") &&
+          permission !== "design.key_collection_reminders.read" &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
@@ -283,8 +285,8 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(228);
-    expect(new Set(PERMISSION_CODES).size).toBe(228);
+    expect(PERMISSION_CODES).toHaveLength(233);
+    expect(new Set(PERMISSION_CODES).size).toBe(233);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -899,5 +901,13 @@ it("limits Design requirement actions to the task actors, separately from workfl
   for (const role of ROLE_CODES) {
     expect(hasPermission(role, "projects.design_requirements.act"), role)
       .toBe(["super_admin", "designer", "procurement", "client"].includes(role));
+  }
+});
+
+it("grants assignment inbox capabilities only to Designers and the operation-scoped Super Admin baseline", () => {
+  for (const role of ROLE_CODES) {
+    for (const permission of ["design.assignment_requests.read", "design.assignment_requests.decide", "design.key_collection_reminders.read"] as const) {
+      expect(hasPermission(role, permission), `${role}: ${permission}`).toBe(["designer", "super_admin"].includes(role));
+    }
   }
 });

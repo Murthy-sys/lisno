@@ -1,5 +1,5 @@
 import axe from "axe-core";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
 import { emptyResponsibilitiesHandler, responsibilityPage, responsibilityRow } from "./userResponsibilities.test-fixtures";
+import { adminUserKeys } from "./adminApi";
 
 const actor = {
   id: "user-super-admin-actor",
@@ -131,6 +132,335 @@ async function expectNoAxeViolations() {
 }
 
 describe("UserMutationDialog", () => {
+  it("saves only the language pair, refreshes, reopens, and clears without affecting another user", async () => {
+    installSession(actor);
+    let current: UserDirectoryItem = { ...designer, location: "Mysuru" };
+    const other: UserDirectoryItem = { ...designer, id: "other-user", name: "Other Designer", languagesKnown: ["hindi"], preferredLanguage: "hindi" };
+    const patches: unknown[] = [];
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([current, other]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", async ({ request }) => {
+        const patch = await request.json() as Pick<UserDirectoryItem, "languagesKnown" | "preferredLanguage" | "version">;
+        patches.push(patch);
+        current = { ...current, ...patch, version: current.version + 1 };
+        return HttpResponse.json({ data: { user: current, revokedGrantCount: 0, responsibilities: zeroCounts } });
+      })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const known = within(dialog).getByRole("button", { name: "Known languages" });
+    const preferred = within(dialog).getByRole("combobox", { name: "Preferred language" });
+    expect(known).toHaveAccessibleDescription("0 languages selected");
+    expect(preferred).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Save languages" })).toBeDisabled();
+    await user.click(known);
+    const options = within(dialog).getByRole("listbox");
+    await user.click(within(options).getByRole("option", { name: "Kannada" }));
+    await user.click(within(options).getByRole("option", { name: "English" }));
+    await user.keyboard("{Escape}");
+    expect(known).toHaveFocus();
+    await user.selectOptions(preferred, "tamil");
+    await user.click(within(dialog).getByRole("button", { name: "Save languages" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Arun Patel" })).not.toBeInTheDocument());
+    expect(patches).toEqual([{ version: 3, languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" }]);
+    expect(screen.getByRole("region", { name: "Notifications" })).not.toHaveTextContent(/grant.*revoked/);
+    await user.click(screen.getByRole("button", { name: "Manage Arun Patel" }));
+    expect(screen.getByRole("button", { name: "Known languages" })).toHaveTextContent("English, Kannada");
+    expect(screen.getByRole("combobox", { name: "Preferred language" })).toHaveValue("tamil");
+    expect(screen.getByRole("textbox", { name: "Location" })).toHaveValue("Mysuru");
+    await user.click(screen.getByRole("button", { name: "Known languages" }));
+    await user.click(screen.getByRole("button", { name: "Clear languages" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("combobox", { name: "Preferred language" })).toHaveValue("tamil");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Preferred language" }), "");
+    await user.click(screen.getByRole("button", { name: "Save languages" }));
+    await waitFor(() => expect(patches).toHaveLength(2));
+    expect(patches[1]).toEqual({ version: 4, languagesKnown: [], preferredLanguage: null });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Arun Patel" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Manage Arun Patel" }));
+    expect(screen.getByRole("button", { name: "Known languages" })).toHaveAccessibleDescription("0 languages selected");
+    expect(screen.getByRole("combobox", { name: "Preferred language" })).toHaveValue("");
+    expect(other.languagesKnown).toEqual(["hindi"]);
+    expect(other.preferredLanguage).toBe("hindi");
+  });
+
+  it("treats reordered selections as unchanged and keeps profile/access edits separate without blocking recovery", async () => {
+    installSession(actor);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([{ ...designer, languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" }]))));
+    const { user, dialog } = await openDesignerDialog();
+    const known = within(dialog).getByRole("button", { name: "Known languages" });
+    const role = within(dialog).getByRole("combobox", { name: "Role" });
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.click(known);
+    const english = within(screen.getByRole("listbox")).getByRole("option", { name: "English" });
+    await user.click(english);
+    expect(role).toBeDisabled();
+    expect(location).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Deactivate user" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save languages" })).toBeEnabled();
+    await user.click(english);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(within(dialog).getByRole("button", { name: "Save languages" })).toBeDisabled();
+    expect(role).toBeEnabled();
+    expect(location).toBeEnabled();
+    await user.type(location, "Mysuru");
+    expect(known).toBeDisabled();
+    expect(within(dialog).getByRole("combobox", { name: "Preferred language" })).toBeDisabled();
+    await user.clear(location);
+    expect(known).toBeEnabled();
+    await user.selectOptions(role, "procurement");
+    expect(known).toBeDisabled();
+    await user.selectOptions(role, "designer");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Preferred language" }), "hindi");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(within(dialog).getByRole("combobox", { name: "Preferred language" })).toHaveValue("hindi");
+    expect(within(dialog).getByRole("button", { name: "Save languages" })).toBeEnabled();
+  });
+
+  it.each(["languagesKnown", "preferredLanguage"])("preserves both language fields and focuses rejected %s", async (field) => {
+    installSession(actor);
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Invalid languages", fields: { [field]: "Review this language selection." } } }, { status: 400 }))
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const known = within(dialog).getByRole("button", { name: "Known languages" });
+    const preferred = within(dialog).getByRole("combobox", { name: "Preferred language" });
+    await user.click(known);
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "English" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.selectOptions(preferred, "kannada");
+    await user.click(within(dialog).getByRole("button", { name: "Save languages" }));
+    const control = field === "languagesKnown" ? known : preferred;
+    await waitFor(() => expect(control).toHaveAccessibleDescription(/Review this language selection/));
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(known).toHaveTextContent("English");
+    expect(preferred).toHaveValue("kannada");
+  });
+
+  it("preserves a failed language save and blocks duplicate requests while pending", async () => {
+    installSession(actor);
+    const response = deferred<Response>();
+    let count = 0;
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => { count += 1; return response.promise; })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const preferred = within(dialog).getByRole("combobox", { name: "Preferred language" });
+    await user.selectOptions(preferred, "kannada");
+    await user.click(within(dialog).getByRole("button", { name: "Save languages" }));
+    await waitFor(() => expect(count).toBe(1));
+    expect(preferred).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Known languages" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Enter}{Escape}");
+    response.resolve(HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Try again" } }, { status: 503 }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("User languages could not be updated");
+    expect(preferred).toHaveValue("kannada");
+    expect(preferred).toBeEnabled();
+    expect(count).toBe(1);
+  });
+
+  it("loads current language values after a version conflict without replaying the stale save", async () => {
+    installSession(actor);
+    let current: UserDirectoryItem = { ...designer, languagesKnown: ["english"], preferredLanguage: "tamil" };
+    let count = 0;
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([current]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => {
+        count += 1;
+        current = { ...current, version: 4, languagesKnown: ["hindi"], preferredLanguage: "kannada" };
+        return HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "The user changed elsewhere." } }, { status: 409 });
+      })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const preferred = within(dialog).getByRole("combobox", { name: "Preferred language" });
+    await user.selectOptions(preferred, "english");
+    await user.click(within(dialog).getByRole("button", { name: "Save languages" }));
+    await waitFor(() => expect(preferred).toHaveValue("kannada"));
+    expect(within(dialog).getByRole("button", { name: "Known languages" })).toHaveTextContent("Hindi");
+    expect(within(dialog).getByText("The user changed elsewhere. Latest details are now loaded; choose the change again.")).toHaveAttribute("role", "alert");
+    expect(within(dialog).getByRole("button", { name: "Save languages" })).toBeDisabled();
+    expect(count).toBe(1);
+  });
+
+  it.each([
+    { initial: undefined, entered: "  Whitefield, Bengaluru  ", saved: "Whitefield, Bengaluru" },
+    { initial: "Mysuru", entered: "ಬೆಂಗಳೂರು", saved: "ಬೆಂಗಳೂರು" },
+    { initial: "Bengaluru", entered: "   ", saved: null }
+  ])("saves only location and version, refreshes the row, and retains another user ($initial → $saved)", async ({ initial, entered, saved }) => {
+    installSession(actor);
+    let current: UserDirectoryItem = { ...designer, location: initial };
+    const other = { ...designer, id: "other-user", name: "Other Designer", location: "Pune" };
+    let patchBody: unknown;
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([current, other]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", async ({ request }) => {
+        patchBody = await request.json();
+        current = { ...current, location: saved, version: 4 };
+        return HttpResponse.json({ data: { user: current, revokedGrantCount: 0, responsibilities: zeroCounts } });
+      })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    expect(location).toHaveValue(initial ?? "");
+    expect(location).toHaveAccessibleDescription("City or area");
+    expect(within(dialog).getByRole("button", { name: "Save location" })).toBeDisabled();
+    await user.clear(location);
+    await user.type(location, entered);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Arun Patel" })).not.toBeInTheDocument());
+    expect(patchBody).toEqual({ version: 3, location: saved });
+    expect(within(screen.getByRole("row", { name: /Arun Patel/ })).getByText(saved ?? "Not set")).toBeVisible();
+    expect(within(screen.getByRole("row", { name: /Other Designer/ })).getByText("Pune")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "User location updated" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Notifications" })).not.toHaveTextContent(/grant.*revoked/);
+    await user.click(screen.getByRole("button", { name: "Manage Arun Patel" }));
+    expect(screen.getByRole("textbox", { name: "Location" })).toHaveValue(saved ?? "");
+  });
+
+  it("keeps edits separate and protects an unsaved location when closing", async () => {
+    installSession(actor);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))));
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    const role = within(dialog).getByRole("combobox", { name: "Role" });
+    await user.type(location, "Mysuru");
+    expect(role).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save role" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Deactivate user" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(location).toHaveValue("Mysuru");
+    await user.clear(location);
+    await user.selectOptions(role, "procurement");
+    expect(location).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save location" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Deactivate user" })).toBeDisabled();
+  });
+
+  it("does not save a normalized unchanged location", async () => {
+    installSession(actor);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([{ ...designer, location: "Mysuru" }]))));
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.clear(location);
+    await user.type(location, "  Mysuru  ");
+    expect(within(dialog).getByRole("button", { name: "Save location" })).toBeDisabled();
+    expect(within(dialog).getByRole("combobox", { name: "Role" })).toBeEnabled();
+  });
+
+  it("retains and focuses location after server field validation fails", async () => {
+    installSession(actor);
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => HttpResponse.json({ error: {
+        code: "VALIDATION_ERROR", message: "Invalid location", fields: { location: "Review this location." }
+      } }, { status: 400 }))
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.type(location, "Mysuru");
+    await user.click(within(dialog).getByRole("button", { name: "Save location" }));
+    await waitFor(() => expect(location).toHaveAccessibleDescription(/Review this location/));
+    expect(location).toHaveValue("Mysuru");
+    expect(location).toHaveFocus();
+  });
+
+  it("blocks further location edits after a deleted target response even if refetch is stale", async () => {
+    installSession(actor);
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => HttpResponse.json({ error: {
+        code: "NOT_FOUND", message: "The requested resource was not found."
+      } }, { status: 404 }))
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.type(location, "Mysuru");
+    await user.click(within(dialog).getByRole("button", { name: "Save location" }));
+    expect(await within(dialog).findByText(/This user is no longer in the current directory view/)).toBeVisible();
+    expect(location).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save location" })).toBeDisabled();
+  });
+
+  it("validates location, blocks duplicate pending saves and preserves failed input", async () => {
+    installSession(actor);
+    const response = deferred<Response>();
+    let patchCount = 0;
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", () => { patchCount += 1; return response.promise; })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    const save = within(dialog).getByRole("button", { name: "Save location" });
+    fireEvent.change(location, { target: { value: "x".repeat(121) } });
+    await user.click(save);
+    expect(location).toHaveAccessibleDescription(/120 characters or fewer/);
+    expect(location).toHaveFocus();
+    fireEvent.change(location, { target: { value: "City\u0000area" } });
+    await user.click(save);
+    expect(location).toHaveAccessibleDescription(/control characters/);
+    expect(patchCount).toBe(0);
+    fireEvent.change(location, { target: { value: "Mysuru" } });
+    await user.click(save);
+    await waitFor(() => expect(patchCount).toBe(1));
+    expect(location).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Enter}{Escape}");
+    expect(dialog).toBeVisible();
+    response.resolve(HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Try again" } }, { status: 503 }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("User location could not be updated");
+    expect(location).toHaveValue("Mysuru");
+    expect(location).toBeEnabled();
+    expect(patchCount).toBe(1);
+  });
+
+  it("loads a conflicting location for review without replaying the stale save", async () => {
+    installSession(actor);
+    let current = { ...designer, location: "Mysuru" };
+    let patchCount = 0;
+    server.use(
+      http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([current]))),
+      http.patch("/api/v1/admin/users/user-designer-arun", async ({ request }) => {
+        patchCount += 1;
+        expect(await request.json()).toEqual({ version: 3, location: "Bengaluru" });
+        current = { ...current, location: "Coimbatore", version: 4 };
+        return HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "The user changed elsewhere." } }, { status: 409 });
+      })
+    );
+    const { user, dialog } = await openDesignerDialog();
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.clear(location);
+    await user.type(location, "Bengaluru");
+    await user.click(within(dialog).getByRole("button", { name: "Save location" }));
+    await waitFor(() => expect(location).toHaveValue("Coimbatore"));
+    expect(within(dialog).getByText("The user changed elsewhere. Latest details are now loaded; choose the change again.")).toHaveAttribute("role", "alert");
+    expect(within(dialog).getByRole("button", { name: "Save location" })).toBeDisabled();
+    expect(patchCount).toBe(1);
+  });
+
+  it("announces background changes before replacing a location draft", async () => {
+    installSession(actor);
+    let current = { ...designer, location: "Mysuru" };
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([current]))));
+    const user = userEvent.setup();
+    const { queryClient } = renderApp(["/admin/users"]);
+    await user.click(await screen.findByRole("button", { name: "Manage Arun Patel" }));
+    const location = screen.getByRole("textbox", { name: "Location" });
+    await user.clear(location);
+    await user.type(location, "Bengaluru");
+    current = { ...current, location: "Coimbatore", version: 4 };
+    await act(() => queryClient.invalidateQueries({ queryKey: adminUserKeys.all }));
+    await waitFor(() => expect(location).toHaveValue("Coimbatore"));
+    expect(screen.getByText("The user changed elsewhere. Latest details are now loaded; choose the change again.")).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("button", { name: "Save location" })).toBeDisabled();
+  });
+
   it("offers canonical Project Manager but not the retired role from a stale server list", async () => {
     installSession(actor);
     server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer], ["designer", "program_manager", "site_manager"]))));

@@ -1,3 +1,4 @@
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
 import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { requireValidNewPassword } from "./password-policy.js";
@@ -221,7 +222,7 @@ export function createPasswordResetService(
 
           await transaction.updateUserCredentials(
             user!.id,
-            currentReset.userVersion,
+            user!.version,
             currentReset.sessionVersion,
             { passwordHash, updatedAt: completedAt }
           );
@@ -350,7 +351,7 @@ async function issuePasswordReset(input: {
     const record = await transaction.createPasswordReset({
       id: resetId,
       userId: user.id,
-      userVersion: user.version,
+      userVersion: userAuthorizationVersion(user),
       sessionVersion: passwordResetSessionVersion(user),
       tokenHash,
       tokenGeneration: generation,

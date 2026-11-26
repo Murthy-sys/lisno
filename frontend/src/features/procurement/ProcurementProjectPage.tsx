@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
@@ -51,7 +52,7 @@ export function ProcurementProjectPage() {
       <PageHeader
         id="procurement-project-page-title"
         eyebrow="Project procurement"
-        actions={canRead && (details.project || visibleProject) ? <ProjectStatusButton projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} presentation="chip" /> : undefined}
+        actions={canRead && (details.project || visibleProject) ? <div className="project-status-header-actions"><KeyCollectionHeader projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} /><ProjectStatusButton projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} presentation="chip" /></div> : undefined}
         title={canRead ? details.project?.name ?? visibleProject?.projectName ?? "Project procurement" : "Project procurement"}
         description="Plan each main basket, compare vendor BOQs and issue approved work orders."
         breadcrumb={<Link to="/procurement">Back to projects</Link>}
@@ -60,7 +61,7 @@ export function ProcurementProjectPage() {
 
       {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" showStatus={false} /> : null}
       {details.project ? <><AssignedProjectOverview project={details.project} />
-        {hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel projectId={projectId} showInitialPayment={false} /> : null}
+        {hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel showAppointmentTimer={false} projectId={projectId} showInitialPayment={false} /> : null}
       </> : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
         : details.canRead && details.query.isError ? <PageState state="error" message={procurementError(details.query.error, "Project details could not be loaded.")} action={{ label: "Retry project details", onAction: () => void details.query.refetch() }} /> : null}
       {!canRead ? (

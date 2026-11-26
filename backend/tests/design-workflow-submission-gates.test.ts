@@ -309,11 +309,17 @@ describe("Mongo submission gate transaction", () => {
     await TaskModel.create({ ...task, _id: "secondary-upload-task", ownerId: user.id, projectId });
     const estimateId = "secondary-upload-estimate";
     const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Test city", propertyType: "2BHK",
-      lineItems: [{ id: "synthetic-line", catalogueId: "CUSTOM", roomName: "Living room", specification: "Synthetic work", unit: "nos", rate: 1000, quantity: 1, included: true, amount: 1000 }], subtotal: 1000, gst: 0, total: 1000 };
+      rooms: [{ id: "room-living", label: "Living room" }], scopes: ["interiors"],
+      lineItems: [{ id: "synthetic-line", catalogueId: "CUSTOM", roomName: "Living room", specification: "Synthetic work", unit: "nos", rate: 1000, ratePaise: 100000, quantity: 1, included: true, amount: 1000, amountPaise: 100000,
+        roomId: null, mainBasketId: null, subBasketId: null, mainLineId: null, revisionId: null, uomId: null, uomCode: null, uomDecimalScale: null,
+        mainBasketName: null, subBasketName: null, mainLineName: null, uomName: null }],
+      subtotal: 1000, gst: 0, total: 1000, subtotalPaise: 100000, gstPaise: 0, totalPaise: 100000 };
+    const sourceDigest = quotationSnapshotDigest(snapshot);
+    const salesApproval = { actorId: "synthetic-sales", estimateVersion: 2, pricedRevision: 1, sourceDigest, approvedAt: NOW };
     await EstimateClientReviewRoundModel.create([2, 4].map(version => ({
       _id: `secondary-quotation-${version}`, estimateId, leadId: "secondary-upload-lead", projectId,
-      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 1,
-      sourceDigest: sha256Hex(JSON.stringify(snapshot)), submittedById: version === 2 ? "synthetic-sales" : "primary",
+      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: version / 2,
+      sourceDigest, submittedById: version === 2 ? "synthetic-sales" : "primary", salesApproval: version === 2 ? salesApproval : null,
       estimateVersion: version, sendGeneration: version / 2, dedupeKey: sha256Hex(`secondary-quotation-${version}`),
       recipientEmail: "synthetic-client@example.test", recipientEmailNormalized: "synthetic-client@example.test", estimateSnapshot: snapshot,
       pdfFilename: "synthetic.pdf", pdfMimeType: "application/pdf", pdfByteSize: 5, pdfSha256: sha256Hex("proof"), pdfStorageReference: "synthetic-quotation",
@@ -322,8 +328,9 @@ describe("Mongo submission gate transaction", () => {
     })));
     await EstimateModel.create({ _id: estimateId, leadId: "secondary-upload-lead", ownerId: "synthetic-sales", projectId,
       propertyType: "2BHK", rooms: [{ id: "room-living", label: "Living room" }], scopes: ["interiors"],
-      lineItems: snapshot.lineItems, subtotal: 1000, gst: 0, total: 1000, status: "client_approved", version: 5,
+      lineItems: snapshot.lineItems, subtotal: 1000, gst: 0, total: 1000, subtotalPaise: 100000, gstPaise: 0, totalPaise: 100000, status: "client_approved", version: 5,
       estimation: { ...newQuotationLifecycle(), phase: "post", status: "client_approved", editClosedAt: NOW, designStartedAt: NOW,
+        salesApproval, pricedRevision: 2,
         preApproval: { reviewRoundId: "secondary-quotation-2", estimateVersion: 2, approvedAt: NOW },
         finalApproval: { reviewRoundId: "secondary-quotation-4", estimateVersion: 4, approvedAt: NOW, requirementsVersion: 0,
           designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 } } });
@@ -332,6 +339,7 @@ describe("Mongo submission gate transaction", () => {
     operational.projectId = projectId; operational.estimationWorkflowVersion = 3; operational.initialPaymentAt = null;
     operational.designStartedAt = NOW; delete operational.stages.existing_furniture_dimensions;
     await repository.saveDesignWorkflowState(projectId, 0, operational);
+    for (const round of await EstimateClientReviewRoundModel.find({ estimateId }).lean()) expect(quotationSnapshotDigest(round.estimateSnapshot)).toBe(sourceDigest);
     await expect(assertDesignWorkflowSubmissionAllowed(repository, projectId, { phase: "upload" })).resolves.toBeUndefined();
     const storage = new TestStorage();
     storage.afterSave = async () => {
@@ -381,3 +389,4 @@ describe("Mongo submission gate transaction", () => {
     expect(storage.objects.size).toBe(1);
   });
 });
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";

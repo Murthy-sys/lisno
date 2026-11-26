@@ -83,6 +83,47 @@ function collaborative(input = fixture()) {
 }
 
 describe("collaborative project status responsibility", () => {
+  it("keeps kickoff responsibility visible alongside Client scheduling", () => {
+    const input = collaborative();
+    input.designerHandoff = { initialEstimateApproved: true, executionAvailable: false, state: "awaiting_client_schedule", designer: { id: "designer-a", name: "Designer A" }, assignmentRevision: "revision", appointment: null, canSchedule: false, blockers: ["Complete Internal Kick off."] };
+    const output = deriveProjectStatus(input);
+    expect(output.currentStage?.key).toBe("internal_kickoff");
+    expect(output.pendingActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stageKey: "internal_kickoff", responsibleRole: "designer" }),
+      expect.objectContaining({ id: "project-a:keys:schedule", people: [{ id: "client-a", name: "Client A", role: "client" }] })
+    ]));
+  });
+
+  it("asks for scheduling before handover or receipt when an accepted request requires it", () => {
+    const input = fixture(); through(input, "kickoff");
+    input.keyCollectionScheduleRequired = true;
+    input.designerHandoff = { initialEstimateApproved: true, executionAvailable: false, state: "awaiting_client_schedule", designer: { id: "designer-a", name: "Designer A" }, assignmentRevision: "revision", appointment: null, canSchedule: false, blockers: [] };
+    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ id: "project-a:keys:schedule" })]);
+  });
+
+  it("projects every pending candidate without adding membership and supports a private Client view", () => {
+    const input = collaborative();
+    input.designerHandoff = { initialEstimateApproved: true, executionAvailable: false, state: "awaiting_designer", designer: null, assignmentRevision: null, appointment: null, canSchedule: false, blockers: [] };
+    input.pendingDesignerRequests = [
+      { id: "request-new", person: { id: "unassigned-designer", name: "Candidate A", role: "designer" } },
+      { id: "request-other", person: { id: "other-designer", name: "Candidate B", role: "designer" } }
+    ];
+    expect(deriveProjectStatus(input).pendingActions).toContainEqual(expect.objectContaining({ id: "project-a:designer-assignment:decision", people: input.pendingDesignerRequests.map(request => request.person) }));
+    expect(input.participants.some(person => ["unassigned-designer", "other-designer"].includes(person.id))).toBe(false);
+    input.pendingDesignerRequests = input.pendingDesignerRequests.map(request => ({ ...request, person: null }));
+    const client = deriveProjectStatus(input);
+    expect(client.pendingActions).toContainEqual(expect.objectContaining({ id: "project-a:designer-assignment:decision", state: "pending", people: [] }));
+    expect(JSON.stringify(client)).not.toContain("Candidate");
+  });
+
+  it("shows the accepted Designer's fixed key deadline while kickoff remains outstanding", () => {
+    const input = collaborative();
+    input.designerHandoff = { initialEstimateApproved: true, executionAvailable: false, state: "scheduled", designer: { id: "designer-a", name: "Designer A" }, assignmentRevision: "revision", canSchedule: false, blockers: ["Complete Internal Kick off before collecting keys."],
+      appointment: { mode: "within_48_hours", confirmedAt: BEFORE, originalDeadlineAt: AFTER, deadlineAt: AFTER, receivedAt: null, handedOverAt: null, completedAt: null, remainingMs: 1000, overdue: false } };
+    const output = deriveProjectStatus(input);
+    expect(output.currentStage?.key).toBe("internal_kickoff");
+    expect(output.pendingActions).toContainEqual(expect.objectContaining({ id: "project-a:keys:receipt", state: "blocked", deadlineAt: AFTER, people: [{ id: "designer-a", name: "Designer A", role: "designer" }] }));
+  });
   it("starts design during post-estimate edits without payment or a version-minus-one source", () => {
     const input = collaborative();
     const output = deriveProjectStatus(input);

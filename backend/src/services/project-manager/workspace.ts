@@ -16,6 +16,14 @@ export const pmPortfolioQuerySchema = z.object({ q: z.string().trim().max(160).o
 type Query = z.input<typeof pmPortfolioQuerySchema>;
 type Reader = (actor: PublicUser, id: string, query?: { limit?: number; offset?: number }) => Promise<PMPanel>;
 const notificationRoles = ["site_manager", "designer", "procurement", "finance_head", "vendor", "client", "design_manager", "design_head", "super_admin"] as const;
+function notificationRecipients(actor: PublicUser) {
+  // Key-collection warnings are one event per recipient. Oversight must not expose
+  // the PM's copy to Super Admin or count the same warning twice.
+  return actor.role === "super_admin" ? { $or: [
+    { family: { $ne: "key_collection" }, "recipientIds.0": { $exists: true } },
+    { family: "key_collection", recipientIds: actor.id }
+  ] } : { recipientIds: actor.id, ...(!["site_manager", "super_admin"].includes(actor.role) ? { family: { $ne: "key_collection" } } : {}) };
+}
 export function createProjectManagerWorkspace(deps: PMDependencies & { panels: Partial<Record<PMTab, Reader>> }) {
   const now = deps.now ?? (() => new Date());
   async function actorAccess(actor: PublicUser) { if (actor.role !== "site_manager" || !await UserModel.exists({ _id: actor.id, active: true, role: "site_manager" })) pmMissing(); }
@@ -113,7 +121,7 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
       const limit = Math.min(100, Math.max(1, query.limit ?? 50)); const offset = Math.max(0, query.offset ?? 0);
       const oversight = actor.role === "super_admin";
       if (oversight) await requireExecutionActor(actor);
-      const recipientFilter = oversight ? { "recipientIds.0": { $exists: true } } : { recipientIds: actor.id };
+      const recipientFilter = notificationRecipients(actor);
       const projectIds = await ProjectManagerEventModel.distinct("projectId", recipientFilter);
       const authorized: string[] = oversight
         ? (await ProjectModel.distinct("_id", { _id: { $in: projectIds } })).map(String)
@@ -131,7 +139,7 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
         ProjectManagerEventModel.find(filter).sort({occurredAt:-1,_id:1}).skip(offset).limit(limit).lean(),
         ProjectManagerEventModel.countDocuments(filter), ProjectManagerEventModel.countDocuments({...filter,readBy:{$ne:actor.id}})
       ]);
-      const items = rows.map(row=>({id:String(row._id),projectId:row.projectId,entityId:typeof row.result?.id === "string" ? row.result.id : row.entityId,family:row.family,action:row.action,description:["design_manager","design_head"].includes(actor.role)?row.reason??null:null,title:row.result?.title??row.action.replaceAll("_"," "),at:new Date(row.occurredAt).toISOString(),read:row.readBy.includes(actor.id)}));
+      const items = rows.map(row=>({id:String(row._id),projectId:row.projectId,entityId:typeof row.result?.id === "string" ? row.result.id : row.entityId,family:row.family,action:row.action,description:row.family === "key_collection" ? row.reason ?? null : ["design_manager","design_head"].includes(actor.role)?row.reason??null:null,title:row.result?.title??row.action.replaceAll("_"," "),at:new Date(row.occurredAt).toISOString(),read:row.readBy.includes(actor.id)}));
       if (oversight) await requireExecutionActor(actor);
       return { items,total,unreadTotal };
     },
@@ -139,7 +147,7 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
       return pmTransaction(async session => {
         const oversight = actor.role === "super_admin";
         if (oversight) await requireExecutionActor(actor, session);
-        const recipientFilter = oversight ? { "recipientIds.0": { $exists: true } } : { recipientIds: actor.id };
+        const recipientFilter = notificationRecipients(actor);
         const row = await ProjectManagerEventModel.findOne({ _id: id, ...recipientFilter }).session(session).lean();
         if (!row) pmMissing();
         await requirePMProject(actor, row.projectId, session, true, notificationRoles);

@@ -1,3 +1,4 @@
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
 import type { ClientSession } from "mongoose";
 import { hasPermission } from "../domain/authorization.js";
 import { invitationEmailSchema, invitationNameSchema, invitationMobileSchema, normalizeInvitationEmail, type ProcurementVendorInvitationSource } from "../domain/user-invitations.js";
@@ -12,7 +13,7 @@ export async function readProcurementVendorInvitationSource(id: string, session?
   const intent = await ProcurementVendorInvitationIntentModel.findById(id).session(session ?? null).lean();
   if (!intent) return null;
   const actor = await UserModel.findById(intent.actorId).session(session ?? null).lean();
-  if (!actor?.active || actor.version !== intent.actorVersion || !hasPermission(actor.role, "procurement.vendor_access.manage") || !hasPermission(actor.role, "procurement.vendor_directory.read")) return null;
+  if (!actor?.active || userAuthorizationVersion(actor) !== intent.actorVersion || !hasPermission(actor.role, "procurement.vendor_access.manage") || !hasPermission(actor.role, "procurement.vendor_directory.read")) return null;
   if (actor.role === "super_admin" && await UserModel.countDocuments({ role: "super_admin", active: true }).session(session ?? null) !== 1) return null;
   const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ _id: intent.vendorId, status: "active" }).session(session ?? null).lean();
   if (!vendor?.procurementProfile || (await vendorActivation(vendor, session)).effectiveStatus !== "active") return null;

@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AdminProjectSummary } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { ProjectPeopleAssignments, type ProjectAssignmentArea } from "./ProjectPeopleAssignments";
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "admin-one", role: "super_admin" } }) }));
 
 function project(id = "project-a"): AdminProjectSummary {
   return {
@@ -34,12 +35,14 @@ function project(id = "project-a"): AdminProjectSummary {
 function installApi() {
   const reads = { designers: 0, workers: 0, tasks: 0, identities: [] as string[], managers: 0, sections: 0 };
   server.use(
-    http.get("/api/v1/admin/designers", () => {
+    http.get("/api/v1/admin/projects/:id/designer-suggestions", ({ params }) => {
       reads.designers++;
-      return HttpResponse.json({ data: [
-        { id: "designer-one", name: "First Designer", email: "designer@example.test" },
-        { id: "designer-two", name: "Second Designer", email: "designer-two@example.test" }
-      ] });
+      return HttpResponse.json({ data: {
+        projectId: params.id, serverNow: "2026-11-25T09:00:00Z", sourceRevision: "source-one", projectPreferredLanguage: null, projectLocation: "Pune", projectCity: "Pune",
+        currentDesigner: { id: "designer-one", name: "First Designer" }, pendingRequests: [], pendingRequest: null, canRequest: true, blockedReason: null,
+        items: [{ id: "designer-two", name: "Second Designer", activeProjectCount: 2, languagesKnown: [], preferredLanguage: null, location: null, languageMatch: "unknown", locationMatch: "unknown", eligible: true, blockedReason: null }],
+        pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+      } });
     }),
     http.get("/api/v1/admin/workers", () => {
       reads.workers++;
@@ -102,16 +105,15 @@ describe("Primary project assignments", () => {
     expect(navigation().getAllByRole("button")).toHaveLength(3);
     ["Designer", "Procurement", "Project Manager"].forEach((name, index) => expect(navigation().getAllByRole("button")[index]).toHaveAccessibleName(name));
     expect(navigation().getByRole("button", { name: "Designer" })).toHaveAttribute("aria-pressed", "true");
-    await screen.findByRole("option", { name: /Second Designer/ });
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "Send assignment request to Second Designer" });
     expect(reads).toEqual({ designers: 1, workers: 0, tasks: 0, identities: [], managers: 0, sections: 0 });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Assigned Designer" }), "designer-two");
+    await user.type(screen.getByRole("textbox", { name: "Search Designers by name" }), "Second");
     await user.click(navigation().getByRole("button", { name: "Procurement" }));
     const procurement = await screen.findByRole("combobox", { name: "Assigned Procurement" });
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(within(procurement).queryByRole("option", { name: /Project Manager/ })).not.toBeInTheDocument();
     await user.selectOptions(procurement, "procurement-one");
-    expect(screen.queryByRole("combobox", { name: "Assigned Designer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send assignment request to Second Designer" })).not.toBeInTheDocument();
     expect(view.container.querySelector("#project-people-designer")).toHaveAttribute("hidden");
     expect(view.container.querySelector("#project-people-designer")).toHaveAttribute("inert");
     expect(reads.identities).toEqual([]);
@@ -124,7 +126,7 @@ describe("Primary project assignments", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     await user.selectOptions(manager, "manager-two");
     await user.click(navigation().getByRole("button", { name: "Designer" }));
-    expect(screen.getByRole("combobox", { name: "Assigned Designer" })).toHaveValue("designer-two");
+    expect(screen.getByRole("textbox", { name: "Search Designers by name" })).toHaveValue("Second");
     await user.click(navigation().getByRole("button", { name: "Procurement" }));
     expect(screen.getByRole("combobox", { name: "Assigned Procurement" })).toHaveValue("procurement-one");
     await user.click(navigation().getByRole("button", { name: "Project Manager" }));

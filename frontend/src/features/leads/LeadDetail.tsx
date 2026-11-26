@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
@@ -58,7 +59,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
     </Field>
   );
   const workflow = item.projectId ? (
-    <ProjectWorkflowPanel key={item.projectId} projectId={item.projectId} showInitialPayment={false} />
+    <ProjectWorkflowPanel showAppointmentTimer={false} key={item.projectId} projectId={item.projectId} showInitialPayment={false} />
   ) : null;
   const content = (
     <div key="content" className="lead-detail__grid">
@@ -102,7 +103,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
           {item.location ? <p className="estimation-progress__location">{item.location}</p> : null}
         </div>
         <div className="estimation-progress__header-controls">
-          {item.projectId ? <div className="project-status-header-actions"><ProjectStatusButton projectId={item.projectId} presentation="chip" /></div> : null}
+          {item.projectId ? <div className="project-status-header-actions"><KeyCollectionHeader projectId={item.projectId} projectName={item.projectName} /><ProjectStatusButton projectId={item.projectId} presentation="chip" /></div> : null}
           {returnTo ? <p>{labels[item.stage]}</p> : stageControl}
           {item.projectId ? <div ref={summaryRef} className="estimation-progress__critical" /> : null}
         </div>

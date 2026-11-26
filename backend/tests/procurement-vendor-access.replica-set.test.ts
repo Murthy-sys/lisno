@@ -245,3 +245,28 @@ describe("Procurement vendor send and recovery", () => {
   });
 
 });
+
+
+describe.each(["location", "languages"] as const)("Procurement invitation %s-only Mongo edits", profile => {
+  const profileChange = (index: number) => profile === "location"
+    ? { location: ["Bengaluru", "Chennai"][index]! }
+    : { languagesKnown: index === 0 ? ["english" as const] : ["kannada" as const], preferredLanguage: "tamil" as const };
+  it("retains old and newly issued authority after location saves, but revokes after an account version change", async () => {
+    const f = await fixture();
+    await f.service.sendVendorInvitation(actor, "vendor-one", command(await f.service.readVendorAccess(actor, "vendor-one")), "send_invitation");
+    await f.service.runOnce();
+    await f.repository.runInTransaction(tx => tx.updateUser(actor.id, 1, { ...profileChange(0), updatedAt: NOW.toISOString() }));
+    await f.repository.runInTransaction(tx => tx.updateUser(actor.id, 2, { ...profileChange(1), updatedAt: NOW.toISOString() }));
+    expect(await f.repository.findUserById(actor.id)).toMatchObject({ version: 3, profileVersionOffset: 2, sessionVersion: 1 });
+    const invitations = createUserInvitationService({ repository: f.repository, audit: f.audit, mailer: f.invitationMailer, clock: f.clock, passwordHasher: async () => "hash" });
+    await expect(invitations.inspect(f.messages[0].rawToken)).resolves.toMatchObject({ role: "vendor" });
+    await f.service.sendVendorInvitation(actor, "vendor-two", command(await f.service.readVendorAccess(actor, "vendor-two"), "location-new-vendor"), "send_invitation");
+    await f.service.runOnce();
+    expect((await ProcurementVendorInvitationIntentModel.findOne({ vendorId: "vendor-two" }).lean())?.actorVersion).toBe(1);
+    await expect(invitations.inspect(f.messages[1].rawToken)).resolves.toMatchObject({ role: "vendor" });
+    await invitations.accept({ rawToken: f.messages[0].rawToken, password: "StrongPassword!123" });
+    await f.repository.runInTransaction(tx => tx.updateUser(actor.id, 3, { active: false, updatedAt: NOW.toISOString() }));
+    await f.repository.runInTransaction(tx => tx.updateUser(actor.id, 4, { active: true, updatedAt: NOW.toISOString() }));
+    await expect(invitations.inspect(f.messages[1].rawToken)).rejects.toMatchObject({ code: "INVITATION_UNAVAILABLE" });
+  });
+});

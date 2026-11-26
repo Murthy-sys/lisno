@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
@@ -43,7 +44,7 @@ interface Props {
 
 /** Project-keyed by its parent: visited editors survive navigation, never a project switch. */
 export function SuperAdminProjectDetails({ project, summary, permissions, currentEstimateApproved, approvedFinanceSource, onCompleted }: Props) {
-  const { hash } = useLocation();
+  const { hash, key: locationKey } = useLocation();
   const [view, setView] = useState<View>(assignmentAnchors.has(hash) ? "assignments" : "details");
   const [assignmentsVisited, setAssignmentsVisited] = useState(assignmentAnchors.has(hash));
   const [area, setArea] = useState<ProjectAssignmentArea | null>("designer");
@@ -76,6 +77,13 @@ export function SuperAdminProjectDetails({ project, summary, permissions, curren
     if (target) { target.focus(); target.scrollIntoView?.({ block: "nearest" }); setFocusTarget(null); }
   }, [focusTarget, view, area]);
 
+  useEffect(() => {
+    if (hash !== "#key-collection" || !permissions.canReadWorkflow) return;
+    setToolsOpen(true);
+    setActiveTool("design");
+    setVisitedTools(previous => previous.includes("design") ? previous : [...previous, "design"]);
+  }, [hash, locationKey, permissions.canReadWorkflow]);
+
   const toolOptions: Array<{ id: Tool; label: string; allowed: boolean }> = [
     { id: "finance", label: "Finance", allowed: permissions.canReadFinance },
     { id: "design", label: "Design workflow", allowed: permissions.canReadWorkflow },
@@ -99,7 +107,7 @@ export function SuperAdminProjectDetails({ project, summary, permissions, curren
       breadcrumb={<Link to="/admin/projects">Back to All Projects</Link>}
       metadata={<ProjectId projectNumber={project.projectNumber} />}
       actions={<div className="project-status-header-actions">
-        <ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" />
+        {permissions.canReadWorkflow ? <KeyCollectionHeader projectId={project.id} projectName={project.name} /> : null}<ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" />
         {permissions.canDecideCompletion && project.status === "active" ? <ProjectCompletionControl
           projectId={project.id} projectName={project.name} projectStatus={project.status}
           triggerLabel="Close project" onCompleted={onCompleted} /> : null}
@@ -160,7 +168,7 @@ export function SuperAdminProjectDetails({ project, summary, permissions, curren
         inert={!toolsOpen || activeTool !== tool.id}>
         {visitedTools.includes(tool.id) ? tool.id === "finance" ? <ProjectFinancePanel projectId={project.id} enabled={currentEstimateApproved}
           title={`${project.name} finance`} expectedSource={approvedFinanceSource} />
-          : tool.id === "design" ? <ProjectWorkflowPanel projectId={project.id} />
+          : tool.id === "design" ? <ProjectWorkflowPanel showAppointmentTimer={false} projectId={project.id} />
           : tool.id === "vendors" ? <VendorWorkProgressPanel projectId={project.id} projectName={project.name} />
           : tool.id === "workflow" ? <ProjectWorkflowSnapshot project={project} />
           : tool.id === "trades" ? <WorkerAssignmentPanel project={project} assignmentArea="trades" defaultExpanded />

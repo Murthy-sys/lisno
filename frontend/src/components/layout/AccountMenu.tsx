@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { useLocation } from "react-router-dom";
 
 import { ROLE_LABELS } from "../../api/authorization-contract";
@@ -7,6 +7,7 @@ import type { PublicUser } from "../../api/types";
 interface AccountMenuProps {
   user: PublicUser;
   onLogout: () => void | Promise<void>;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function AccountMenu(props: AccountMenuProps) {
@@ -15,11 +16,12 @@ export function AccountMenu(props: AccountMenuProps) {
   return <AccountDisclosure key={identityKey} {...props} />;
 }
 
-function AccountDisclosure({ user, onLogout }: AccountMenuProps) {
+function AccountDisclosure({ user, onLogout, triggerRef }: AccountMenuProps) {
   const location = useLocation();
   const panelId = useId();
   const root = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const localTrigger = useRef<HTMLButtonElement>(null);
+  const trigger = triggerRef ?? localTrigger;
   const mounted = useRef(false);
   const logoutInFlight = useRef(false);
   const [open, setOpen] = useState(false);

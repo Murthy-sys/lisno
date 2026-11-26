@@ -110,13 +110,8 @@ export function createProjectWorkflowRouter(
     validateBody(assignmentSchema),
     async (request, response, next) => {
       try {
-        response.json({
-          data: await service.assignDesigner(
-            request.authenticatedUser!,
-            String(request.params.projectId),
-            request.body.designerId
-          )
-        });
+        await service.assignDesigner(request.authenticatedUser!, String(request.params.projectId), request.body.designerId);
+        throw new ApiError(409, "DESIGNER_ACCEPTANCE_REQUIRED", "Send an assignment request. The Designer must accept before assignment takes effect.");
       } catch (error) {
         next(error);
       }

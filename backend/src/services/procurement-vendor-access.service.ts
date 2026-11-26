@@ -1,3 +1,4 @@
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import type { VendorDeliveryReadiness, VendorInvitationCommand } from "../contracts/vendor-access.js";
@@ -41,7 +42,7 @@ export function createProcurementVendorAccessService(options: { repository: AppR
       if (!context.dto.availableActions.includes(action)) throw new ApiError(409, "INVITATION_NOT_ACTIONABLE", "Refresh vendor login access to see available actions.");
       requireVendorDeliveryReady(readiness());
       const id = `procurement-vendor-invitation:${randomUUID()}`;
-      await ProcurementVendorInvitationIntentModel.create([{ _id: id, vendorId, actorId: actor.id, actorVersion: issuer.version, contactName: invitationNameSchema.parse(context.vendor.procurementProfile.nameOfRepresentative), contactMobile: normalizeInvitationMobile(context.vendor.procurementProfile.phoneNumber), emailNormalized: context.normalized, expectedVendorVersion: input.expectedVendorVersion, expectedInvitationId: input.invitationId, expectedInvitationVersion: input.expectedInvitationVersion, action, idempotencyKey: input.idempotencyKey, digest, state: "queued", nextAttemptAt: clock(), createdAt: clock(), updatedAt: clock() }], { session });
+      await ProcurementVendorInvitationIntentModel.create([{ _id: id, vendorId, actorId: actor.id, actorVersion: userAuthorizationVersion(issuer), contactName: invitationNameSchema.parse(context.vendor.procurementProfile.nameOfRepresentative), contactMobile: normalizeInvitationMobile(context.vendor.procurementProfile.phoneNumber), emailNormalized: context.normalized, expectedVendorVersion: input.expectedVendorVersion, expectedInvitationId: input.invitationId, expectedInvitationVersion: input.expectedInvitationVersion, action, idempotencyKey: input.idempotencyKey, digest, state: "queued", nextAttemptAt: clock(), createdAt: clock(), updatedAt: clock() }], { session });
       await audit.appendInMongoTransaction({ actorId: actor.id, action: "procurement.vendor_invitation.requested", entityType: "procurement_vendor_invitation_intent", entityId: id, occurredAt: clock().toISOString(), newValues: { vendorId, action } }, session);
     });
     options.wake();

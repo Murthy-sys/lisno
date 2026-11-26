@@ -451,6 +451,11 @@ export function KnowledgeBaseIndexPage() {
             >
               Manage reusable values
             </Button>
+            {auth.user?.role === "super_admin" && hasFrontendPermission(auth.authorization, "workflow_timelines.read") ? (
+              <Button variant="secondary" onClick={() => navigate("/admin/configuration/estimation/workflow-timelines")}>
+                Design &amp; execution timelines
+              </Button>
+            ) : null}
             {canReviewRequests ? (
               <>
               <Button

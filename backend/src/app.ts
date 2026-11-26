@@ -120,6 +120,8 @@ import type { AppRepository } from "./repositories/types.js";
 import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
+import { createWorkflowTimelinesRouter } from "./routes/workflow-timelines.js";
+import { createWorkflowTimelinesService } from "./services/workflow-timelines.service.js";
 import { createProjectInitiationDefaultsRouter } from "./routes/project-initiation-defaults.js";
 import { createProjectInitiationDefaultsService } from "./services/project-initiation-defaults.service.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
@@ -148,6 +150,7 @@ import { createLeadsRouter } from "./routes/leads.js";
 import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createProjectWorkflowRouter } from "./routes/project-workflow.js";
+import { createDesignerAssignmentRouter } from "./routes/designer-assignment.js";
 import { createProjectFinanceRouter } from "./routes/project-finance.js";
 import { createProcurementRouter } from "./routes/procurement.js";
 import { createVendorKpiRouter } from "./routes/vendor-kpi.js";
@@ -199,6 +202,10 @@ import { createProjectService } from "./services/project.service.js";
 import { createProjectStatusService } from "./services/project-status.service.js";
 import { createProjectStatusRouter } from "./routes/project-status.js";
 import { createProjectWorkflowService } from "./services/project-workflow.service.js";
+import { createDesignerAssignmentService } from "./services/designer-assignment.service.js";
+import { createKeyCollectionRemindersService } from "./services/key-collection-reminders.service.js";
+import { createKeyCollectionRemindersRouter } from "./routes/key-collection-reminders.js";
+import { createKeyCollectionReminderScheduler } from "./services/key-collection-reminder-scheduler.js";
 import {
   createProjectFinanceService,
   ensurePendingProjectFinanceBucket,
@@ -268,6 +275,7 @@ export interface AppDependencies {
   executionDigestMailer?: ExecutionDigestMailer;
   enableVendorAccessDelivery?: boolean;
   enableExecutionReminders?: boolean;
+  enableKeyCollectionReminders?: boolean;
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
@@ -397,6 +405,7 @@ export function createApp(dependencies: AppDependencies) {
     mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" }, clock, auth: authService,
     allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
   const projectInitiationDefaultsService = createProjectInitiationDefaultsService(repository, auditService, clock);
+  const workflowTimelinesService = createWorkflowTimelinesService(repository, auditService, clock);
   const adminProjectService = createAdminProjectService(
     repository,
     auditService,
@@ -576,6 +585,18 @@ export function createApp(dependencies: AppDependencies) {
       : {}),
     now: clock
   });
+  const designerAssignmentService = createDesignerAssignmentService({ audit: auditService, now: clock });
+  const keyCollectionReminders = createKeyCollectionRemindersService(repository, clock);
+  const keyCollectionScheduler = createKeyCollectionReminderScheduler({
+    audit: auditService, now: clock,
+    enabled: dependencies.enableKeyCollectionReminders === true && chatRepository.kind === "mongo",
+    onReport: report => {
+      // Reports contain only timestamps, counts, and safe failure codes.
+      const summary = JSON.stringify({ event: "key_collection_reminder_tick", ...report });
+      if (report.failed) console.warn(summary);
+      else console.info(summary);
+    }
+  });
   const estimateDesignService = createEstimateDesignService({
     storage,
     audit: auditService,
@@ -696,6 +717,7 @@ export function createApp(dependencies: AppDependencies) {
     createAdminUsersRouter(authService, userAdministrationService)
   );
   app.use("/api/v1", createProjectInitiationDefaultsRouter(authService, projectInitiationDefaultsService));
+  app.use("/api/v1", createWorkflowTimelinesRouter(authService, workflowTimelinesService));
   app.use(
     "/api/v1",
     createAdminProjectsRouter(authService, adminProjectService)
@@ -726,6 +748,8 @@ export function createApp(dependencies: AppDependencies) {
     )
   );
   app.use("/api/v1", createDesignRequirementsRouter(authService, designRequirementsService));
+  app.use("/api/v1", createDesignerAssignmentRouter(authService, designerAssignmentService));
+  app.use("/api/v1", createKeyCollectionRemindersRouter(authService, keyCollectionReminders));
   app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, createWorkflowEvidenceStorage(storage), maxUploadBytes));
   app.use(
     "/api/v1",
@@ -852,8 +876,9 @@ export function createApp(dependencies: AppDependencies) {
     },
     closeExecutionDelivery: async () => { await Promise.all([vendorOnboarding.stop(), executionDelivery.stop()]); },
     executionDeliveryHealth: () => executionDelivery.health(),
-    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); projectChatAssistant.runtime.start(); },
-    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatAssistant.runtime.stop(), projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
+    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); projectChatAssistant.runtime.start(); keyCollectionScheduler.start(); },
+    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatAssistant.runtime.stop(), projectChatStream.close(), notificationStream.close(), notificationEmail.stop(), keyCollectionScheduler.stop()]); },
+    keyCollectionReminderHealth: () => keyCollectionScheduler.health(),
     projectChatAssistantHealth: () => projectChatAssistant.runtime.health(),
     runProjectChatAssistantOnce: () => projectChatAssistant.runtime.runOnce(),
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),

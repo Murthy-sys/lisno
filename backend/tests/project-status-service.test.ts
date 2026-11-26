@@ -30,6 +30,36 @@ function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Para
 }
 
 describe("project status participant-safe source projection", () => {
+  it("shows all pending candidates only to Super Admin without granting membership or mixing projects", async () => {
+    const f = collaborativeStatusFixture(data => {
+      data.seed.users.push(chatUser("candidate-one", "designer"), chatUser("candidate-two", "designer"), chatUser("candidate-foreign", "designer"));
+      data.seed.designerAssignmentEvidence = [
+        { projectId: "a", acceptedRequest: null, pendingRequests: [
+          { id: "request-one", designerId: "candidate-one", version: 1, createdAt: CHAT_NOW },
+          { id: "request-two", designerId: "candidate-two", version: 1, createdAt: CHAT_NOW }
+        ] },
+        { projectId: "b", acceptedRequest: null, pendingRequests: [
+          { id: "request-foreign", designerId: "candidate-foreign", version: 1, createdAt: CHAT_NOW }
+        ] }
+      ];
+    });
+    const admin = await f.service.get(f.actor("super"), "a");
+    const response = admin.pendingActions.find(action => action.id === "a:designer-assignment:decision");
+    expect(response?.people.map(person => person.id).sort()).toEqual(["candidate-one", "candidate-two"]);
+    expect(JSON.stringify(admin)).not.toContain("candidate-foreign");
+    for (const viewer of ["client-a", "designer-a", "admin-a"]) {
+      const output = await f.service.get(f.actor(viewer), "a");
+      expect(output.pendingActions.find(action => action.id === "a:designer-assignment:decision")).toMatchObject({ state: "pending", people: [] });
+      expect(JSON.stringify(output)).not.toContain("candidate-");
+    }
+    for (const candidate of ["candidate-one", "candidate-two", "candidate-foreign"]) {
+      await expect(f.service.get(f.actor(candidate), "a")).rejects.toMatchObject({ status: 404 });
+    }
+    const evidence = await f.repository.findDesignerAssignmentEvidence("a");
+    evidence.pendingRequests.pop();
+    expect((await f.repository.findDesignerAssignmentEvidence("a")).pendingRequests).toHaveLength(2);
+  });
+
   it("allows status and chat reads only for the exact assigned Project Manager", async () => {
     const f = statusFixture(data => {
       data.seed.users.push(chatUser("pm-a", "site_manager"), chatUser("pm-b", "site_manager"));
@@ -171,7 +201,10 @@ describe("project status participant-safe source projection", () => {
         clientDecisionAt: CHAT_NOW, clientDecisionSource: source as "client_portal" | "admin_proof", approvedBaseline: null, clientReview: null, assignedAdminId: "admin-a", createdAt: CHAT_NOW, updatedAt: CHAT_NOW }];
     });
     const client = await f.service.get(f.actor("client-a"), "a");
-    expect(client).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [{ responsibleRole: "super_admin", people: [{ id: "super" }] }] });
+    expect(client).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [
+      { responsibleRole: "super_admin", people: [{ id: "super" }] },
+      { id: "a:keys:schedule", responsibleRole: "client", people: [{ id: "client-a" }] }
+    ] });
     for (const participant of ["sales-a", "designer-a", "manager-a", "admin-a", "super"]) {
       expect(await f.service.get(f.actor(participant), "a")).toEqual(client);
     }

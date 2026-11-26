@@ -1,3 +1,6 @@
+import type { WorkflowTimelineConfigurationRecord } from "../contracts/workflow-timelines.js";
+import type { ProjectLanguage } from "../contracts/project-initiation.js";
+import type { DesignerAssignmentEvidence } from "../contracts/designer-assignment.js";
 import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
 import type { ProjectInitiationDefaultsRecord } from "../contracts/project-initiation-defaults.js";
 import type { UserResponsibilityQuery, UserResponsibilityRow } from "../contracts/user-responsibilities.js";
@@ -81,6 +84,9 @@ export type SectionReviewStatus = "draft" | "submitted" | "approved" | "rejected
 export type JsonObject = Record<string, unknown>;
 
 export interface UserRecord {
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
+  location?: string | null;
   id: string;
   name: string;
   email: string;
@@ -98,6 +104,8 @@ export interface UserRecord {
   deletedById?: string | null;
   version: number;
   sessionVersion: number;
+  /** Internal count of profile-only CAS increments, excluded from invitation/reset authority versions. */
+  profileVersionOffset?: number;
   managerId: string | null;
   authorizedClientIds: string[];
   avatar?: string;
@@ -169,6 +177,9 @@ export type PasswordResetDeliveryChange =
     };
 
 export interface UserInvitationRecord {
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
+  location?: string | null;
   generationReceipt?: import("../domain/user-invitations.js").VendorInvitationGenerationReceipt | null;
   authority?: import("../domain/user-invitations.js").VendorInvitationAuthority | null;
   id: string;
@@ -209,6 +220,9 @@ export interface UserInvitationFilters {
 }
 
 export interface UserInvitationAdminRecord {
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
+  location?: string | null;
   id: string;
   name: string;
   email: string;
@@ -984,6 +998,7 @@ export interface GrantRevocation {
 }
 
 export interface SeedData {
+  designerAssignmentEvidence?: Array<DesignerAssignmentEvidence & { projectId: string }>;
   designRequirementsSources?: DesignRequirementsSource[];
   designRequirementsStates?: DesignRequirementsState[];
   /** Current assignment projection; production reads the canonical workflow task collection. */
@@ -1006,6 +1021,7 @@ export interface SeedData {
   projectClientInvitations?: ProjectClientInvitationRecord[];
   projectInitiationReceipts?: ProjectInitiationReceipt[];
   projectInitiationDefaults?: ProjectInitiationDefaultsRecord;
+  workflowTimelineConfiguration?: WorkflowTimelineConfigurationRecord;
   procurementVendorInvitationSources?: import("../domain/user-invitations.js").ProcurementVendorInvitationSource[];
   vendorWorkInvitationSources?: import("../domain/user-invitations.js").VendorWorkInvitationSource[];
   projectStatusEstimateEvidence?: ProjectStatusEstimateEvidence[];
@@ -1046,6 +1062,9 @@ export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role
       | "emailNormalized"
       | "mobile"
       | "address"
+      | "location"
+      | "languagesKnown"
+      | "preferredLanguage"
       | "active"
       | "accountKind"
       | "sessionVersion"
@@ -1063,6 +1082,8 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findWorkflowTimelineConfiguration(): Promise<WorkflowTimelineConfigurationRecord | null>;
+  saveWorkflowTimelineConfiguration(record: WorkflowTimelineConfigurationRecord, expectedVersion: number): Promise<WorkflowTimelineConfigurationRecord>;
   findProjectInitiationDefaults(): Promise<ProjectInitiationDefaultsRecord | null>;
   saveProjectInitiationDefaults(record: ProjectInitiationDefaultsRecord, expectedVersion: number): Promise<ProjectInitiationDefaultsRecord>;
   findSalesInitiatedProject(actor: UserRecord, projectId: string): Promise<AdminProjectSummary | null>;
@@ -1078,11 +1099,13 @@ export interface AppRepository {
   createProjectInitiationReceipt(receipt: ProjectInitiationReceipt): Promise<void>;
   findVendorInvitationTarget(vendorId: string): Promise<{ id: string; status: "active" | "inactive" | "archived" } | null>;
   findProjectStatusEstimateEvidence(projectId: string): Promise<ProjectStatusEstimateEvidence>;
+  findDesignerAssignmentEvidence(projectId: string, lock?: boolean): Promise<DesignerAssignmentEvidence>;
   findDesignWorkflowSpacePlanningSource(projectId: string, lock?: boolean): Promise<WorkflowSpacePlanningSource | null>;
   findProjectEstimationContext(projectId: string, lock?: boolean): Promise<{
     estimateId: string;
     workflowVersion: 2 | 3;
     preApprovedAt: string | null;
+    preApproval?: import("../domain/estimation-lifecycle.js").EstimationApprovalReference | null;
     quotationApprovedAt: string | null;
     designStartedAt: string | null;
     designApproval: import("../domain/estimation-lifecycle.js").QuotationDesignApproval | null;
@@ -1285,7 +1308,7 @@ export interface AppRepository {
   updateUser(
     userId: string,
     expectedVersion: number,
-    change: { role?: Role; active?: boolean; updatedAt: string }
+    change: { role?: Role; active?: boolean; location?: string | null; languagesKnown?: ProjectLanguage[]; preferredLanguage?: ProjectLanguage | null; updatedAt: string }
   ): Promise<UserRecord>;
   updateUserCredentials(
     userId: string,

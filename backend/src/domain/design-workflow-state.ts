@@ -1,8 +1,10 @@
 import type { Role } from "../contracts/domain.js";
 import type { DesignStageType } from "./design-workflow.js";
 import type { StoredEstimateClientResponseProof } from "./estimate-client-review.js";
+import type { KeyCollectionAppointmentMode, KeyCollectionAppointmentView } from "../contracts/designer-assignment.js";
+import { keyCollectionTiming } from "./key-collection-timing.js";
 
-export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
+export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "key_collection_schedule", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
 export type DesignWorkflowHistoricalAction = DesignWorkflowAction | "client_kickoff_not_required";
 interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
@@ -24,7 +26,21 @@ export interface ClientFurnitureRequest {
   respondedAt?: string;
 }
 export interface WorkflowRoom { id: string; name: string; required: boolean; uploadedAt: string | null; proceed: boolean; dimensions?: FurnitureDimensions }
+export interface KeyCollectionAppointment {
+  mode: KeyCollectionAppointmentMode;
+  confirmedById: string;
+  confirmedAt: string;
+  originalDeadlineAt: string;
+  deadlineAt: string;
+  assignmentRevision: string;
+  designerId: string;
+  assignmentRequestId: string | null;
+  estimateId: string;
+  estimateVersion: number;
+  approvalReviewRoundId: string | null;
+}
 export interface WorkflowStageState {
+  appointment?: KeyCollectionAppointment;
   clientFurnitureRequest?: ClientFurnitureRequest;
   spacePlanningApproval?: { estimateId: string; designPlanVersion: number; reviewRoundId: string };
   timingBasis?: "sequential";
@@ -109,6 +125,20 @@ export interface DesignWorkflowState {
 export const CALENDAR_DAY_MS = 86_400_000;
 export function emptyDesignWorkflowState(projectId: string): DesignWorkflowState {
   return { projectId, version: 0, initialPaymentAt: null, stages: {}, pauses: [], history: [] };
+}
+/** A calendar appointment is independent of pausable workflow SLA clocks. */
+export function keyCollectionAppointmentView(state: DesignWorkflowState, now: Date): KeyCollectionAppointmentView | null {
+  const keys = state.stages.key_collection;
+  const appointment = keys?.appointment;
+  if (!appointment) return null;
+  const finished = Boolean(keys.receivedAt || keys.completedAt);
+  const remainingMs = finished ? 0 : Math.max(0, Date.parse(appointment.deadlineAt) - now.getTime());
+  return { mode: appointment.mode, confirmedAt: appointment.confirmedAt,
+    originalDeadlineAt: appointment.originalDeadlineAt, deadlineAt: appointment.deadlineAt,
+    receivedAt: keys.receivedAt ?? null, handedOverAt: keys.handedOverAt ?? null,
+    completedAt: keys.completedAt ?? null, remainingMs,
+    timing: finished ? null : keyCollectionTiming(state.projectId, appointment, now),
+    overdue: !finished && Date.parse(appointment.deadlineAt) <= now.getTime() };
 }
 export function workflowPausedMs(state: DesignWorkflowState, at: number, from = Number.NEGATIVE_INFINITY): number {
   return state.pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(at, pause.endedAt ? Date.parse(pause.endedAt) : at) - Math.max(from, Date.parse(pause.startedAt))), 0);

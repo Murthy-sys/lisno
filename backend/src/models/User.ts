@@ -1,3 +1,5 @@
+import { normalizeUserKnownLanguages, normalizeUserPreferredLanguage, userKnownLanguagesSchema, userPreferredLanguageSchema } from "../domain/user-languages.js";
+import { normalizeUserLocation, userLocationSchema } from "../domain/user-location.js";
 import { model, models, Schema } from "./mongoose.js";
 import { ROLE_CODES } from "../domain/roles.js";
 import { ACCOUNT_KINDS } from "../domain/demo-identities.js";
@@ -19,6 +21,20 @@ const userSchema = new Schema(
     email: { type: String, required: true, trim: true },
     emailNormalized: { type: String, required: true, trim: true, lowercase: true },
     mobile: { type: String, default: null },
+    languagesKnown: {
+      type: [String], default: [], set: normalizeUserKnownLanguages,
+      validate: { validator: (value: unknown) => userKnownLanguagesSchema.safeParse(value).success, message: "Known languages are invalid." }
+    },
+    preferredLanguage: {
+      type: String, default: null, set: normalizeUserPreferredLanguage,
+      validate: { validator: (value: unknown) => userPreferredLanguageSchema.safeParse(value).success, message: "Preferred language is invalid." }
+    },
+    location: {
+      type: String,
+      default: null,
+      set: normalizeUserLocation,
+      validate: { validator: (value: unknown) => userLocationSchema.safeParse(value).success, message: "Location is invalid." }
+    },
     address: { type: String, default: null },
     passwordHash: { type: String, required: true, select: false },
     role: {
@@ -37,6 +53,7 @@ const userSchema = new Schema(
       default: "standard"
     },
     version: { type: Number, required: true, default: 1, min: 1 },
+    profileVersionOffset: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER, validate: Number.isSafeInteger },
     sessionVersion: { type: Number, required: true, default: 1, min: 1 },
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],

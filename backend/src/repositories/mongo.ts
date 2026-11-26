@@ -1,3 +1,8 @@
+import { WORKFLOW_TIMELINES_ID, type WorkflowTimelineConfigurationRecord } from "../contracts/workflow-timelines.js";
+import { WorkflowTimelineConfigurationModel } from "../models/WorkflowTimelineConfiguration.js";
+import { readUserLanguages, sameUserLanguages } from "../domain/user-languages.js";
+import { normalizeUserLocation } from "../domain/user-location.js";
+import { readDesignerAssignmentEvidence } from "../services/designer-assignment.service.js";
 import { mongoUserResponsibilityCounts, mongoUserResponsibilities } from "./user-responsibilities.js";
 import { PROJECT_INITIATION_DEFAULTS_ID } from "../contracts/project-initiation-defaults.js";
 import { ProjectInitiationDefaultsModel } from "../models/ProjectInitiationDefaults.js";
@@ -562,6 +567,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return row ? { id: String(row._id), status: row.status as "active" | "inactive" | "archived" } : null;
     },
     findProjectStatusEstimateEvidence: projectId => readMongoProjectStatusEstimateEvidence(projectId, session),
+    async findDesignerAssignmentEvidence(projectId, lock = false) {
+      if (lock) {
+        if (!session) throw new Error("Assignment coordination requires a transaction.");
+        const result = await ProjectModel.updateOne({ _id: projectId }, { $inc: { estimationFenceEpoch: 1 } }, { session, timestamps: false });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("The project assignment changed.");
+      }
+      return readDesignerAssignmentEvidence(projectId, session);
+    },
     async findDesignWorkflowSpacePlanningSource(projectId, lock = false) {
       if (lock && !session) throw new Error("Confirming space planning requires a transaction.");
       const context = await repository.findDesignWorkflowRoomContext(projectId);
@@ -738,6 +751,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         ? new Date(Math.max(Date.parse(quotationApproval.currentQuotationApproval.approvedAt), new Date(estimate.designPlanAssignedAt).getTime())).toISOString()
         : null;
       return { estimateId: String(estimate._id), workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        preApproval: lifecycle.preApproval ?? null,
         quotationApprovedAt: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproval?.approvedAt ?? null : null,
         designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? derivedDesignStartedAt : null,
         quotationLocked: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproved === true : !!lifecycle.editClosedAt,
@@ -852,6 +866,27 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (!user) throw new RepositoryConflictError("Project invitation is no longer available.");
       const result = await ProjectModel.updateOne({ _id: projectId, clientId: null, clientEmailNormalized: emailNormalized, estimationWorkflowVersion: { $in: [2, 3] } }, { $set: { clientId, updatedAt: new Date(updatedAt) } }, { session, runValidators: true });
       if (result.matchedCount !== 1) throw new RepositoryConflictError("Project invitation is no longer available.");
+    },
+    async findWorkflowTimelineConfiguration() {
+      const row = await WorkflowTimelineConfigurationModel.findById(WORKFLOW_TIMELINES_ID).session(session ?? null).lean();
+      return row ? {
+        version: Number(row.version),
+        bases: row.bases.map((base: WorkflowTimelineConfigurationRecord["bases"][number]) => ({ bandId: base.bandId, designWorkdays: base.designWorkdays, executionWorkdays: base.executionWorkdays })),
+        createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString(), updatedById: String(row.updatedById)
+      } : null;
+    },
+    async saveWorkflowTimelineConfiguration(record, expectedVersion) {
+      if (!session?.inTransaction()) throw new Error("Workflow timeline writes require a transaction.");
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !Number.isSafeInteger(record.version) || record.version !== expectedVersion + 1) {
+        throw new RepositoryConflictError("Workflow timeline configuration changed.");
+      }
+      if (expectedVersion === 0) {
+        await WorkflowTimelineConfigurationModel.create([{ _id: WORKFLOW_TIMELINES_ID, ...record }], { session });
+      } else {
+        const result = await WorkflowTimelineConfigurationModel.updateOne({ _id: WORKFLOW_TIMELINES_ID, version: expectedVersion }, { $set: record }, { session, runValidators: true });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("Workflow timeline configuration changed.");
+      }
+      return structuredClone(record);
     },
     async findProjectInitiationDefaults() {
       const row = await ProjectInitiationDefaultsModel.findById(PROJECT_INITIATION_DEFAULTS_ID).session(session ?? null).lean();
@@ -1552,6 +1587,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           emailNormalized,
           mobile: input.mobile ?? null,
           address: input.address ?? null,
+          location: normalizeUserLocation(input.location),
+          ...readUserLanguages(input),
           passwordHash: input.passwordHash,
           role: input.role,
           vendorId: input.role === "vendor" ? input.vendorId : null,
@@ -1559,6 +1596,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           accountKind: input.accountKind ?? "standard",
           version: 1,
           sessionVersion: input.sessionVersion ?? 1,
+          profileVersionOffset: 0,
           managerId: input.managerId ?? null,
           authorizedClientIds: input.authorizedClientIds ?? [],
           ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -1705,9 +1743,18 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const invalidatesSessions =
         (change.role !== undefined && change.role !== current.role) ||
         (change.active !== undefined && change.active !== current.active);
+      const location = change.location === undefined ? undefined : normalizeUserLocation(change.location);
+      const languageChange = change.languagesKnown !== undefined || change.preferredLanguage !== undefined
+        ? readUserLanguages({ languagesKnown: change.languagesKnown === undefined ? current.languagesKnown : change.languagesKnown, preferredLanguage: change.preferredLanguage === undefined ? current.preferredLanguage : change.preferredLanguage }) : undefined;
+      const profileChanged = (location !== undefined && location !== (current.location ?? null)) ||
+        (languageChange !== undefined && !sameUserLanguages(readUserLanguages(current), languageChange));
+      const profileOnlyChange = profileChanged && change.role === undefined && change.active === undefined;
       const set: PlainDocument = {
         ...(change.role === undefined ? {} : { role: change.role }),
         ...(change.active === undefined ? {} : { active: change.active }),
+        ...(location === undefined ? {} : { location }),
+        ...(languageChange ?? {}),
+        ...(profileOnlyChange ? { profileVersionOffset: (current.profileVersionOffset ?? 0) + 1 } : {}),
         updatedAt: date(change.updatedAt),
         ...(invalidatesSessions ? { sessionVersion: (current.sessionVersion ?? 1) + 1 } : {})
       };
@@ -3514,6 +3561,8 @@ function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
     role: input.role,
     vendorId: input.role === "vendor" ? input.vendorId : null,
     mobile: normalizeInvitationMobile(input.mobile),
+    location: normalizeUserLocation(input.location),
+    ...readUserLanguages(input),
     tokenHash: input.tokenHash,
     tokenGeneration: input.tokenGeneration,
     issuedAt: date(input.issuedAt),
@@ -3634,7 +3683,7 @@ async function pageUserInvitations(
               $expr: { $eq: ["$_id", "$$issuerId"] }
             }
           },
-          { $project: { _id: 1, active: 1, role: 1, version: 1 } },
+          { $project: { _id: 1, active: 1, role: 1, version: 1, profileVersionOffset: 1 } },
           { $limit: 1 }
         ],
         as: "issuerRows"
@@ -3647,14 +3696,14 @@ async function pageUserInvitations(
     },
     {
       $set: {
-        issuerVersion: { $ifNull: ["$issuer.version", 1] },
+        issuerVersion: { $subtract: [{ $ifNull: ["$issuer.version", 1] }, { $ifNull: ["$issuer.profileVersionOffset", 0] }] },
         issuerMatches: {
           $and: [
             { $eq: ["$issuer.active", true] },
             { $eq: ["$issuer.role", "super_admin"] },
             {
               $eq: [
-                { $ifNull: ["$issuer.version", 1] },
+                { $subtract: [{ $ifNull: ["$issuer.version", 1] }, { $ifNull: ["$issuer.profileVersionOffset", 0] }] },
                 "$tokenIssuerVersion"
               ]
             }
@@ -3817,6 +3866,9 @@ async function pageUserInvitations(
               emailClaimedOrReserved: 1,
               status: 1,
               mobile: 1,
+              location: 1,
+              languagesKnown: 1,
+              preferredLanguage: 1,
               tokenValidity: 1,
               presentationStatus: 1,
               currentLinkAvailable: 1,
@@ -4080,6 +4132,8 @@ function mapUser(document: PlainDocument): UserRecord {
     emailNormalized: document.emailNormalized ?? normalizeEmail(document.email),
     mobile: document.mobile ?? null,
     address: document.address ?? null,
+    location: document.location ?? null,
+    ...readUserLanguages(document),
     passwordHash: document.passwordHash,
     role: document.role,
     ...(typeof document.vendorId === "string" ? { vendorId: document.vendorId } : {}),
@@ -4090,6 +4144,7 @@ function mapUser(document: PlainDocument): UserRecord {
       document.accountKind === "development_demo" ? "development_demo" : "standard",
     version: document.version ?? 1,
     sessionVersion: document.sessionVersion ?? 1,
+    profileVersionOffset: document.profileVersionOffset ?? 0,
     managerId: document.managerId ?? null,
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
@@ -4153,6 +4208,8 @@ function mapUserInvitation(document: PlainDocument): UserInvitationRecord {
     role: document.role,
     ...(document.role === "vendor" ? { vendorId: document.vendorId ?? null } : {}),
     mobile: document.mobile,
+    location: document.location ?? null,
+    ...readUserLanguages(document),
     tokenHash: document.tokenHash ?? null,
     tokenGeneration: document.tokenGeneration,
     issuedAt: iso(document.issuedAt),
@@ -4188,6 +4245,8 @@ function mapUserInvitationAdmin(
     role: document.role,
     ...(document.role === "vendor" ? { vendorId: document.vendorId ?? null } : {}),
     mobile: document.mobile,
+    location: document.location ?? null,
+    ...readUserLanguages(document),
     tokenValidity: document.tokenValidity,
     presentationStatus: document.presentationStatus,
     currentLinkAvailable: document.currentLinkAvailable,

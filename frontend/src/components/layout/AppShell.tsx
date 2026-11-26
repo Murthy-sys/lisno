@@ -2,6 +2,9 @@ import { PMNotifications } from "../../features/project-manager/PMNotifications"
 import { ProcurementVendorDraftProvider } from "../../features/procurement/ProcurementVendorDraftProvider";
 import { ExecutionLiveProvider } from "../../features/execution/ExecutionLiveProvider";
 import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
+import { useRef } from "react";
+import { KeyCollectionReminder } from "../../features/designer/KeyCollectionReminder";
+import { DesignerAssignmentInbox } from "../../features/designer/DesignerAssignmentInbox";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { AskLisnoLauncher } from "../../features/estimates/AskLisnoLauncher";
@@ -23,11 +26,13 @@ import "./configuration-shell.css";
 const configurationBackdropPaths = [
   "/admin/configuration/estimation",
   "/admin/configuration/estimation/items/:itemId",
-  "/admin/configuration/estimation/reusable-values"
+  "/admin/configuration/estimation/reusable-values",
+  "/admin/configuration/estimation/workflow-timelines"
 ] as const;
 
 export function AppShell() {
   const auth = useAuth();
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const { pathname } = useLocation();
   const messaging = Boolean(matchPath("/project-messages", pathname) || matchPath("/projects/:projectId/messages", pathname));
   const configurationBackdrop = configurationBackdropPaths.some((path) => matchPath(path, pathname));
@@ -47,7 +52,8 @@ export function AppShell() {
           onLogout={auth.logout}
         />
       </aside>
-      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging} dailyTasksAction={<><PMNotifications /><DailyCriticalTasksPrompt /></>}
+      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging} accountTriggerRef={accountTriggerRef}
+        dailyTasksAction={<><KeyCollectionReminder fallbackFocusRef={accountTriggerRef} /><DesignerAssignmentInbox fallbackFocusRef={accountTriggerRef} /><PMNotifications /><DailyCriticalTasksPrompt /></>}
         leading={messaging ? <Link className="workspace-topbar__home" to="/project-messages" aria-label="Project messages"><BrandLogo /></Link> : <>
           <MobileHeader user={auth.user} authorization={auth.authorization} onLogout={auth.logout} />
           <span className="workspace-topbar__mobile-brand"><BrandLogo /></span>

@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
@@ -176,7 +177,7 @@ export function AdminProjectDetailPage() {
             triggerLabel="Close project" onCompleted={() => void projectQuery.refetch()} /> : null}
           <a className="button button--secondary" href="#project-people-assignments" onClick={() => setAssignmentArea(canAssignWorkers ? "procurement" : "designer")}>Manage people</a>
           {assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? <a className="button button--primary" href="#design-assignment-title" onClick={() => setAssignmentArea("designer")}>Assign Designer</a> : null}
-          <ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" />
+          <KeyCollectionHeader projectId={project.id} projectName={project.name} /><ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" />
         </div>}
       />
       </div>
@@ -238,7 +239,7 @@ export function AdminProjectDetailPage() {
           </AdminDetailSection>
         </div>
       </Surface>
-      <ProjectWorkflowPanel projectId={project.id} />
+      <ProjectWorkflowPanel showAppointmentTimer={false} projectId={project.id} />
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}

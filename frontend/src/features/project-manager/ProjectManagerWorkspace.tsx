@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
@@ -174,7 +175,7 @@ export function ProjectManagerProjectPage({ projectId: suppliedId }: { projectId
           </dl>
         </div>
         <div className="pm-actions pm-project-detail__actions project-status-header-actions">
-          {data.project.id === projectId ? <ProjectStatusButton projectId={data.project.id} projectName={data.project.name} presentation="chip" /> : null}
+          {data.project.id === projectId ? <><KeyCollectionHeader projectId={data.project.id} projectName={data.project.name} workflowTo={`/projects/${encodeURIComponent(projectId)}/execution?${new URLSearchParams({ ...Object.fromEntries(params), detail: "1" })}#key-collection`} /><ProjectStatusButton projectId={data.project.id} projectName={data.project.name} presentation="chip" /></> : null}
           <Link className="pm-link-button" to={`/projects/${encodeURIComponent(projectId)}/estimations?${new URLSearchParams({ returnTo: `/projects/${encodeURIComponent(projectId)}/execution?${params}` })}`}
             onClick={event => {
               if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || (event.currentTarget.target && event.currentTarget.target !== "_self")) return;

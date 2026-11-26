@@ -1,3 +1,5 @@
+import { keyCollectionReminderKeys } from "../designer/keyCollectionRemindersApi";
+import { pmKeys } from "../project-manager/projectManagerApi";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { adminProjectKeys } from "../admin/adminProjectsApi";
@@ -14,6 +16,8 @@ import { projectReadKeys } from "../projects/projectReadQueries";
 export function useRefreshDesignWorkflow({ includeClientPlans = false }: { includeClientPlans?: boolean } = {}) {
   const queryClient = useQueryClient();
   return () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: keyCollectionReminderKeys.all }),
+    queryClient.invalidateQueries({ queryKey: pmKeys.all }),
     queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: projectReadKeys.all }),

@@ -21,6 +21,7 @@ import { isDeepStrictEqual } from "node:util";
 import { emptyDesignWorkflowState } from "../domain/design-workflow-state.js";
 import { ESTIMATION_STATUSES, isCollaborativeEstimate, type EstimationApprovalReference } from "../domain/estimation-lifecycle.js";
 import { hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
+import { projectDesignerHandoff, readDesignerHandoffSource } from "./designer-handoff.service.js";
 
 export interface ProjectStatusService {
   get(actor: ChatActor, projectId: string): Promise<ProjectStatusSummary>;
@@ -186,10 +187,17 @@ export function createProjectStatusService(options: {
     session ? readMongoProjectStatusExecutionEvidence(projectId, session) : Promise.resolve(emptyExecutionEvidence()));
   const completionSummary = options.completionSummary ?? ((projectId: string, session?: ClientSession) =>
     session ? readProjectCompletionSummary(projectId, session) : Promise.reject(new ApiError(409, "PROJECT_COMPLETION_LINEAGE_CONFLICT", "The completion snapshot is unavailable.")));
-  const projectSnapshot = async (tx: ChatTransaction, sources: ChatSources, membership: ReturnType<typeof resolveChatMembership>, execution: ProjectStatusExecutionEvidence): Promise<ProjectStatusSummary> => {
+  const projectSnapshot = async (tx: ChatTransaction, sources: ChatSources, membership: ReturnType<typeof resolveChatMembership>, execution: ProjectStatusExecutionEvidence, viewer: Pick<ChatActor, "id" | "role">): Promise<ProjectStatusSummary> => {
     const projectId = sources.project.id;
         const estimateEvidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
         const selected = commercialSource(sources, estimateEvidence);
+        const handoffSource = await readDesignerHandoffSource(tx.app, sources.project);
+        let handoffWorkflow = await tx.app.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
+        try { handoffWorkflow = await hydrateDesignWorkflowState(tx.app, projectId, handoffWorkflow); }
+        catch (error) { if (!(error instanceof RepositoryConflictError)) throw error; handoffSource.issue = "The project workflow source needs review."; }
+        const pendingRequests = handoffSource.evidence.pendingRequests;
+        const pendingDesigners = viewer.role === "super_admin"
+          ? await Promise.all(pendingRequests.map(request => tx.app.findUserById(request.designerId))) : [];
         const input: ProjectStatusInput = {
           project: sources.project,
           participants: [...membership.participants.map(({ id, name, role }) => ({ id, name, role })), ...execution.people],
@@ -198,6 +206,13 @@ export function createProjectStatusService(options: {
           ...selected,
           salesOwnerIds: [...sources.leads.filter(lead => lead.projectId === projectId).map(lead => lead.ownerId), ...(selected.estimate ? [selected.estimate.ownerId] : [])],
           designAssignmentOwnerIds: sources.grants.filter(grant => grant.projectId === projectId && grant.active && grant.source === "admin_initiator").map(grant => grant.userId),
+          designerHandoff: projectDesignerHandoff(handoffSource, sources.project, handoffWorkflow, viewer, clock()),
+          keyCollectionScheduleRequired: Boolean(handoffSource.evidence.acceptedRequest),
+          pendingDesignerRequests: pendingRequests.map((request, index) => {
+            const designer = pendingDesigners[index];
+            return { id: request.id, person: designer?.active && designer.role === "designer"
+              ? { id: designer.id, name: designer.name, role: "designer" as const } : null };
+          }),
           workflow: null, design: null, tasks: sources.workflowTasks, serverNow: clock().toISOString(), issues: {},
           execution: { completion: null, hasApprovedOrder: execution.hasApprovedOrder,
             procurementOwnerIds: execution.procurementOwnerIds, pendingVendorUserIds: execution.pendingVendorUserIds,
@@ -284,7 +299,7 @@ export function createProjectStatusService(options: {
             // Resolve the number separately so incomplete workflow evidence cannot erase a valid Project ID.
             summary.projectNumber = projectNumbersForProjectIds([projectId], sources.leads).get(projectId) ?? null;
             const membership = resolveChatMembership(sources, await tx.selections(projectId));
-            const status = await projectSnapshot(tx, sources, membership, await executionEvidence(projectId, tx.session));
+            const status = await projectSnapshot(tx, sources, membership, await executionEvidence(projectId, tx.session), actor);
             if (status.state !== "unavailable" && status.currentStage) {
               summary.currentStage = status.currentStage;
               summary.stageState = "available";
@@ -323,7 +338,7 @@ export function createProjectStatusService(options: {
             !execution.people.some(person => person.id === actor.id && person.role === "procurement" && actor.role === "procurement")) {
           chatNotFound();
         }
-        return projectSnapshot(tx, sources, membership, execution);
+        return projectSnapshot(tx, sources, membership, execution, actor);
       });
     },
     async getForClientScope(scope, transaction) {
@@ -334,7 +349,7 @@ export function createProjectStatusService(options: {
         if (!sources || sources.project.clientId !== user.id) chatNotFound();
         const membership = resolveChatMembership(sources, await tx.selections(scope.projectId));
         if (!membership.participants.some(person => person.id === user.id && person.role === "client")) chatNotFound();
-        return projectSnapshot(tx, sources, membership, await executionEvidence(scope.projectId, tx.session));
+        return projectSnapshot(tx, sources, membership, await executionEvidence(scope.projectId, tx.session), { id: user.id, role: user.role });
       };
       return transaction ? read(transaction) : options.chatRepository.snapshot(read);
     }

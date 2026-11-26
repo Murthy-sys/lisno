@@ -559,8 +559,11 @@ describe("protected user invitation administration", () => {
       "id",
       "invitedBy",
       "issuedAt",
+      "languagesKnown",
+      "location",
       "mobile",
       "name",
+      "preferredLanguage",
       "role",
       "sentAt",
       "status",
@@ -1522,6 +1525,9 @@ describe("public user invitation inspection and acceptance", () => {
       name: "Asha Rao",
       email: "Asha.Rao@Example.Test",
       mobile: "+91 98765 43210",
+      location: null,
+      languagesKnown: [],
+      preferredLanguage: null,
       passwordHash: ACCEPTED_PASSWORD_HASH,
       role: "site_manager",
       active: true,
@@ -2242,5 +2248,108 @@ describe("user invitation HTTP integration", () => {
       role: "designer"
     });
     expect(snapshot.body.data.permissions).toEqual(expect.any(Array));
+  });
+});
+
+
+describe("invitation location metadata", () => {
+  it("retains distinct locations through creation, resend and acceptance without public disclosure", async () => {
+    const { seed, operator } = standardSeed();
+    let now = Date.parse(NOW);
+    const { service, repository, sendInvitation } = setup(seed, { clock: () => new Date(now), passwordHasher: async () => ACCEPTED_PASSWORD_HASH });
+    const created = await service.create(publicUser(operator), { name: "Location Alpha", email: "location.alpha@example.test", mobile: "+91 90000 00001", role: "designer", location: "  ಬೆಂಗಳೂರು  " });
+    expect(created.location).toBe("ಬೆಂಗಳೂರು");
+    expect((await repository.findUserInvitationById(created.id))?.location).toBe("ಬೆಂಗಳೂರು");
+    expect(await service.inspect(Buffer.alloc(32, 1).toString("base64url"))).not.toHaveProperty("location");
+    now += MINUTE + 1;
+    const resent = await service.resend(publicUser(operator), created.id, { version: created.version });
+    expect(resent.location).toBe("ಬೆಂಗಳೂರು");
+    await service.accept({ rawToken: Buffer.alloc(32, 2).toString("base64url"), password: ACCEPTED_PASSWORD });
+    const second = await service.create(publicUser(operator), { name: "Location Beta", email: "location.beta@example.test", mobile: "+91 90000 00002", role: "procurement", location: " Chennai " });
+    await service.accept({ rawToken: Buffer.alloc(32, 3).toString("base64url"), password: ACCEPTED_PASSWORD });
+    expect((await repository.findUserByEmail("location.alpha@example.test"))?.location).toBe("ಬೆಂಗಳೂರು");
+    expect((await repository.findUserByEmail("location.beta@example.test"))?.location).toBe("Chennai");
+    const page = await service.list(publicUser(operator), { status: "accepted" }, { limit: 20, offset: 0 });
+    expect(page.items.find(item => item.id === second.id)?.location).toBe("Chennai");
+    for (const call of sendInvitation.mock.calls) expect(call[0]).not.toHaveProperty("location");
+  });
+
+  it("accepts legacy invitations without location and keeps disabled delivery write-free", async () => {
+    const { seed, operator } = standardSeed();
+    seed.userInvitations = [publicInvitation("legacy-location", operator)];
+    const { service, repository } = setup(seed, { passwordHasher: async () => ACCEPTED_PASSWORD_HASH });
+    await service.accept({ rawToken: PUBLIC_RAW_TOKEN, password: ACCEPTED_PASSWORD });
+    expect((await repository.findUserByEmail("legacy-location@example.test"))?.location).toBeNull();
+    const disabled = setup(standardSeed().seed, { mailer: { deliveryKind: "disabled" } });
+    await expect(disabled.service.create(publicUser(operator), { name: "Location Invite", email: "disabled.location@example.test", mobile: "+91 90000 00001", role: "designer", location: "Pune" })).rejects.toMatchObject({ code: "INVITATION_DELIVERY_UNAVAILABLE" });
+    expect((await disabled.repository.pageUserInvitations({}, { limit: 20, offset: 0 }, NOW)).items).toEqual([]);
+    expect(await disabled.repository.listAuditEvents({})).toEqual([]);
+  });
+
+  it("accepts location in the HTTP invitation contract while rejecting invalid values and unknown keys", async () => {
+    const { seed, operator } = standardSeed();
+    const { api, repository } = httpSetup(seed);
+    const base = { name: "Location Invite", email: "http.location@example.test", role: "designer", mobile: "+91 90000 00001" };
+    const created = await api.post("/api/v1/admin/user-invitations").set("Authorization", bearerFor(operator)).send({ ...base, location: " Pune " });
+    expect(created.status).toBe(201);
+    expect(created.body.data.location).toBe("Pune");
+    expect((await repository.findUserInvitationById(created.body.data.id))?.location).toBe("Pune");
+    for (const location of [42, {}, "x".repeat(121), "Pune\n"]) {
+      const invalid = await api.post("/api/v1/admin/user-invitations").set("Authorization", bearerFor(operator)).send({ ...base, location });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error.fields.location).toEqual(expect.any(String));
+    }
+    const invalid = await api.post("/api/v1/admin/user-invitations").set("Authorization", bearerFor(operator)).send({ ...base, location: null, unexpected: "value" });
+    expect(invalid.status).toBe(400);
+  });
+});
+
+describe("invitation language metadata", () => {
+  it("carries independent normalized languages through resend and acceptance without public disclosure", async () => {
+    const { seed, operator } = standardSeed();
+    let now = Date.parse(NOW);
+    const { service, repository, sendInvitation } = setup(seed, { clock: () => new Date(now), passwordHasher: async () => ACCEPTED_PASSWORD_HASH });
+    const alpha = await service.create(publicUser(operator), { name: "Language Alpha", email: "language.alpha@example.test", mobile: "+91 90000 00001", role: "designer", languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    const expected = { languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" };
+    expect(alpha).toMatchObject(expected);
+    expect(await repository.findUserInvitationById(alpha.id)).toMatchObject(expected);
+    const inspected = await service.inspect(Buffer.alloc(32, 1).toString("base64url"));
+    expect(inspected).not.toHaveProperty("languagesKnown");
+    expect(inspected).not.toHaveProperty("preferredLanguage");
+    now += MINUTE + 1;
+    expect(await service.resend(publicUser(operator), alpha.id, { version: alpha.version })).toMatchObject(expected);
+    await service.accept({ rawToken: Buffer.alloc(32, 2).toString("base64url"), password: ACCEPTED_PASSWORD });
+    const beta = await service.create(publicUser(operator), { name: "Language Beta", email: "language.beta@example.test", mobile: "+91 90000 00002", role: "procurement", preferredLanguage: "hindi" });
+    await service.accept({ rawToken: Buffer.alloc(32, 3).toString("base64url"), password: ACCEPTED_PASSWORD });
+    expect(await repository.findUserByEmail("language.alpha@example.test")).toMatchObject(expected);
+    expect(await repository.findUserByEmail("language.beta@example.test")).toMatchObject({ languagesKnown: [], preferredLanguage: "hindi" });
+    const page = await service.list(publicUser(operator), { status: "accepted" }, { limit: 20, offset: 0 });
+    expect(page.items.find(item => item.id === alpha.id)).toMatchObject(expected);
+    expect(page.items.find(item => item.id === beta.id)).toMatchObject({ languagesKnown: [], preferredLanguage: "hindi" });
+    for (const [mail] of sendInvitation.mock.calls) {
+      expect(mail).not.toHaveProperty("languagesKnown");
+      expect(mail).not.toHaveProperty("preferredLanguage");
+    }
+  });
+
+  it("returns named HTTP/service validation errors and preserves disabled-delivery preflight", async () => {
+    const { seed, operator } = standardSeed();
+    const { api, repository } = httpSetup(seed);
+    const direct = setup(seed);
+    const base = { name: "Language Invite", email: "language.http@example.test", mobile: "+91 90000 00001", role: "designer" as const };
+    for (const [metadata, field] of [[{ languagesKnown: null }, "languagesKnown"], [{ languagesKnown: [false] }, "languagesKnown"], [{ languagesKnown: ["english", "english"] }, "languagesKnown"], [{ preferredLanguage: [] }, "preferredLanguage"], [{ preferredLanguage: "unsupported" }, "preferredLanguage"]] as const) {
+      const result = await api.post("/api/v1/admin/user-invitations").set("Authorization", bearerFor(operator)).send({ ...base, ...metadata });
+      expect(result.status).toBe(400);
+      expect(result.body.error.fields[field]).toEqual(expect.any(String));
+      await expect(direct.service.create(publicUser(operator), { ...base, ...metadata } as never)).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { [field]: expect.any(String) } });
+    }
+    expect(await repository.listAuditEvents({})).toEqual([]);
+    const created = await api.post("/api/v1/admin/user-invitations").set("Authorization", bearerFor(operator)).send({ ...base, languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({ languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" });
+    const disabled = setup(standardSeed().seed, { mailer: { deliveryKind: "disabled" } });
+    await expect(disabled.service.create(publicUser(operator), { ...base, languagesKnown: ["english"], preferredLanguage: "tamil" })).rejects.toMatchObject({ code: "INVITATION_DELIVERY_UNAVAILABLE" });
+    expect((await disabled.repository.pageUserInvitations({}, { limit: 20, offset: 0 }, NOW)).items).toEqual([]);
+    expect(await disabled.repository.listAuditEvents({})).toEqual([]);
   });
 });

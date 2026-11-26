@@ -1,4 +1,5 @@
 import { apiClient } from "../../api/client";
+import type { DesignerHandoffView } from "../../api/types";
 import type {
   DesignPlanReviewTask,
   DesignPlanTask,
@@ -114,7 +115,7 @@ export interface DesignStageInstructions {
 export type DesignWorkflowActionId =
   | "confirm_initial_payment" | "internal_kickoff_complete" | "sales_calendar_accept"
   | "client_kickoff_request" | "client_kickoff_schedule" | "client_kickoff_complete"
-  | "keys_handed_over" | "keys_received"
+  | "key_collection_schedule" | "keys_handed_over" | "keys_received"
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
   | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
@@ -294,6 +295,7 @@ export interface DesignWorkflowView {
   projectId: string;
   projectName: string;
   serverNow: string;
+  designerHandoff?: DesignerHandoffView;
   /** Canonical project-linked Client Estimate approval; older responses may omit this field. */
   estimateApprovalStatus?: "approved" | "awaiting_approval" | "source_issue";
   /** Client receipt time preserves the server clock when cached data remounts. */

@@ -5,6 +5,12 @@ import { loadEnvironment } from "../src/config/env.js";
 const OCR_WORKER_TOKEN = "config-worker-token-with-at-least-32-characters";
 
 describe("environment authentication configuration", () => {
+  it("requires an explicit valid opt-in for durable key collection warnings", () => {
+    const required = { JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN };
+    expect(loadEnvironment(required).KEY_COLLECTION_REMINDERS_ENABLED).toBe("false");
+    expect(loadEnvironment({ ...required, KEY_COLLECTION_REMINDERS_ENABLED: "true" }).KEY_COLLECTION_REMINDERS_ENABLED).toBe("true");
+    expect(() => loadEnvironment({ ...required, KEY_COLLECTION_REMINDERS_ENABLED: "yes" })).toThrow();
+  });
   it("keeps project AI disabled by default with bounded server-only model settings", () => {
     const config = loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN});
     expect(config.PROJECT_CHAT_AI_ENABLED).toBe("false");

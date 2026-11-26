@@ -19,6 +19,7 @@ import { procurementProjectsIntegrityError } from "../../features/procurement/pr
 import type { PMPortfolio, PMAlert, PMOverview, PMPanel } from "../../features/project-manager/projectManagerTypes";
 import type { ExecutionPage, ExecutionWork } from "../../features/execution/executionApi";
 import type { PMEstimateView, PMVendorCandidatePage, PMVendorSuggestionPage } from "../../features/project-manager/pmEstimateTypes";
+import type { DesignerAssignmentRequestSummary, DesignerSuggestionsPage } from "../../../../shared/projects/designerAssignment";
 
 let transport: ReturnType<typeof installEnterpriseTransport> | undefined;
 let cleanup: (() => void) | undefined;
@@ -36,6 +37,86 @@ function mount(route: string, role: Role, state: EnterpriseScenario["state"] = "
   cleanup = () => { view.unmount(); router.dispose(); client.clear(); };
   return { client, view, router };
 }
+it("isolates key collection reminder fixtures and uses the same saved boundaries for project details", async () => {
+  transport = installEnterpriseTransport({ route: "/designer?qaKeyCollection=red", role: "designer", state: "populated" });
+  const inbox = (await (await fetch("/api/v1/designer/key-collection-reminders?limit=1")).json()).data;
+  expect(inbox.urgentCount).toBe(2);
+  expect(inbox.items).toHaveLength(1);
+  expect(inbox.pagination.hasMore).toBe(true);
+  const workflow = (await (await fetch("/api/v1/projects/project-aurora-villa/design-workflow")).json()).data;
+  expect(workflow.designerHandoff.appointment.timing.zone).toBe("red");
+  expect(transport.requests.filter(request => request.unexpected)).toEqual([]);
+  transport.restore();
+  transport = installEnterpriseTransport({ route: "/client?qaKeyCollection=red", role: "client", state: "populated" });
+  expect((await fetch("/api/v1/designer/key-collection-reminders")).status).toBe(403);
+});
+it("reviews synthetic Designer requests from the shared chip and restores account focus after the last decision", async () => {
+  mount("/designer?qaDesignerInbox=ready", "designer");
+  const user = userEvent.setup();
+  const chip = await screen.findByRole("button", { name: "Assignment requests (2)" });
+  expect(screen.queryByText("Harbour Home")).not.toBeInTheDocument();
+  chip.focus(); await user.keyboard("{Enter}");
+  let dialog = await screen.findByRole("dialog", { name: "Assignment requests" });
+  const accept = within(dialog).getByRole("button", { name: "Accept assignment for Harbour Home" });
+  await waitFor(() => expect(accept).toBeEnabled());
+  await user.click(accept);
+  await screen.findByText("Assignment accepted. Your project is now available in Assigned projects.");
+  expect(within(dialog).queryByText("Harbour Home")).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  const remaining = await screen.findByRole("button", { name: "Assignment requests (1)" });
+  await waitFor(() => expect(remaining).toHaveFocus());
+  await user.keyboard(" ");
+  dialog = await screen.findByRole("dialog", { name: "Assignment requests" });
+  const decline = within(dialog).getByRole("button", { name: "Decline assignment for Garden Apartment" });
+  await waitFor(() => expect(decline).toBeEnabled());
+  await user.click(decline);
+  await screen.findByText("Assignment declined.");
+  expect(within(dialog).getByText("No pending assignment requests.")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Synthetic workspace reviewer" })).toHaveFocus());
+  expect(screen.queryByRole("button", { name: /Assignment requests/ })).not.toBeInTheDocument();
+  expect(transport!.requests.filter(request => request.path.includes("/decision")).map(request => request.status)).toEqual([200, 200]);
+  expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
+});
+
+it("keeps the default synthetic Designer inbox empty and rejects other roles", async () => {
+  transport = installEnterpriseTransport({ route: "/designer", role: "designer", state: "populated" });
+  expect((await (await fetch("/api/v1/designer/assignment-requests")).json()).data.pagination.total).toBe(0);
+  transport.restore();
+  transport = installEnterpriseTransport({ route: "/client?qaDesignerInbox=ready", role: "client", state: "populated" });
+  expect((await fetch("/api/v1/designer/assignment-requests")).status).toBe(403);
+});
+
+it("isolates multi-Designer QA requests and closes competitors after a synthetic acceptance", async () => {
+  transport = installEnterpriseTransport({ route: "/admin/dashboard?qaDesignerAssignments=ready", role: "super_admin", state: "populated" });
+  const prefix = "/api/v1/admin/projects/project-murthy";
+  const read = async (search = "") => (await (await fetch(`${prefix}/designer-suggestions?search=${search}`)).json()).data as DesignerSuggestionsPage;
+  const post = async (path: string, input: unknown) => fetch(path, { method: "POST", body: JSON.stringify(input) });
+  const initial = await read();
+  expect(initial.items).toHaveLength(5);
+  expect(initial.items.map(item => item.activeProjectCount)).toEqual([0, 1, 3, 5, 8]);
+  expect(initial.items.some(item => item.location === null)).toBe(true);
+  const send = async (designerId: string, key: string) => (await (await post(`${prefix}/designer-assignment-requests`, {
+    designerId, expectedSourceRevision: initial.sourceRevision, idempotencyKey: key
+  })).json()).data as DesignerAssignmentRequestSummary;
+  const first = await send("qa-designer-1", "first");
+  const second = await send("qa-designer-2", "second");
+  const searchResult = await read("Nisha");
+  expect(searchResult.items).toHaveLength(1);
+  expect(searchResult.pendingRequests.map(item => item.id)).toEqual([first.id, second.id]);
+  expect(searchResult.pendingRequest).toBeNull();
+  window.dispatchEvent(new CustomEvent("enterprise-qa-designer-accept", { detail: { projectId: "project-murthy", designerId: "qa-designer-2" } }));
+  const accepted = await read();
+  expect(accepted.currentDesigner?.id).toBe("qa-designer-2");
+  expect(accepted.pendingRequests).toEqual([]);
+  expect(accepted.sourceRevision).not.toBe(initial.sourceRevision);
+  expect((await post(`${prefix}/designer-assignment-requests/${first.id}/cancel`, { expectedVersion: 1, idempotencyKey: "late" })).status).toBe(409);
+  const otherProject = (await (await fetch("/api/v1/admin/projects/other-project/designer-suggestions")).json()).data as DesignerSuggestionsPage;
+  expect(otherProject.currentDesigner).toBeNull();
+  expect(otherProject.pendingRequests).toEqual([]);
+  expect(transport.requests.some(request => request.unexpected)).toBe(false);
+});
+
 it("persists the Overview flag only in its opt-in QA scenario and rejects stale saves", async () => {
   const route = "/admin/configuration/estimation/items/line-1?qaOverview=defaults";
   transport = installEnterpriseTransport({ route, role: "super_admin", state: "populated" });

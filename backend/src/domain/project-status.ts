@@ -9,6 +9,7 @@ import type { Role } from "./roles.js";
 import type { WorkflowSpacePlanningSource } from "./workflow-space-planning.js";
 import { effectiveCommercialStatus, isEstimationWorkflowVersion } from "./estimation-lifecycle.js";
 import type { QuotationApprovalResolution } from "../services/quotation-approval-state.service.js";
+import type { DesignerHandoffView } from "../contracts/designer-assignment.js";
 import { secondaryMeasurementAssignmentReason, secondaryMeasurementDesignerIds, type SecondaryMeasurementDesigner } from "./measurement-ownership.js";
 
 /** Approval evidence and source selection are validated by the source reader, not status labels. */
@@ -20,6 +21,10 @@ export interface ProjectStatusInput {
   estimate: ChatEstimateSource | null;
   salesOwnerIds: readonly string[];
   designAssignmentOwnerIds?: readonly string[];
+  designerHandoff?: DesignerHandoffView;
+  keyCollectionScheduleRequired?: boolean;
+  /** Explicit status-only evidence; never a chat membership grant. */
+  pendingDesignerRequests?: readonly { id: string; person: ProjectStatusPerson | null }[];
   /** estimateVersion is the immutable approved snapshot version after approval, otherwise the live version. */
   commercial: { state: "none" | "pending" | "pre_approved" | "approved" | "conflict"; estimateId: string | null; estimateVersion: number | null };
   quotationApproval?: QuotationApprovalResolution | null;
@@ -51,6 +56,7 @@ const recordedDate = (date: string | Date | null | undefined): string | null => 
 /** Viewer-independent, read-only projection. Participant membership has already been authorized. */
 export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSummary {
   const { project, estimate, commercial } = input;
+  const pendingDesignerRequests = input.pendingDesignerRequests ?? [];
   const lifecycle = isEstimationWorkflowVersion(estimate?.estimation?.workflowVersion) ? estimate!.estimation! : null;
   const quotation = lifecycle?.workflowVersion === 3 ? lifecycle : null;
   const quotationApproval = quotation ? input.quotationApproval ?? null : null;
@@ -87,6 +93,21 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     return result;
   };
   const finish = (): ProjectStatusSummary => {
+    const handoff = input.designerHandoff;
+    if (result.state !== "unavailable" && handoff?.initialEstimateApproved && project.status !== "completed") {
+      if (pendingDesignerRequests.length) add("space_planning_tentative_look_feel", "designer-assignment:decision",
+        pendingDesignerRequests.length === 1 ? "Respond to the Designer assignment request." : "Respond to the Designer assignment requests.", "designer", [],
+        { state: "pending", blocker: "Awaiting Designer acceptance." }, ["designer"],
+        [...new Map(pendingDesignerRequests.flatMap(request => request.person ? [[request.person.id, request.person] as const] : [])).values()]
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)));
+      if (handoff.state === "awaiting_client_schedule") add("key_collection", "keys:schedule", "Confirm the key collection appointment.", "client", clientIds);
+      if (handoff.appointment && !handoff.appointment.receivedAt && !handoff.appointment.completedAt) {
+        const receipt = result.pendingActions.find(action => action.id === `${project.id}:keys:receipt`);
+        const details = { deadlineAt: handoff.appointment.deadlineAt, ...(handoff.blockers.length ? { state: "blocked" as const, blocker: handoff.blockers.join(" ") } : {}) };
+        if (receipt) Object.assign(receipt, details, { people: handoff.designer ? [{ ...handoff.designer, role: "designer" }] : [] });
+        else add("key_collection", "keys:receipt", "Collect the keys and confirm receipt.", "designer", [], details, ["designer"], handoff.designer ? [{ ...handoff.designer, role: "designer" }] : []);
+      }
+    }
     if (result.state !== "unavailable" && result.state !== "paused") {
       result.state = !result.pendingActions.length
         ? project.status === "completed" ? "completed" : "no_pending"
@@ -122,9 +143,9 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     if (quotationApproval.quotationApprovalState === "revision_pending_client") {
       add("estimate_approval", `estimate:${estimate!.id}:quotation-review`, "Review and approve the Designer-revised quotation or request changes.", "client", clientIds);
     } else if (quotation.preApproval) {
-      if (!project.primaryDesignerId) {
+      if (!project.primaryDesignerId && !pendingDesignerRequests.length) {
         add("estimate_internal_review", `estimate:${estimate!.id}:assign-primary`, "Assign the primary Designer to revise the quotation.", "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
-      } else {
+      } else if (project.primaryDesignerId) {
         add("estimate_preparation", `estimate:${estimate!.id}:revise-quotation`, "Revise the quotation and submit it to the Client for post-design approval.", "designer", [project.primaryDesignerId]);
       }
     }
@@ -150,6 +171,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   if (!estimate || estimate.status !== "client_approved") return unavailable("estimate_approval");
   const workflowEnabled = Boolean(project.designWorkflowStages?.length);
   const addDesignAssignment = () => {
+    if (pendingDesignerRequests.length) return;
     const source = `estimate:${estimate.id}:assign-design`;
     if (!result.pendingActions.some(action => action.id === `${project.id}:${source}`)) {
       add("space_planning_tentative_look_feel", source, "Assign a Designer to prepare the Design plan.", "admin", input.designAssignmentOwnerIds ?? []);
@@ -238,8 +260,10 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
       add(current, "client-kickoff:complete", future ? "Client Kick off is scheduled." : "Review the Internal Kick off document and confirm Client Kick off is complete.", "client", clientIds, { scheduledAt, ...(future ? { state: "scheduled" as const, blocker: null } : {}) });
     }
   } else if (current === "key_collection") {
-    if (!keys.handedOverAt) add(current, "keys:handover", "Confirm that the keys have been handed over.", "client", clientIds);
-    if (!keys.receivedAt) add(current, "keys:receipt", "Confirm receipt of the keys.", "designer", designerIds);
+    if (!input.keyCollectionScheduleRequired || keys.appointment || keys.handedOverAt || keys.receivedAt) {
+      if (!keys.handedOverAt) add(current, "keys:handover", "Confirm that the keys have been handed over.", "client", clientIds);
+      if (!keys.receivedAt) add(current, "keys:receipt", "Confirm receipt of the keys.", "designer", designerIds);
+    }
     if (keys.handedOverAt && keys.receivedAt && !keys.completedAt) return unavailable(current);
   } else if (current === "site_measurement" && !isPaused) {
     if (project.estimationWorkflowVersion === 3) {

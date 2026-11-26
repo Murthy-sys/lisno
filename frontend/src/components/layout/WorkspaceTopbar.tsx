@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 
 import type { PublicUser } from "../../api/types";
 import { NotificationBell } from "../../features/notifications/NotificationBell";
@@ -9,12 +9,14 @@ export function WorkspaceTopbar({
   onLogout,
   leading,
   dailyTasksAction,
+  accountTriggerRef,
   compact = false
 }: {
   user: PublicUser;
   onLogout: () => void | Promise<void>;
   leading?: ReactNode;
   dailyTasksAction?: ReactNode;
+  accountTriggerRef?: RefObject<HTMLButtonElement | null>;
   compact?: boolean;
 }) {
   const topbarRef = useRef<HTMLElement>(null);
@@ -47,7 +49,7 @@ export function WorkspaceTopbar({
       <div className="workspace-topbar__actions">
         {dailyTasksAction}
         <NotificationBell />
-        <AccountMenu user={user} onLogout={onLogout} />
+        <AccountMenu user={user} onLogout={onLogout} triggerRef={accountTriggerRef} />
       </div>
     </header>
   );

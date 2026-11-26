@@ -1,4 +1,10 @@
 .client-project-workflow { min-width: 0; }
+.client-project-phase, .client-project-phase--pending { min-width: 0; }
+.client-project-phase { border-block-start: 1px solid var(--color-border); }
+.client-project-phase > h2 { margin: 0; }
+.client-project-phase > h2 > button { display: flex; width: 100%; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border: 0; background: transparent; color: var(--color-text); font: var(--type-section-title); text-align: start; cursor: pointer; }
+.client-project-phase > h2 > button:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
+.client-project-phase > div:not([hidden]), .client-project-phase--pending > div { display: grid; min-width: 0; gap: var(--space-3); }
 .client-page--project > .ui-page-header { padding-block: 0 var(--space-2); border-block-end: 1px solid var(--color-border); gap: var(--space-2); }
 .client-page--project .project-chat-navigation--client-project { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: var(--space-2); border: 0; padding: 0; }
 .client-page--project .project-chat-navigation--client-project :is(nav, .project-chat-navigation__summary) { gap: var(--space-2); }

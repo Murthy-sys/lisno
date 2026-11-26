@@ -124,6 +124,23 @@ describe("User deletion", () => {
     expect(bodies).toEqual([{ version: target.version }]);
   });
 
+  it("blocks deletion while location has unsaved changes", async () => {
+    setupSession();
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json({ data: directory([staff]) })));
+    renderApp(["/admin/users"]);
+    const { user, dialog } = await openManage(staff.name);
+    const remove = within(dialog).getByRole("button", { name: "Delete user" });
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    await user.type(location, "Mysuru");
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAccessibleDescription("Save or cancel the location change before deleting.");
+    await user.click(remove);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(location).toHaveValue("Mysuru");
+    await user.clear(location);
+    expect(remove).toBeEnabled();
+  });
+
   it("preserves unsaved role changes and blocks Delete while a role update is pending", async () => {
     setupSession();
     const response = deferred<Response>();

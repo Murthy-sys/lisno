@@ -86,12 +86,12 @@ describe("frontend authorization contract parity", () => {
   });
 
   it("publishes the Project Manager policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-11-15.project-initiation-defaults.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-11-15.project-initiation-defaults.v1");
-    expect(PERMISSION_CODES).toHaveLength(228);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(228);
-    expect(new Set(PERMISSION_CODES).size).toBe(228);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(228);
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-11-25.designer-handoff.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-11-25.designer-handoff.v1");
+    expect(PERMISSION_CODES).toHaveLength(233);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(233);
+    expect(new Set(PERMISSION_CODES).size).toBe(233);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(233);
     expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendor_induction.review");
     expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendor_induction.review");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {

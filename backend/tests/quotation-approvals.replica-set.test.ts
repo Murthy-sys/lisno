@@ -9,6 +9,7 @@ import { newQuotationLifecycle, newEstimationLifecycle } from "../src/domain/est
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { QuotationUnlockReceiptModel } from "../src/models/QuotationUnlockReceipt.js";
+import { DesignerAssignmentRequestModel } from "../src/models/DesignerAssignmentRequest.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -29,6 +30,7 @@ import { createEstimateClientReviewService } from "../src/services/estimate-clie
 import { createEstimateCollaborationService, resolveEstimationPreparationSource } from "../src/services/estimate-collaboration.service.js";
 import { approvedProcurementSnapshotFromRows, createProcurementService, readProcurementDashboardApprovalRounds, readProcurementDashboardPortfolioReport } from "../src/services/procurement.service.js";
 import { createProjectWorkflowService } from "../src/services/project-workflow.service.js";
+import { createDesignerAssignmentService } from "../src/services/designer-assignment.service.js";
 import { assertDesignWorkflowSubmissionAllowed, createDesignWorkflowStateService } from "../src/services/design-workflow-state.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
@@ -67,7 +69,7 @@ const procurement = createProcurementService({ audit, now: () => now, storage: {
 
 beforeAll(async () => {
   replica = await startMongoReplicaSet("quotation-approvals");
-  await Promise.all([EstimateModel.syncIndexes(), EstimateClientReviewRoundModel.syncIndexes(), EstimatePreparationSnapshotModel.syncIndexes(), QuotationUnlockReceiptModel.syncIndexes(), ProjectWorkflowTaskModel.syncIndexes()]);
+  await Promise.all([DesignerAssignmentRequestModel.syncIndexes(), EstimateModel.syncIndexes(), EstimateClientReviewRoundModel.syncIndexes(), EstimatePreparationSnapshotModel.syncIndexes(), QuotationUnlockReceiptModel.syncIndexes(), ProjectWorkflowTaskModel.syncIndexes()]);
 }, 120_000);
 afterAll(async () => { await replica?.stop(); });
 beforeEach(async () => {
@@ -180,6 +182,7 @@ describe("version 3 two-phase quotation approvals", () => {
       mailer: { deliveryKind: "disabled" },
       portalUrl: "https://portal.example.test/client", audit, now: () => now
     });
+    const assignments = createDesignerAssignmentService({ audit, now: () => now });
     const otherProject = await ProjectModel.findById("collab-project").lean();
     const otherLead = await LeadModel.findById("collab-lead").lean();
     const otherEstimate = await EstimateModel.findById("collab-estimate").lean();
@@ -188,7 +191,11 @@ describe("version 3 two-phase quotation approvals", () => {
     await EstimateModel.create({ ...otherEstimate, _id: "other-estimate", leadId: "other-lead", projectId: "other-project",
       subtotal: 2000, gst: 360, total: 2360, subtotalPaise: 200000, gstPaise: 36000, totalPaise: 236000 });
     const otherBefore = await EstimateModel.findById("other-estimate").lean();
-    await expect(workflow.assignDesigner(superAdmin, "collab-project", designer.id)).rejects.toMatchObject({ code: "DESIGN_PLAN_NOT_ASSIGNABLE" });
+    await expect(workflow.assignDesigner(superAdmin, "collab-project", designer.id)).rejects.toMatchObject({ code: "DESIGNER_ACCEPTANCE_REQUIRED" });
+    expect(await assignments.suggestions(superAdmin, "collab-project")).toMatchObject({ canRequest: false, sourceRevision: null });
+    await expect(assignments.createRequest(superAdmin, "collab-project", {
+      designerId: designer.id, expectedSourceRevision: "0".repeat(64), idempotencyKey: "before-approval"
+    })).rejects.toMatchObject({ code: "DESIGN_ASSIGNMENT_SOURCE_CHANGED" });
 
     const pre = await preApprove();
     const initialApprovedAt = new Date(now.getTime() - 60 * 60 * 1000);
@@ -202,8 +209,15 @@ describe("version 3 two-phase quotation approvals", () => {
       status: "draft", canAssignDesigner: true, initialEstimateApproval: { reviewRoundId: pre.clientReview.id },
       approvedBaseline: { total: 1180 }
     });
-    await expect(workflow.assignDesigner(designer, "collab-project", designer.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await workflow.assignDesigner(superAdmin, "collab-project", designer.id);
+    const suggestions = await assignments.suggestions(superAdmin, "collab-project");
+    const assignmentInput = { designerId: designer.id, expectedSourceRevision: suggestions.sourceRevision!, idempotencyKey: "approved-request" };
+    await expect(assignments.createRequest(designer, "collab-project", assignmentInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const pendingAssignment = await assignments.createRequest(superAdmin, "collab-project", assignmentInput);
+    expect(await ProjectModel.findById("collab-project").lean()).toMatchObject({ primaryDesignerId: null, assignedDesignerIds: [] });
+    expect(await ProjectWorkflowTaskModel.countDocuments({ estimateId: "collab-estimate", kind: "design_plan_upload" })).toBe(0);
+    await assignments.decideRequest(designer, pendingAssignment.id, {
+      expectedVersion: pendingAssignment.version, decision: "accept", idempotencyKey: "approved-accept"
+    });
     expect(await ProjectModel.findById("collab-project").lean()).toMatchObject({ primaryDesignerId: designer.id, assignedDesignerIds: [designer.id] });
     expect(await workflow.listDesignerTasks(designer)).toEqual([expect.objectContaining({
       estimateId: "collab-estimate", leadId: "collab-lead", quotationApproved: true,

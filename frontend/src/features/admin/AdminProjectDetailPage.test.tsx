@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
-import type { ProjectFinanceBucket } from "../../api/types";
+import type { DesignerSuggestionsPage, ProjectFinanceBucket } from "../../api/types";
 import { renderApp, renderWithQuery } from "../../test/render";
 import { AuthProvider } from "../../auth/AuthProvider";
 import { AdminProjectDetailPage } from "./AdminProjectDetailPage";
@@ -43,6 +43,17 @@ const project = {
   estimate: { id: "estimate-1", status: "draft", total: 975000 },
   createdAt: "2026-08-23T10:00:00.000Z"
 };
+
+function designerSuggestions(projectId: string, designer: { id: string; name: string }): DesignerSuggestionsPage {
+  return {
+    projectId, serverNow: "2026-11-25T09:00:00.000Z", sourceRevision: "a".repeat(64),
+    projectPreferredLanguage: null, projectLocation: null, projectCity: null,
+    currentDesigner: null, pendingRequests: [], pendingRequest: null, canRequest: true, blockedReason: null,
+    items: [{ ...designer, activeProjectCount: 2, languagesKnown: [], preferredLanguage: null, location: null,
+      languageMatch: "unknown", locationMatch: "unknown", eligible: true, blockedReason: null }],
+    pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+  };
+}
 
 function installSession(
   permissions: readonly PermissionCode[] = [
@@ -340,15 +351,9 @@ describe("AdminProjectDetailPage", () => {
           }
         })
       ),
-      http.get("/api/v1/admin/designers", () =>
+      http.get("/api/v1/admin/projects/project-1/designer-suggestions", () =>
         HttpResponse.json({
-          data: [
-            {
-              id: "designer-1",
-              name: "Ananya Designer",
-              email: "ananya@lisno.example"
-            }
-          ]
+          data: designerSuggestions("project-1", { id: "designer-1", name: "Ananya Designer" })
         })
       )
     );
@@ -365,10 +370,10 @@ describe("AdminProjectDetailPage", () => {
       "#design-assignment-title"
     );
     expect(
-      await screen.findByRole("combobox", { name: "Assigned Designer" })
+      await screen.findByRole("button", { name: "Send assignment request to Ananya Designer" })
     ).toBeEnabled();
     expect(
-      screen.getByRole("option", { name: "Ananya Designer · ananya@lisno.example" })
+      screen.getByRole("heading", { name: "Ananya Designer" })
     ).toBeVisible();
   });
 
@@ -791,7 +796,7 @@ it("enables initial-approved Designer assignment and keeps the unchanged approva
         currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "initial-round", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" }
       }
     } })),
-    http.get("/api/v1/admin/designers", () => HttpResponse.json({ data: [{ id: "designer-one", name: "Designer One", email: "designer-one@example.test" }] })),
+    http.get("/api/v1/admin/projects/project-murthy/designer-suggestions", () => HttpResponse.json({ data: designerSuggestions("project-murthy", { id: "designer-one", name: "Designer One" }) })),
     http.get("/api/v1/finance/projects/project-murthy", () => { financeCalls++; return HttpResponse.json({ data: approvedPendingBucket }); })
   );
   renderApp(["/admin/projects/project-murthy"]);
@@ -805,8 +810,7 @@ it("enables initial-approved Designer assignment and keeps the unchanged approva
   expect(assign).toHaveAttribute("href", "#design-assignment-title");
   expect(financeCalls).toBe(0);
   await userEvent.click(assign);
-  await screen.findByRole("option", { name: /Designer One/ });
-  expect(screen.getByRole("combobox", { name: "Assigned Designer" })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Send assignment request to Designer One" })).toBeEnabled();
   await openProjectTool(userEvent.setup(), "Finance");
   await waitFor(() => expect(financeCalls).toBe(1));
 });
@@ -1070,13 +1074,13 @@ describe("Simple Super Admin project views", () => {
     let financeRequests = 0;
     server.use(
       http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: approvedPendingProject })),
-      http.get("/api/v1/admin/designers", () => HttpResponse.json({ data: [{ id: "designer-one", name: "Designer One", email: "designer@example.test" }] })),
+      http.get("/api/v1/admin/projects/project-murthy/designer-suggestions", () => HttpResponse.json({ data: designerSuggestions("project-murthy", { id: "designer-one", name: "Designer One" }) })),
       http.get("/api/v1/finance/projects/project-murthy", () => { financeRequests++; return HttpResponse.json({ data: approvedPendingBucket }); })
     );
     renderApp(["/admin/projects/project-murthy#design-assignment-title"]);
     const navigation = await screen.findByRole("group", { name: "Project views" });
     expect(within(navigation).getByRole("button", { name: "Assignments" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByRole("combobox", { name: "Assigned Designer" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Send assignment request to Designer One" })).toBeEnabled();
     expect(screen.getByText("More project tools", { selector: "summary" }).closest("details")).not.toHaveAttribute("open");
     expect(financeRequests).toBe(0);
   });

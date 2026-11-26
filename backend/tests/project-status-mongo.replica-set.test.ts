@@ -175,7 +175,10 @@ describe("project status Mongo snapshot reads", () => {
     await ProjectFinanceBucketModel.collection.updateOne({ _id: "budget-a" }, { $set: { effectiveBaseline: {
       estimateId: "estimate-a", estimateVersion: 8, estimateReviewRoundId: "final-a" } } });
     const payment = await f.statusService.get(f.actor("client-a"), "a");
-    expect(payment).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [{ responsibleRole: "super_admin", people: [{ id: "super" }] }] });
+    expect(payment).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [
+      { responsibleRole: "super_admin", people: [{ id: "super" }] },
+      { id: "a:keys:schedule", stageKey: "key_collection", action: "Confirm the key collection appointment.", responsibleRole: "client", people: [{ id: "client-a", role: "client" }] }
+    ] });
     await DesignWorkflowStateModel.collection.insertOne({ _id: "a", projectId: "a", version: 1, estimationWorkflowVersion: 2,
       designStartedAt: CHAT_NOW, initialPaymentAt: CHAT_NOW, initialPaymentEstimateId: "estimate-a", initialPaymentEstimateVersion: 4,
       stages: {}, pauses: [], history: [] });
@@ -209,7 +212,11 @@ describe("project status Mongo snapshot reads", () => {
     expect((await f.statusService.get(f.actor("client-a"), "a")).state).toBe("unavailable");
     await EstimateClientResponseProofModel.create({ _id: "proof-a", estimateId: "estimate-a", reviewRoundId: "review-a", uploadedById: "admin-a", uploadedAt: new Date(CHAT_NOW), storageReference: "private-proof-reference", originalFilename: "proof.pdf", mimeType: "application/pdf", byteSize: 100, sha256: "b".repeat(64) });
     const approved = await f.statusService.get(f.actor("client-a"), "a");
-    expect(approved).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [{ responsibleRole: "super_admin" }, { responsibleRole: "admin", people: [{ id: "admin-a" }], action: "Assign a Designer to prepare the Design plan." }] });
+    expect(approved).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [
+      { responsibleRole: "super_admin" },
+      { responsibleRole: "admin", people: [{ id: "admin-a" }], action: "Assign a Designer to prepare the Design plan." },
+      { id: "a:keys:schedule", stageKey: "key_collection", action: "Confirm the key collection appointment.", responsibleRole: "client", people: [{ id: "client-a", role: "client" }] }
+    ] });
     expect(JSON.stringify(approved)).not.toMatch(/private-proof|proof\.pdf|uploadedById|decidedById|storageReference|sha256/);
     await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { version: 6 } });
     expect((await f.statusService.get(f.actor("client-a"), "a")).state).toBe("unavailable");

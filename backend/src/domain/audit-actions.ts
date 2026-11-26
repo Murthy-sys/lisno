@@ -1,4 +1,5 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "workflow_timelines_updated",
   "project_initiation_defaults_updated",
   "project_number_assigned",
   "project_manager_action_recorded",
@@ -137,6 +138,10 @@ export const ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS = [
 
 export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
   "design_plan_designer_assigned",
+  "designer_assignment_requested",
+  "designer_assignment_accepted",
+  "designer_assignment_declined",
+  "designer_assignment_cancelled",
   "design_plan_submitted_for_client_review",
   "design_plan_email_delivery_sent",
   "design_plan_email_delivery_failed",
@@ -278,6 +283,9 @@ export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [
   "identity.profile_photo.removed"
 ] as const;
 
+export const USER_LOCATION_AUDIT_ACTIONS = ["user.location_updated"] as const;
+export const USER_LANGUAGE_AUDIT_ACTIONS = ["user.languages_updated"] as const;
+
 export const AUDIT_ACTIONS = [
   "project_manager_assignment_sync_applied",
   "project_manager_assignment_sync_rolled_back",
@@ -296,6 +304,8 @@ export const AUDIT_ACTIONS = [
   ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS,
   ...PROCUREMENT_AUDIT_ACTIONS,
   ...IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS,
+  ...USER_LOCATION_AUDIT_ACTIONS,
+  ...USER_LANGUAGE_AUDIT_ACTIONS,
   ...AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS
 ] as const;
 
