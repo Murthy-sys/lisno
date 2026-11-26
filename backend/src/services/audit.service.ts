@@ -89,7 +89,7 @@ export function createAuditService(repository: AppRepository): AuditService {
       if (actor.role === "client") forbidden();
       if (actor.role === "super_admin" || actor.role === "design_head") {
         return sanitizeAuditPage(
-          await repository.pageAuditEvents(filters, pagination)
+          await repository.pageAuditEvents(filters, pagination), actor.role
         );
       }
 
@@ -100,7 +100,7 @@ export function createAuditService(repository: AppRepository): AuditService {
         return sanitizeAuditPage(await repository.pageAuditEvents(
           { ...filters, actorId: actor.id },
           pagination
-        ));
+        ), actor.role);
       }
 
       if (actor.role !== "design_manager") forbidden();
@@ -131,7 +131,7 @@ export function createAuditService(repository: AppRepository): AuditService {
           visibleTaskIds: [...visibleTaskIds]
         },
         pagination
-      ));
+      ), actor.role);
     },
 
     async listForDesigner(actor, designerId, pagination, sort) {
@@ -161,21 +161,35 @@ export function createAuditService(repository: AppRepository): AuditService {
           sort
         },
         pagination
-      ));
+      ), actor.role);
     }
   };
 }
 
 export function sanitizeAuditPage(
-  page: PageResult<AuditEventRecord>
+  page: PageResult<AuditEventRecord>,
+  actorRole?: PublicUser["role"]
 ): PageResult<AuditEventRecord> {
   return {
     ...page,
-    items: page.items.map((event) => ({
-      ...event,
-      oldValues: sanitizeAuditObject(event.oldValues),
-      newValues: sanitizeAuditObject(event.newValues)
-    }))
+    items: page.items.map((event) => {
+      if (event.action === "workflow_timelines_updated" && actorRole !== "super_admin") {
+        return { ...event, oldValues: {}, newValues: {} };
+      }
+      const oldValues = sanitizeAuditObject(event.oldValues);
+      const newValues = sanitizeAuditObject(event.newValues);
+      if (event.action === "user.location_updated" && actorRole !== "super_admin") {
+        delete oldValues.location;
+        delete newValues.location;
+      }
+      if (event.action === "user.languages_updated" && actorRole !== "super_admin") {
+        delete oldValues.languagesKnown;
+        delete oldValues.preferredLanguage;
+        delete newValues.languagesKnown;
+        delete newValues.preferredLanguage;
+      }
+      return { ...event, oldValues, newValues };
+    })
   };
 }
 

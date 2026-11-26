@@ -486,3 +486,69 @@ describe("logical user deletion Mongo transactions", () => {
     expect(await AuditEventModel.countDocuments()).toBe(auditCount);
   });
 });
+
+
+describe("managed user location Mongo transactions", () => {
+  it("persists independent locations, preserves sessions, rejects stale saves and rolls back failed audits", async () => {
+    await insertUser("location-super", "super_admin");
+    await insertUser("location-alpha", "designer");
+    await insertUser("location-beta", "client", false);
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    const service = createUserAdministrationService(repository, audit, clock);
+    const actor = { id: "location-super", name: "Location Operator", email: "location-super@mongo-admin.lisno.example", role: "super_admin" as const };
+    const alpha = await service.update(actor, "location-alpha", { version: 1, location: "  Bengaluru  " });
+    await service.update(actor, "location-beta", { version: 1, location: "Chennai" });
+    expect(alpha.user).toMatchObject({ location: "Bengaluru", version: 2 });
+    expect(await repository.findUserById("location-alpha")).toMatchObject({ location: "Bengaluru", role: "designer", active: true, version: 2, sessionVersion: 1, profileVersionOffset: 1 });
+    expect(await repository.findUserById("location-beta")).toMatchObject({ location: "Chennai", active: false, version: 2, sessionVersion: 1 });
+    const noOp = await service.update(actor, "location-alpha", { version: 2, location: "Bengaluru" });
+    expect(noOp.user.version).toBe(2);
+    await expect(service.update(actor, "location-alpha", { version: 1, location: null })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AuditEventModel.countDocuments({ action: "user.location_updated" })).toBe(2);
+    vi.spyOn(audit, "append").mockRejectedValueOnce(new Error("mongo location audit failed"));
+    await expect(service.update(actor, "location-alpha", { version: 2, location: "Pune" })).rejects.toThrow("mongo location audit failed");
+    expect(await repository.findUserById("location-alpha")).toMatchObject({ location: "Bengaluru", version: 2, sessionVersion: 1, profileVersionOffset: 1 });
+    expect(await AuditEventModel.countDocuments({ action: "user.location_updated" })).toBe(2);
+    await service.update(actor, "location-alpha", { version: 2, location: null });
+    const page = await service.list(actor, {}, { limit: 20, offset: 0 });
+    expect(page.items.find(user => user.id === "location-alpha")?.location).toBeNull();
+    expect(page.items.find(user => user.id === "location-beta")?.location).toBe("Chennai");
+  });
+});
+
+describe("managed user languages Mongo transactions", () => {
+  it("preserves authority, normalizes no-ops, handles concurrent saves and rolls back failed audits", async () => {
+    await insertUser("languages-super", "super_admin");
+    await insertUser("languages-alpha", "designer");
+    await insertUser("languages-beta", "client", false);
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    const service = createUserAdministrationService(repository, audit, clock);
+    const actor = { id: "languages-super", name: "Language Operator", email: "languages-super@example.test", role: "super_admin" as const };
+    const alpha = await service.update(actor, "languages-alpha", { version: 1, languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    await service.update(actor, "languages-beta", { version: 1, languagesKnown: ["hindi"], preferredLanguage: null });
+    expect(alpha.user).toMatchObject({ languagesKnown: ["english", "kannada"], preferredLanguage: "tamil", version: 2 });
+    expect(await repository.findUserById("languages-alpha")).toMatchObject({ version: 2, profileVersionOffset: 1, sessionVersion: 1 });
+    expect((await service.update(actor, "languages-alpha", { version: 2, languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" })).user.version).toBe(2);
+    expect(await AuditEventModel.countDocuments({ action: "user.languages_updated" })).toBe(2);
+    const before = await repository.findUserById("languages-alpha");
+    vi.spyOn(audit, "append").mockRejectedValueOnce(new Error("language audit failed"));
+    await expect(service.update(actor, "languages-alpha", { version: 2, languagesKnown: [], preferredLanguage: null })).rejects.toThrow("language audit failed");
+    expect(await repository.findUserById("languages-alpha")).toEqual(before);
+    const concurrent = await Promise.allSettled([
+      service.update(actor, "languages-alpha", { version: 2, languagesKnown: ["hindi"], preferredLanguage: "english" }),
+      service.update(actor, "languages-alpha", { version: 2, languagesKnown: [], preferredLanguage: null })
+    ]);
+    expect(concurrent.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "VERSION_CONFLICT" } });
+    expect(await repository.findUserById("languages-alpha")).toMatchObject({ version: 3, profileVersionOffset: 2, sessionVersion: 1 });
+    expect(await AuditEventModel.countDocuments({ action: "user.languages_updated" })).toBe(3);
+    await service.update(actor, "languages-alpha", { version: 3, languagesKnown: [], preferredLanguage: "kannada" });
+    const page = await service.list(actor, {}, { limit: 20, offset: 0 });
+    expect(page.items.find(user => user.id === "languages-alpha")).toMatchObject({ languagesKnown: [], preferredLanguage: "kannada" });
+    expect(page.items.find(user => user.id === "languages-beta")).toMatchObject({ languagesKnown: ["hindi"], preferredLanguage: null, active: false });
+    await service.update(actor, "languages-alpha", { version: 4, active: false });
+    expect(await repository.findUserById("languages-alpha")).toMatchObject({ version: 5, profileVersionOffset: 3, sessionVersion: 2 });
+  });
+});

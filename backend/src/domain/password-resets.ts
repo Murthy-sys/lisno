@@ -1,3 +1,4 @@
+import { userAuthorizationVersion } from "./user-authorization-version.js";
 import { createHash, randomBytes } from "node:crypto";
 
 import { isReservedDevelopmentDemoIdentity } from "./demo-identities.js";
@@ -63,7 +64,7 @@ export function isPasswordResetAvailable(input: {
       reset.tokenHash &&
       Date.parse(reset.expiresAt) > Date.parse(input.now) &&
       reset.userId === user.id &&
-      reset.userVersion === user.version &&
+      reset.userVersion === userAuthorizationVersion(user) &&
       reset.sessionVersion === passwordResetSessionVersion(user) &&
       isPasswordResetEligible(user)
   );

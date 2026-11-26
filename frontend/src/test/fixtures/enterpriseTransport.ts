@@ -1,3 +1,4 @@
+import { calculateWorkflowTimelines, defaultWorkflowTimelines, type UpdateWorkflowTimelines } from "../../../../shared/projects/workflowTimelines";
 import { enterpriseBasketRecommendations } from "./enterprisePMEstimateData";
 import { createEnterprisePMEstimates } from "./enterprisePMEstimateData";
 import { createEnterpriseComponentAmounts } from "./enterpriseComponentAmountsData";
@@ -15,6 +16,8 @@ import { createEnterpriseEstimateModes } from "./enterpriseEstimateModesData";
 import { chatTestPage, chatTestPolicy, chatTestSummary } from "../../features/messages/projectChatFixtures";
 import { createEnterpriseMessages } from "./enterpriseMessagesData";
 import { createEnterpriseProjectManager } from "./enterpriseProjectManagerData";
+import { createEnterpriseDesignerAssignments, createEnterpriseDesignerInbox } from "./enterpriseDesignerAssignmentsData";
+import { createEnterpriseKeyCollection } from "./enterpriseKeyCollectionData";
 import * as knowledge from "./enterpriseKnowledgeData";
 import type { KnowledgeSectionUpdate } from "../../features/ai-estimator-knowledge/knowledgeApi";
 import type { KnowledgeJsonObject } from "../../features/ai-estimator-knowledge/knowledgeTypes";
@@ -28,7 +31,7 @@ const extraPermissions: Partial<Record<Role, readonly PermissionCode[]>> = {
   designer: ["projects.design_workflow.read"],
   procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
   vendor: ["procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload", "execution.tracker.read"],
-  client: ["procurement.client_work.read", "procurement.client_work.decide", "procurement.vendor_work.media.read"],
+  client: ["projects.design_workflow.read", "projects.design_workflow.act", "procurement.client_work.read", "procurement.client_work.decide", "procurement.vendor_work.media.read"],
   site_manager: ["procurement.progress.read", "procurement.vendor_work.media.read"],
 };
 export function readEnterpriseScenario(search: string): EnterpriseScenario {
@@ -154,7 +157,21 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
+  let workflowTimelines = defaultWorkflowTimelines();
   const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const keyCollection = createEnterpriseKeyCollection(scenarioParams.get("qaKeyCollection"));
+  const designerAssignments = scenarioParams.get("qaDesignerAssignments") === "ready" ? createEnterpriseDesignerAssignments(scenario.state === "empty") : null;
+  const designerInbox = createEnterpriseDesignerInbox(scenario.state === "empty" ? 0 : scenarioParams.get("qaDesignerInbox") === "pages" ? 21 : scenarioParams.get("qaDesignerInbox") === "ready" ? 2 : 0);
+  const updateDesignerInbox = (event: Event) => {
+    const detail = (event as CustomEvent<{ state: string }>).detail;
+    if (detail) designerInbox.update(detail.state);
+  };
+  if (scenario.role === "designer") window.addEventListener("enterprise-qa-designer-inbox", updateDesignerInbox);
+  const acceptDesignerRequest = (event: Event) => {
+    const detail = (event as CustomEvent<{ projectId: string; designerId: string }>).detail;
+    if (detail) designerAssignments?.accept(detail.projectId, detail.designerId);
+  };
+  if (designerAssignments) window.addEventListener("enterprise-qa-designer-accept", acceptDesignerRequest);
   const overviewDefaults = scenarioParams.get("qaOverview") === "defaults";
   const overviewPath = "/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/overview";
   let overviewSection = knowledge.section("overview", { uomId: knowledge.squareFoot.id, surfaceIds: [knowledge.wallSurface.id], clientVisible: true, applicableTiers: ["signature"] });
@@ -241,6 +258,46 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     const url = new URL(raw, window.location.origin);
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const path = url.pathname.replace(/^\/api\/v1(?=\/|$)/, "");
+    if (path === "/admin/workflow-timelines") {
+      if (scenario.role !== "super_admin" || scenario.state === "denied") { log(method, path, 403); return failure(403, "FORBIDDEN", "Super Admin access is required."); }
+      if (method === "GET" && scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Timeline settings could not be loaded."); }
+      if (method === "GET" && scenario.state === "loading") {
+        log(method, path, 0);
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+          if (signal?.aborted) reject(new DOMException("Aborted", "AbortError"));
+          else signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      if (method === "PUT") {
+        const body = await jsonBody(input, init) as UpdateWorkflowTimelines;
+        if (scenario.state === "mutation-error" || body.expectedVersion !== workflowTimelines.version) {
+          log(method, path, 409); return failure(409, "WORKFLOW_TIMELINES_VERSION_CONFLICT", "Timeline configuration changed. Reload the latest values before saving again.");
+        }
+        const occurredAt = "2026-11-27T09:00:00.000Z";
+        workflowTimelines = { version: workflowTimelines.version + 1, bases: body.bases, matrices: calculateWorkflowTimelines(body.bases), createdAt: workflowTimelines.createdAt ?? occurredAt, updatedAt: occurredAt, updatedById: "synthetic-super-admin" };
+      }
+      if (method === "GET" || method === "PUT") { log(method, path, 200); return Response.json({ data: workflowTimelines }); }
+    }
+    if (path === "/designer/key-collection-reminders" && (scenario.role !== "designer" || scenario.state === "denied")) {
+      log(method, path, 403); return failure(403, "FORBIDDEN", "Designer access is required.");
+    }
+    const inboxDecision = path.match(/^\/designer\/assignment-requests\/([^/]+)\/decision$/);
+    if (path === "/designer/assignment-requests" || inboxDecision) {
+      if (scenario.role !== "designer" || scenario.state === "denied") { log(method, path, 403); return failure(403, "FORBIDDEN", "Designer access is required."); }
+      if (method === "POST" && inboxDecision) {
+        if (scenario.state === "mutation-error") { log(method, path, 409); return failure(409, "SYNTHETIC_CONFLICT", "This request changed or has closed. Refresh the assignment."); }
+        const data = designerInbox.decide(inboxDecision[1]!, await jsonBody(input, init));
+        log(method, path, data instanceof Response ? data.status : 200);
+        return data instanceof Response ? data : Response.json({ data });
+      }
+    }
+    if (designerAssignments && method !== "GET" && /^\/admin\/projects\/[^/]+\/designer-assignment-requests(?:\/[^/]+\/cancel)?$/.test(path)) {
+      if (scenario.role !== "super_admin" || scenario.state === "denied") { log(method, path, 403); return failure(403, "FORBIDDEN", "Super Admin access is required."); }
+      if (scenario.state === "mutation-error") { log(method, path, 409); return failure(409, "SYNTHETIC_CONFLICT", "The assignment request changed. Refresh the assignment."); }
+      const data = designerAssignments.mutate(method, path, await jsonBody(input, init));
+      if (data !== undefined) { log(method, path, data instanceof Response ? data.status : 200); return data instanceof Response ? data : Response.json({ data }); }
+    }
     if (messages) {
       const stream = method === "GET" ? messages.stream(path, init?.signal ?? (input instanceof Request ? input.signal : undefined)) : undefined;
       if (stream) { log(method, path, stream.status); return stream; }
@@ -407,7 +464,7 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
       : undefined;
     const overviewData = overviewDefaults ? path === overviewPath ? overviewSection
       : path === "/admin/ai-estimator-knowledge/main-lines/line-1" ? { ...knowledge.item, version: overviewAggregateVersion } : undefined : undefined;
-    const data = overviewData ?? componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path, url.searchParams) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const data = keyCollection.workflow(path, (path === "/designer/key-collection-reminders" ? keyCollection.inbox(url.searchParams) : undefined) ?? (path === "/designer/assignment-requests" ? designerInbox.read(url.searchParams) : undefined) ?? designerAssignments?.read(path, url.searchParams) ?? overviewData ?? componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path, url.searchParams) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates));
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
@@ -419,5 +476,5 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   XMLHttpRequest.prototype.setRequestHeader = function() {};
   XMLHttpRequest.prototype.send = function() { const request = xhrRequests.get(this) ?? { method: "UNKNOWN", path: "unknown-upload" }; log(request.method, request.path, 0); queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error"))); };
   XMLHttpRequest.prototype.abort = function() { this.dispatchEvent(new ProgressEvent("abort")); };
-  return { requests, restore: () => { messages?.dispose(); window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); window.removeEventListener("enterprise-qa-project-manager", updateProjectManagerState); window.removeEventListener("enterprise-qa-pm-vendor-links", updatePMVendorLinks); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
+  return { requests, restore: () => { messages?.dispose(); window.removeEventListener("enterprise-qa-designer-inbox", updateDesignerInbox); window.removeEventListener("enterprise-qa-designer-accept", acceptDesignerRequest); window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); window.removeEventListener("enterprise-qa-project-manager", updateProjectManagerState); window.removeEventListener("enterprise-qa-pm-vendor-links", updatePMVendorLinks); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
 }

@@ -37,6 +37,7 @@ const actionNames: Record<DesignWorkflowHistoricalActionId, string> = {
   client_kickoff_schedule: "Client meeting time confirmed",
   client_kickoff_complete: "Client Kick off completed",
   client_kickoff_not_required: "Historical Client Kick off exemption",
+  key_collection_schedule: "Key collection time confirmed",
   keys_handed_over: "Keys handed over",
   keys_received: "Keys received",
   measurement_assign: "Measurement taker assigned",

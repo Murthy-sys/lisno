@@ -7,6 +7,7 @@ import type { Role, AuthorizationSnapshot } from "../../api/authorization-contra
 import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
 import { ProjectWorkflowPanel } from "./ProjectWorkflowPanel";
+import { designWorkflowQueryKey } from "./useDesignWorkflowQuery";
 import { projectWorkflowKeys, type DesignWorkflowView } from "./projectWorkflowApi";
 
 vi.mock("./ProjectClientActions", () => ({ ProjectClientActions: () => null }));
@@ -162,7 +163,7 @@ describe("ProjectWorkflowPanel", () => {
     document.body.append(portal);
     try {
       const client = setup(presentation, portal);
-      await waitFor(() => expect(client.getQueryState([...projectWorkflowKeys.designWorkflow("project-ui"), "viewer-one", "client"])?.status).toBe("success"));
+      await waitFor(() => expect(client.getQueryState(designWorkflowQueryKey("project-ui", "viewer-one", "client"))?.status).toBe("success"));
       expect(within(portal).queryByRole("button", { name: "Key Collection — In progress" })).not.toBeInTheDocument();
       approvalStatus = "approved";
       await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });

@@ -1,3 +1,7 @@
+import { readUserLanguages, userKnownLanguagesSchema, userPreferredLanguageSchema } from "../domain/user-languages.js";
+import type { ProjectLanguage } from "../contracts/project-initiation.js";
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
+import { normalizeUserLocation } from "../domain/user-location.js";
 import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { requireValidNewPassword } from "./password-policy.js";
@@ -45,6 +49,9 @@ import { InvitationDeliveryError } from "./smtp-invitation-mailer.js";
 import { requireActor, type Clock } from "./workflow.js";
 
 export interface UserInvitationDto {
+  languagesKnown: ProjectLanguage[];
+  preferredLanguage: ProjectLanguage | null;
+  location: string | null;
   id: string;
   name: string;
   email: string;
@@ -72,6 +79,9 @@ export interface UserInvitationPage {
 }
 
 export interface CreateUserInvitationInput {
+  languagesKnown?: ProjectLanguage[];
+  preferredLanguage?: ProjectLanguage | null;
+  location?: string | null;
   name: string;
   email: string;
   role: InvitableRole;
@@ -139,6 +149,9 @@ export interface CreateUserInvitationServiceInput {
 }
 
 interface NormalizedCreateInput {
+  languagesKnown: ProjectLanguage[];
+  preferredLanguage: ProjectLanguage | null;
+  location: string | null;
   name: string;
   email: string;
   emailNormalized: string;
@@ -219,7 +232,7 @@ export function createUserInvitationService(
           id: `user-invitation-${randomUUID()}`, name: createInput.name, email: createInput.email,
           emailNormalized: createInput.emailNormalized, role: "vendor", vendorId: source.vendorId, mobile: createInput.mobile,
           authority, generationReceipt: command ? { sourceKind: authority.kind, sourceIntentId: authority.sourceIntentId, commandId: command.commandId, tokenGeneration: 1 } : null, tokenHash: hashUserInvitationToken(rawToken), tokenGeneration: 1, issuedAt, expiresAt: expiresAtForInvitation(issuedAt),
-          status: "pending", invitedById: actor.id, tokenIssuedById: actor.id, tokenIssuerVersion: actor.version,
+          status: "pending", invitedById: actor.id, tokenIssuedById: actor.id, tokenIssuerVersion: userAuthorizationVersion(actor),
           acceptedUserId: null, acceptedAt: null, revokedById: null, revokedAt: null, supersededByInvitationId: null, supersededAt: null,
           deliveryStatus: "queued", deliveryAttemptedAt: null, sentAt: null, deliveryFailureCode: null,
           version: 1, createdAt: issuedAt, updatedAt: issuedAt
@@ -310,6 +323,8 @@ export function createUserInvitationService(
             role: createInput.role,
             vendorId: createInput.vendorId,
             mobile: createInput.mobile,
+            location: createInput.location ?? null,
+            ...readUserLanguages(createInput),
             tokenHash,
             tokenGeneration: 1,
             issuedAt,
@@ -317,7 +332,7 @@ export function createUserInvitationService(
             status: "pending",
             invitedById: storedActor.id,
             tokenIssuedById: storedActor.id,
-            tokenIssuerVersion: storedActor.version,
+            tokenIssuerVersion: userAuthorizationVersion(storedActor),
             acceptedUserId: null,
             acceptedAt: null,
             revokedById: null,
@@ -398,7 +413,7 @@ export function createUserInvitationService(
               issuedAt,
               expiresAt,
               tokenIssuedById: current.authority ? current.tokenIssuedById : storedActor.id,
-              tokenIssuerVersion: current.authority ? current.tokenIssuerVersion : storedActor.version,
+              tokenIssuerVersion: current.authority ? current.tokenIssuerVersion : userAuthorizationVersion(storedActor),
               updatedAt: issuedAt
             }
           );
@@ -531,6 +546,8 @@ export function createUserInvitationService(
             name: current!.name,
             email: current!.email,
             mobile: current!.mobile,
+            location: current!.location ?? null,
+            ...readUserLanguages(current!),
             passwordHash,
             role: current!.role,
             ...(current!.role === "vendor" ? { vendorId: current!.vendorId } : {}),
@@ -687,7 +704,7 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
   try {
     const keys = Object.keys(input).sort();
     if (
-      keys.length !== CREATE_KEYS.length + (input.role === "vendor" ? 1 : 0) ||
+      keys.length !== CREATE_KEYS.length + (input.role === "vendor" ? 1 : 0) + ["location", "languagesKnown", "preferredLanguage"].filter(key => keys.includes(key)).length ||
       !CREATE_KEYS.every((key) => keys.includes(key)) ||
       (input.role === "vendor" ? !keys.includes("vendorId") : keys.includes("vendorId"))
     ) {
@@ -695,6 +712,12 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
     }
     if (!isActiveInvitableRole(input.role)) invalidInvitationInput();
     if (input.role === "vendor" && (typeof input.vendorId !== "string" || !VENDOR_ID_PATTERN.test(input.vendorId))) invalidInvitationInput();
+    const languageFields: Record<string, string> = {};
+    const knownResult = userKnownLanguagesSchema.safeParse(input.languagesKnown === undefined ? [] : input.languagesKnown);
+    const preferredResult = userPreferredLanguageSchema.safeParse(input.preferredLanguage === undefined ? null : input.preferredLanguage);
+    if (!knownResult.success) languageFields.languagesKnown = knownResult.error.issues[0]!.message;
+    if (!preferredResult.success) languageFields.preferredLanguage = preferredResult.error.issues[0]!.message;
+    if (Object.keys(languageFields).length) throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", languageFields);
     const name = invitationNameSchema.parse(input.name);
     const email = invitationEmailSchema.parse(input.email);
     return {
@@ -703,7 +726,9 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
       emailNormalized: normalizeInvitationEmail(email),
       role: input.role,
       vendorId: input.role === "vendor" ? input.vendorId! : null,
-      mobile: normalizeInvitationMobile(invitationMobileSchema.parse(input.mobile))
+      mobile: normalizeInvitationMobile(invitationMobileSchema.parse(input.mobile)),
+      location: normalizeUserLocation(input.location),
+      ...readUserLanguages(input)
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -977,6 +1002,8 @@ async function presentRecord(
     role: invitation.role,
     ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId ?? undefined } : {}),
     mobile: invitation.mobile,
+    location: invitation.location ?? null,
+    ...readUserLanguages(invitation),
     status,
     currentLinkAvailable:
       tokenValidity === "current" && !claimed && !reserved && vendorAvailable,
@@ -1006,6 +1033,8 @@ function toDto(invitation: UserInvitationAdminRecord): UserInvitationDto {
     role: invitation.role,
     ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId ?? undefined } : {}),
     mobile: invitation.mobile,
+    location: invitation.location ?? null,
+    ...readUserLanguages(invitation),
     status: invitation.presentationStatus,
     currentLinkAvailable: invitation.currentLinkAvailable,
     availableActions: invitation.availableActions,
@@ -1131,5 +1160,5 @@ export async function invitationAuthorityMatches(repository: AppRepository, invi
     return email.success && normalizeInvitationEmail(email.data) === authority.emailNormalized;
   }
   const issuer = await repository.findUserById(invitation.tokenIssuedById);
-  return !!issuer && issuer.active && issuer.role === "super_admin" && issuer.version === invitation.tokenIssuerVersion && (await repository.countActiveUsersByRole("super_admin")) === 1;
+  return !!issuer && issuer.active && issuer.role === "super_admin" && userAuthorizationVersion(issuer) === invitation.tokenIssuerVersion && (await repository.countActiveUsersByRole("super_admin")) === 1;
 }

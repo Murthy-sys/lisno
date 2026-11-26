@@ -824,3 +824,71 @@ describe("self-service password reset", () => {
     expect(limited.headers["retry-after"]).toBeDefined();
   });
 });
+
+
+describe.each(["location", "languages"] as const)("password reset compatibility with user %s edits", profile => {
+  const profileChange = (index: number) => profile === "location"
+    ? { location: ["Bengaluru", "Chennai", "Pune"][index]! }
+    : { languagesKnown: index === 0 ? ["english" as const] : ["kannada" as const], preferredLanguage: index === 2 ? null : "tamil" as const };
+  it.each(["before", "after"] as const)("keeps a reset issued %s location edits usable with current credential CAS", async timing => {
+    const seed = standardSeed();
+    const userId = seed.users[0]!.id;
+    const owner = { ...seed.users[0]!, id: "location-reset-owner", email: "location-owner@example.test", emailNormalized: "location-owner@example.test", role: "super_admin" as const };
+    seed.users.push(owner);
+    const repository = createMemoryRepository(seed);
+    const mailer = recordingMailer();
+    const audit = createAuditService(repository);
+    const clock = () => new Date("2026-11-25T10:00:00.000Z");
+    const administration = createUserAdministrationService(repository, audit, clock);
+    const jobs: Array<() => Promise<void>> = [];
+    const reset = createPasswordResetService({ repository, audit, mailer, clock, dispatch: job => { jobs.push(job); }, passwordHasher: async () => "location-reset-new-hash" });
+    const editLocations = async () => {
+      await administration.update(owner, userId, { version: 1, ...profileChange(0) });
+      await administration.update(owner, userId, { version: 2, ...profileChange(1) });
+    };
+    if (timing === "after") await editLocations();
+    await reset.request("recovery-user@example.test");
+    await jobs.shift()!();
+    const token = mailer.resetLinks[0]!.rawToken;
+    expect(await repository.findPendingPasswordResetByUserId(userId)).toMatchObject({ userVersion: 1, sessionVersion: 1 });
+    if (timing === "before") await editLocations();
+    else await administration.update(owner, userId, { version: 3, ...profileChange(2) });
+    const before = (await repository.findUserById(userId))!;
+    expect(before).toMatchObject({ version: timing === "before" ? 3 : 4, sessionVersion: 1, profileVersionOffset: timing === "before" ? 2 : 3 });
+    await expect(reset.inspect(token)).resolves.toEqual({ available: true });
+    await expect(reset.complete({ rawToken: token, password: NEW_PASSWORD })).resolves.toEqual({ reset: true });
+    expect(await repository.findUserById(userId)).toMatchObject({
+      version: before.version + 1, sessionVersion: 2, profileVersionOffset: before.profileVersionOffset,
+      ...(profile === "location" ? { location: before.location } : { languagesKnown: before.languagesKnown, preferredLanguage: before.preferredLanguage }), passwordHash: "location-reset-new-hash"
+    });
+    await expect(reset.inspect(token)).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+  });
+
+  it.each(["role", "status", "credentials"] as const)("still invalidates a reset after %s changes following location edits", async change => {
+    const seed = standardSeed();
+    const userId = seed.users[0]!.id;
+    const owner = { ...seed.users[0]!, id: "location-reset-owner", email: "location-owner@example.test", emailNormalized: "location-owner@example.test", role: "super_admin" as const };
+    seed.users.push(owner);
+    const repository = createMemoryRepository(seed);
+    const mailer = recordingMailer();
+    const audit = createAuditService(repository);
+    const clock = () => new Date("2026-11-25T10:00:00.000Z");
+    const administration = createUserAdministrationService(repository, audit, clock);
+    await administration.update(owner, userId, { version: 1, ...profileChange(0) });
+    const jobs: Array<() => Promise<void>> = [];
+    const reset = createPasswordResetService({ repository, audit, mailer, clock, dispatch: job => { jobs.push(job); }, passwordHasher: async () => "must-not-replace-password" });
+    await reset.request("recovery-user@example.test");
+    await jobs.shift()!();
+    const token = mailer.resetLinks[0]!.rawToken;
+    await expect(reset.inspect(token)).resolves.toEqual({ available: true });
+    if (change === "role") await administration.update(owner, userId, { version: 2, role: "procurement" });
+    else if (change === "status") await administration.update(owner, userId, { version: 2, active: false });
+    else await repository.updateUserCredentials(userId, 2, 1, { passwordHash: "independent-credential-change", updatedAt: clock().toISOString() });
+    const changed = await repository.findUserById(userId);
+    expect(changed).toMatchObject({ version: 3, sessionVersion: 2, profileVersionOffset: 1 });
+    await expect(reset.inspect(token)).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    await expect(reset.complete({ rawToken: token, password: NEW_PASSWORD })).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    expect(await repository.findUserById(userId)).toEqual(changed);
+    expect(mailer.changed).toEqual([]);
+  });
+});

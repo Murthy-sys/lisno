@@ -1,3 +1,6 @@
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
+import { readUserLanguages, sameUserLanguages } from "../domain/user-languages.js";
+import { normalizeUserLocation } from "../domain/user-location.js";
 import { memoryUserResponsibilityCounts, memoryUserResponsibilities } from "./user-responsibilities.js";
 import { projectNumbersForProjectIds, readProjectNumber } from "../domain/project-number.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
@@ -122,6 +125,7 @@ function memoryAdminEstimateSummaries(state: SeedData): EstimateSummaryRecord[] 
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
+  "saveWorkflowTimelineConfiguration",
   "saveProjectInitiationDefaults",
   "saveDesignRequirementsState",
   "saveDesignWorkflowState",
@@ -328,7 +332,7 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
       const source = state.procurementVendorInvitationSources?.find(row => row.sourceIntentId === sourceIntentId);
       if (!source || state.vendorInvitationTargets?.find(row => row.id === source.vendorId)?.status !== "active") return null;
       const issuer = state.users.find(row => row.id === source.actorId);
-      if (!issuer?.active || issuer.version !== source.actorVersion || !hasPermission(issuer.role, "procurement.vendor_access.manage") || !hasPermission(issuer.role, "procurement.vendor_directory.read") || (issuer.role === "super_admin" && state.users.filter(row => row.active && row.role === "super_admin").length !== 1)) return null;
+      if (!issuer?.active || userAuthorizationVersion(issuer) !== source.actorVersion || !hasPermission(issuer.role, "procurement.vendor_access.manage") || !hasPermission(issuer.role, "procurement.vendor_directory.read") || (issuer.role === "super_admin" && state.users.filter(row => row.active && row.role === "super_admin").length !== 1)) return null;
       return clone(source);
     },
     async findVendorWorkInvitationSource(sourceIntentId) {
@@ -352,6 +356,12 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
       evidence.estimates = evidence.estimates.map(estimate => ({ ...estimate,
         ...(approvalByEstimate.has(estimate.id) ? { quotationApproval: approvalByEstimate.get(estimate.id) } : {}) }));
       return evidence;
+    },
+    async findDesignerAssignmentEvidence(projectId, lock = false) {
+      const project = state.projects.find(row => row.id === projectId);
+      if (lock && project) project.estimationFenceEpoch = (project.estimationFenceEpoch ?? 0) + 1;
+      const evidence = state.designerAssignmentEvidence?.find(row => row.projectId === projectId);
+      return clone({ pendingRequests: evidence?.pendingRequests ?? [], acceptedRequest: evidence?.acceptedRequest ?? null });
     },
     async findDesignWorkflowSpacePlanningSource(projectId) {
       const context = await implementation.findDesignWorkflowRoomContext(projectId);
@@ -453,6 +463,7 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
         ? new Date(Math.max(Date.parse(quotationApproval.currentQuotationApproval.approvedAt), Date.parse(String(memoryAssignedAt)))).toISOString()
         : null;
       return clone({ estimateId: estimate.id, workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        preApproval: lifecycle.preApproval ?? null,
         quotationApprovedAt: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproval?.approvedAt ?? null : null,
         designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? derivedDesignStartedAt : null,
         quotationLocked: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproved === true : !!lifecycle.editClosedAt,
@@ -569,6 +580,19 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
       if (!project || project.clientId !== null || ![2, 3].includes(project.estimationWorkflowVersion ?? 0) || normalizeEmail(project.clientEmail) !== emailNormalized || !user || !user.active || user.role !== "client" || user.emailNormalized !== emailNormalized) throw new RepositoryConflictError("Project invitation is no longer available.");
       project.clientId = clientId;
       project.updatedAt = updatedAt;
+    },
+    async findWorkflowTimelineConfiguration() {
+      return clone(state.workflowTimelineConfiguration ?? null);
+    },
+    async saveWorkflowTimelineConfiguration(record, expectedVersion) {
+      if (!inTransaction) throw new Error("Workflow timeline writes require a transaction.");
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 ||
+        !Number.isSafeInteger(record.version) || record.version !== expectedVersion + 1 ||
+        (state.workflowTimelineConfiguration?.version ?? 0) !== expectedVersion) {
+        throw new RepositoryConflictError("Workflow timeline configuration changed.");
+      }
+      state.workflowTimelineConfiguration = clone(record);
+      return clone(record);
     },
     async findProjectInitiationDefaults() {
       return clone(state.projectInitiationDefaults ?? null);
@@ -1277,6 +1301,8 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
         emailNormalized,
         mobile: input.mobile ?? null,
         address: input.address ?? null,
+        location: normalizeUserLocation(input.location),
+        ...readUserLanguages(input),
         passwordHash: input.passwordHash,
         role: input.role,
         ...(input.role === "vendor" ? { vendorId: input.vendorId } : {}),
@@ -1284,6 +1310,7 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
         accountKind: input.accountKind ?? "standard",
         version: 1,
         sessionVersion: input.sessionVersion ?? 1,
+        profileVersionOffset: 0,
         managerId: input.managerId ?? null,
         authorizedClientIds: input.authorizedClientIds ?? [],
         ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -1392,10 +1419,19 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
       ) {
         throw new RepositoryConflictError("Only one Super Admin account is allowed.");
       }
+      const location = change.location === undefined ? undefined : normalizeUserLocation(change.location);
+      const languageChange = change.languagesKnown !== undefined || change.preferredLanguage !== undefined
+        ? readUserLanguages({ languagesKnown: change.languagesKnown === undefined ? current.languagesKnown : change.languagesKnown, preferredLanguage: change.preferredLanguage === undefined ? current.preferredLanguage : change.preferredLanguage }) : undefined;
+      const profileChanged = (location !== undefined && location !== (current.location ?? null)) ||
+        (languageChange !== undefined && !sameUserLanguages(readUserLanguages(current), languageChange));
+      const profileOnlyChange = profileChanged && change.role === undefined && change.active === undefined;
       const updated: UserRecord = {
         ...current,
         ...(change.role === undefined ? {} : { role: change.role }),
         ...(change.active === undefined ? {} : { active: change.active }),
+        ...(location === undefined ? {} : { location }),
+        ...(languageChange ?? {}),
+        ...(profileOnlyChange ? { profileVersionOffset: (current.profileVersionOffset ?? 0) + 1 } : {}),
         updatedAt: change.updatedAt,
         version: current.version + 1,
         sessionVersion: (current.sessionVersion ?? 1) + (
@@ -2773,6 +2809,8 @@ function normalizeNewMemoryInvitation(
     role: input.role,
     ...(input.role === "vendor" ? { vendorId: input.vendorId } : {}),
     mobile: normalizeInvitationMobile(input.mobile),
+    location: normalizeUserLocation(input.location),
+    ...readUserLanguages(input),
     tokenHash: input.tokenHash,
     tokenGeneration: input.tokenGeneration,
     issuedAt: input.issuedAt,
@@ -2997,10 +3035,10 @@ function presentMemoryInvitation(
   const automatic = invitation.authority;
   const source = automatic ? (automatic.kind === "procurement_vendor" ? seed.procurementVendorInvitationSources : seed.vendorWorkInvitationSources)?.find(row => row.sourceIntentId === automatic.sourceIntentId) : null;
   const sourceIssuer = source ? seed.users.find(row => row.id === source.actorId) : null;
-  const manualAuthority = automatic?.kind !== "procurement_vendor" || !!(source && "actorVersion" in source && sourceIssuer?.active && sourceIssuer.version === source.actorVersion && hasPermission(sourceIssuer.role, "procurement.vendor_access.manage") && hasPermission(sourceIssuer.role, "procurement.vendor_directory.read") && (sourceIssuer.role !== "super_admin" || seed.users.filter(row => row.active && row.role === "super_admin").length === 1));
+  const manualAuthority = automatic?.kind !== "procurement_vendor" || !!(source && "actorVersion" in source && sourceIssuer?.active && userAuthorizationVersion(sourceIssuer) === source.actorVersion && hasPermission(sourceIssuer.role, "procurement.vendor_access.manage") && hasPermission(sourceIssuer.role, "procurement.vendor_directory.read") && (sourceIssuer.role !== "super_admin" || seed.users.filter(row => row.active && row.role === "super_admin").length === 1));
   const issuerMatches = automatic
     ? manualAuthority && invitation.role === "vendor" && automatic.vendorId === invitation.vendorId && automatic.emailNormalized === invitation.emailNormalized && source?.vendorId === automatic.vendorId && invitationEmailSchema.safeParse(source.email).success && normalizeInvitationEmail(source.email) === automatic.emailNormalized && seed.vendorInvitationTargets?.find(row => row.id === automatic.vendorId)?.status === "active"
-    : issuer?.active === true && issuer.role === "super_admin" && issuer.version === invitation.tokenIssuerVersion;
+    : issuer?.active === true && issuer.role === "super_admin" && userAuthorizationVersion(issuer) === invitation.tokenIssuerVersion;
   const tokenValidity = tokenValidityForInvitation({
     storedStatus: invitation.status,
     expiresAt: invitation.expiresAt,
@@ -3034,6 +3072,8 @@ function presentMemoryInvitation(
     role: invitation.role,
     ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId } : {}),
     mobile: invitation.mobile,
+    location: invitation.location ?? null,
+    ...readUserLanguages(invitation),
     tokenValidity,
     presentationStatus,
     currentLinkAvailable:

@@ -1,3 +1,4 @@
+import { defaultWorkflowTimelines } from "../../../shared/projects/workflowTimelines";
 import {
   fireEvent,
   render,
@@ -142,7 +143,8 @@ const financePaths = [
 const knowledgeConfigurationPaths = [
   "/admin/configuration/estimation",
   "/admin/configuration/estimation/items/:itemId",
-  "/admin/configuration/estimation/reusable-values"
+  "/admin/configuration/estimation/reusable-values",
+  "/admin/configuration/estimation/workflow-timelines"
 ] as const;
 
 const estimateResponsePermissions = [
@@ -299,6 +301,7 @@ function installAuthorizationSession(
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
     }
+    if (path === "/api/v1/admin/workflow-timelines") return Response.json({ data: defaultWorkflowTimelines() });
     if (path.startsWith("/api/v1/project-manager/projects")) return Response.json({data:{items:[],total:0,counts:{active:0,atRisk:0,critical:0,setup:0,onTrack:0,incomplete:0},alerts:[],alertTotal:0,calculatedAt:"2026-10-27T08:00:00Z"}});
     if (path.startsWith("/api/v1/projects/project-one/pm/overview")) return Response.json({data:{project:{id:"project-one",name:"Oak residence",clientName:"Client",location:"City",status:"active",health:"incomplete",plannedEndAt:null,approvedNetPaise:null,issues:[],activeAlerts:0,progress:{basis:"approved_execution_scope_v1",actual:null,planned:null,availability:"no_data",sourceRevision:null,issues:[],requiredLines:0,coveredLines:0,zeroValueLines:0,reportedComplete:0,siteVerified:0,clientAccepted:0}},capabilities:[],calculatedAt:"2026-10-27T08:00:00Z"}});
     if (path.startsWith("/api/v1/projects/project-one/pm/site")) return Response.json({data:{tab:"site",availability:"no_data",calculatedAt:"2026-10-27T08:00:00Z",items:[],total:0,issues:[],sources:[],people:[],actions:[]}});
@@ -616,7 +619,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(50);
+    expect(ROUTE_REGISTRY).toHaveLength(51);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -789,7 +792,7 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 29);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 30);
     expect(additions).toEqual([
       "/execution", "/projects/:projectId/estimations", "/projects/:projectId/execution",
       "/project-messages", "/project-manager/leaderboard", "/project-manager/bonus", "/projects/:projectId/messages",
@@ -913,6 +916,12 @@ describe("registered permission routes", () => {
       {
         path: "/admin/configuration/estimation/reusable-values",
         permission: "ai_estimator_knowledge.configuration.read",
+        presentationRoles: ["super_admin"],
+        navigation: null
+      },
+      {
+        path: "/admin/configuration/estimation/workflow-timelines",
+        permission: "workflow_timelines.read",
         presentationRoles: ["super_admin"],
         navigation: null
       }
@@ -1080,6 +1089,21 @@ describe("registered permission routes", () => {
       expect(router.state.location.pathname).toBe(path);
     }
   );
+
+  it("mounts timeline configuration with its dedicated read permission", async () => {
+    installAuthorizationSession("super_admin", ["identity.self.read", "workflow_timelines.read", "workflow_timelines.update"]);
+    const { router } = renderApp(["/admin/configuration/estimation/workflow-timelines"]);
+    expect(await screen.findByRole("heading", { name: "Design & execution timelines" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Save timelines" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/admin/configuration/estimation/workflow-timelines");
+  });
+
+  it("denies the timeline page to Admin even with a supplied permission", async () => {
+    installAuthorizationSession("admin", ["identity.self.read", "workflow_timelines.read"]);
+    renderApp(["/admin/configuration/estimation/workflow-timelines"]);
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => apiRequestPath(input) === "/api/v1/admin/workflow-timelines")).toBe(false);
+  });
 
   it("denies the knowledge workspace to Admin even when the permission code is supplied", async () => {
     installAuthorizationSession("admin", [

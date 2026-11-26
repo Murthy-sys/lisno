@@ -1,3 +1,5 @@
+import { normalizeUserKnownLanguages, normalizeUserPreferredLanguage, userKnownLanguagesSchema, userPreferredLanguageSchema } from "../domain/user-languages.js";
+import { normalizeUserLocation, userLocationSchema } from "../domain/user-location.js";
 import {
   CONTROL_CHARACTERS,
   INVITABLE_ROLE_CODES,
@@ -50,6 +52,20 @@ const userInvitationSchema = new Schema(
     },
     vendorId: { type: String, ref: "AiEstimatorKnowledgeVendor", default: null, immutable: true, match: VENDOR_ID_PATTERN },
     mobile: { type: String, required: true, maxlength: USER_INVITATION_MOBILE_MAX },
+    languagesKnown: {
+      type: [String], default: [], set: normalizeUserKnownLanguages,
+      validate: { validator: (value: unknown) => userKnownLanguagesSchema.safeParse(value).success, message: "Known languages are invalid." }
+    },
+    preferredLanguage: {
+      type: String, default: null, set: normalizeUserPreferredLanguage,
+      validate: { validator: (value: unknown) => userPreferredLanguageSchema.safeParse(value).success, message: "Preferred language is invalid." }
+    },
+    location: {
+      type: String,
+      default: null,
+      set: normalizeUserLocation,
+      validate: { validator: (value: unknown) => userLocationSchema.safeParse(value).success, message: "Location is invalid." }
+    },
     tokenHash: {
       type: String,
       default: null,

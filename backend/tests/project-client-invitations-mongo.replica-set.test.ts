@@ -209,3 +209,31 @@ describe("initiation intake Mongo persistence", () => {
     expect(await f.repository.findLeadById(leadId)).toMatchObject({ nativePlace: null, tentativeBudget: null, closureTentativeDate: null, category: null, languagesKnown: [], preferredLanguage: null });
   });
 });
+
+
+describe("Sales Manager invitation location-only Mongo edits", () => {
+  it("preserves pending and newly issued client links through profile saves without weakening account fences", async () => {
+    const f = await setup();
+    const at = "2026-10-13T10:00:00.000Z";
+    const manager = await f.repository.createUser({ name: "Location Sales Manager", email: "location.manager@example.test", passwordHash: "unused", role: "admin" });
+    const actor = toPublicUser(manager);
+    const project = await f.projects.initiate(f.actor, input);
+    await f.repository.createProjectAccessGrant({ projectId: project.id, userId: manager.id, module: "projects", source: "admin_initiator", accessRequestId: null, grantedById: f.actor.id, grantedAt: at, createdAt: at, updatedAt: at });
+    f.advance();
+    const current = await f.invitations.get(actor, project.id);
+    const oldLink = await f.invitations.resend(actor, project.id, current.expectedVersion);
+    const firstToken = f.deliveries.at(-1)!;
+    await f.repository.runInTransaction(tx => tx.updateUser(manager.id, 1, { location: "Bengaluru", updatedAt: at }));
+    await f.repository.runInTransaction(tx => tx.updateUser(manager.id, 2, { location: "Chennai", updatedAt: at }));
+    expect(await f.repository.findUserById(manager.id)).toMatchObject({ version: 3, profileVersionOffset: 2, sessionVersion: 1 });
+    await expect(f.invitations.inspect(firstToken)).resolves.toMatchObject({ requiresSignIn: false });
+    f.advance();
+    await f.invitations.resend(actor, project.id, oldLink.expectedVersion);
+    expect((await f.repository.findProjectClientInvitation(project.id))?.tokenIssuerVersion).toBe(1);
+    const newToken = f.deliveries.at(-1)!;
+    await expect(f.invitations.inspect(newToken)).resolves.toMatchObject({ requiresSignIn: false });
+    await f.repository.runInTransaction(tx => tx.updateUser(manager.id, 3, { active: false, updatedAt: at }));
+    await f.repository.runInTransaction(tx => tx.updateUser(manager.id, 4, { active: true, updatedAt: at }));
+    await expect(f.invitations.inspect(newToken)).rejects.toMatchObject({ code: "PROJECT_INVITATION_UNAVAILABLE" });
+  });
+});

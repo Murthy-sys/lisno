@@ -26,6 +26,38 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents strict versioned timeline configuration without writable derived values", () => {
+    const schemas = componentSchemas();
+    expect(schemas.UpdateWorkflowTimelines).toMatchObject({ additionalProperties: false,
+      required: ["expectedVersion", "bases"], properties: {
+        expectedVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 1 },
+        bases: { minItems: 4, maxItems: 4 }
+      } });
+    expect(schemas.WorkflowTimelineBase).toMatchObject({ additionalProperties: false,
+      required: ["bandId", "designWorkdays", "executionWorkdays"], properties: {
+        bandId: { enum: ["below_10_lakh", "10_to_15_lakh", "15_to_20_lakh", "20_to_25_lakh"] },
+        designWorkdays: { type: "integer", minimum: 1, maximum: 3650 },
+        executionWorkdays: { type: "integer", minimum: 1, maximum: 3650 }
+      } });
+    expect(schemas.WorkflowTimelineConfiguration).toHaveProperty("properties.matrices");
+    const paths = openApiDocument.paths as Record<string, OpenApiObject>;
+    expect(paths["/admin/workflow-timelines"]).toHaveProperty("get");
+    expect(paths["/admin/workflow-timelines"]).toHaveProperty("put");
+  });
+
+  it("documents personal key collection reminders and authoritative colour boundaries", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KeyCollectionTiming).toMatchObject({ additionalProperties: false,
+      properties: { zone: { enum: ["green", "orange", "red"] }, orangeAt: { format: "date-time" },
+        redAt: { format: "date-time" }, orangeWarningAt: { format: "date-time" }, redWarningAt: { format: "date-time" } } });
+    expect(schemas.DesignerKeyCollectionReminderPage).toMatchObject({
+      required: expect.arrayContaining(["serverNow", "urgentCount", "nextRedAt", "items", "pagination"])
+    });
+    expect(openApiDocument.paths["/designer/key-collection-reminders"]?.get).toMatchObject({
+      "x-lisno-permission": "design.key_collection_reminders.read",
+      parameters: expect.arrayContaining([expect.objectContaining({ name: "status", schema: { type: "string", enum: ["urgent", "pending"], default: "urgent" } })])
+    });
+  });
   it("documents specification item Brand prefill as bounded optional lookup metadata", () => {
     const schemas = componentSchemas();
     expect(schemas.KnowledgeSpecificationItemName).toMatchObject({
@@ -1440,7 +1472,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 534 routes without versioning paths twice", () => {
+  it("contains all 542 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1449,7 +1481,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(534);
+    expect(operationCount).toBe(544);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

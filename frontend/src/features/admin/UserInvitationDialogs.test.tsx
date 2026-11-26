@@ -78,6 +78,72 @@ async function fillInviteForm(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("invitation dialogs", () => {
+  it("sends catalog-ordered known languages and an independent preferred language", async () => {
+    let body: unknown;
+    server.use(http.post("/api/v1/admin/user-invitations", async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ data: invitation }, { status: 201 });
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<InviteHarness />);
+    await user.click(screen.getByRole("button", { name: "Open invite" }));
+    const dialog = await fillInviteForm(user);
+    const known = within(dialog).getByRole("button", { name: "Known languages" });
+    await user.click(known);
+    const options = within(dialog).getByRole("listbox", { name: "Languages Known" });
+    await user.click(within(options).getByRole("option", { name: "Kannada" }));
+    await user.click(within(options).getByRole("option", { name: "English" }));
+    await user.keyboard("{Escape}");
+    expect(known).toHaveFocus();
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Preferred language" }), "tamil");
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+    await waitFor(() => expect(body).toEqual({ name: "Asha Rao", email: "asha@example.com", role: "designer", mobile: "+91 98765 43210", languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite user" })).not.toBeInTheDocument());
+  });
+
+  it.each(["languagesKnown", "preferredLanguage"])("retains language entries and focuses the server-rejected %s field", async (field) => {
+    server.use(http.post("/api/v1/admin/user-invitations", () => HttpResponse.json({ error: {
+      code: "VALIDATION_ERROR", message: "Review languages", fields: { [field]: "Review this language selection." }
+    } }, { status: 400 })));
+    const user = userEvent.setup();
+    renderWithQuery(<InviteHarness />);
+    await user.click(screen.getByRole("button", { name: "Open invite" }));
+    const dialog = await fillInviteForm(user);
+    const known = within(dialog).getByRole("button", { name: "Known languages" });
+    const preferred = within(dialog).getByRole("combobox", { name: "Preferred language" });
+    await user.click(known);
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "English" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await user.selectOptions(preferred, "kannada");
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+    const control = field === "languagesKnown" ? known : preferred;
+    await waitFor(() => expect(control).toHaveAccessibleDescription(/Review this language selection/));
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(known).toHaveTextContent("English");
+    expect(preferred).toHaveValue("kannada");
+  });
+
+  it("protects a language-only draft and clears languages without changing the preference", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<InviteHarness />);
+    await user.click(screen.getByRole("button", { name: "Open invite" }));
+    const known = screen.getByRole("button", { name: "Known languages" });
+    const preferred = screen.getByRole("combobox", { name: "Preferred language" });
+    await user.selectOptions(preferred, "tamil");
+    await user.click(known);
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "English" }));
+    await user.click(screen.getByRole("button", { name: "Clear languages" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(known).toHaveAccessibleDescription("0 languages selected");
+    expect(preferred).toHaveValue("tamil");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    await user.selectOptions(preferred, "");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite user" })).not.toBeInTheDocument());
+  });
+
   it("does not offer the retired role from an older server option list", () => {
     renderWithQuery(<InviteUserDialog roles={["program_manager", "site_manager", "designer"]} onClose={() => undefined} />);
     const roles = screen.getByRole("combobox", { name: "Role" });
@@ -85,7 +151,7 @@ describe("invitation dialogs", () => {
     expect(within(roles).getByRole("option", { name: "Project Manager" })).toHaveValue("site_manager");
     expect(roles).toHaveValue("site_manager");
   });
-  it("shows exactly four required server-ordered controls and associates mobile errors", async () => {
+  it("shows four required controls and optional profile fields, and associates mobile errors", async () => {
     let requestCount = 0;
     server.use(
       http.post("/api/v1/admin/user-invitations", () => {
@@ -98,12 +164,16 @@ describe("invitation dialogs", () => {
     const trigger = screen.getByRole("button", { name: "Open invite" });
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Invite user" });
-    expect(within(dialog).getAllByRole("textbox")).toHaveLength(3);
-    expect(within(dialog).getAllByRole("combobox")).toHaveLength(1);
+    expect(within(dialog).getAllByRole("textbox")).toHaveLength(4);
+    expect(within(dialog).getAllByRole("combobox")).toHaveLength(2);
     expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeRequired();
     expect(within(dialog).getByRole("textbox", { name: "Email" })).toBeRequired();
     expect(within(dialog).getByRole("combobox", { name: "Role" })).toBeRequired();
     expect(within(dialog).getByRole("textbox", { name: "Mobile" })).toBeRequired();
+    expect(within(dialog).getByRole("textbox", { name: "Location" })).not.toBeRequired();
+    expect(within(dialog).getByRole("textbox", { name: "Location" })).toHaveAccessibleDescription("City or area");
+    expect(within(dialog).getByRole("button", { name: "Known languages" })).toHaveAccessibleDescription("0 languages selected");
+    expect(within(dialog).getByRole("combobox", { name: "Preferred language" })).not.toBeRequired();
     expect(
       within(within(dialog).getByRole("combobox", { name: "Role" }))
         .getAllByRole("option")
@@ -146,6 +216,7 @@ describe("invitation dialogs", () => {
     const trigger = screen.getByRole("button", { name: "Open invite" });
     await user.click(trigger);
     const dialog = await fillInviteForm(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Location" }), "  Whitefield, Bengaluru  ");
     await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
 
     await waitFor(() => expect(requestCount).toBe(1));
@@ -153,7 +224,8 @@ describe("invitation dialogs", () => {
       name: "Asha Rao",
       email: "asha@example.com",
       role: "designer",
-      mobile: "+91 98765 43210"
+      mobile: "+91 98765 43210",
+      location: "Whitefield, Bengaluru"
     });
     expect(queryClient.getQueryData(userInvitationKeys.page(filters, pagination))).toBe(cachedPage);
     expect(queryClient.getMutationCache().getAll().at(-1)?.options.retry).toBe(false);
@@ -185,6 +257,7 @@ describe("invitation dialogs", () => {
     renderWithQuery(<InviteHarness />);
     await user.click(screen.getByRole("button", { name: "Open invite" }));
     const dialog = await fillInviteForm(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Location" }), "ಬೆಂಗಳೂರು");
     await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -194,9 +267,49 @@ describe("invitation dialogs", () => {
     expect(within(dialog).getByRole("textbox", { name: "Email" })).toHaveValue("asha@example.com");
     expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveValue("designer");
     expect(within(dialog).getByRole("textbox", { name: "Mobile" })).toHaveValue("  +91   98765  43210  ");
+    expect(within(dialog).getByRole("textbox", { name: "Location" })).toHaveValue("ಬೆಂಗಳೂರು");
     expect(dialog).not.toHaveTextContent(/token|https?:\/\//i);
     await new Promise((resolve) => window.setTimeout(resolve, 30));
     expect(requestCount).toBe(1);
+  });
+
+  it("validates location locally and retains it when the server rejects the field", async () => {
+    let requestCount = 0;
+    server.use(http.post("/api/v1/admin/user-invitations", () => {
+      requestCount += 1;
+      return HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Invalid location", fields: { location: "Review this location." } } }, { status: 400 });
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<InviteHarness />);
+    await user.click(screen.getByRole("button", { name: "Open invite" }));
+    const dialog = await fillInviteForm(user);
+    const location = within(dialog).getByRole("textbox", { name: "Location" });
+    fireEvent.change(location, { target: { value: "x".repeat(121) } });
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+    expect(location).toHaveAccessibleDescription(/120 characters or fewer/);
+    expect(location).toHaveFocus();
+    expect(requestCount).toBe(0);
+    fireEvent.change(location, { target: { value: "City\u0000area" } });
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+    expect(location).toHaveAccessibleDescription(/control characters/);
+    expect(requestCount).toBe(0);
+    fireEvent.change(location, { target: { value: "Bengaluru" } });
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
+    await waitFor(() => expect(location).toHaveAccessibleDescription(/Review this location/));
+    expect(location).toHaveValue("Bengaluru");
+    expect(location).toHaveFocus();
+    expect(requestCount).toBe(1);
+  });
+
+  it("protects a location-only invitation draft from accidental closing", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<InviteHarness />);
+    await user.click(screen.getByRole("button", { name: "Open invite" }));
+    await user.type(screen.getByRole("textbox", { name: "Location" }), "Mysuru");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("textbox", { name: "Location" })).toHaveValue("Mysuru");
   });
 
   it("latches VERSION_CONFLICT for the dialog lifetime even when refetch returns the same version", async () => {

@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
@@ -116,7 +117,7 @@ export function ProjectWorkspace() {
         eyebrow="Project workspace"
         breadcrumb={<Link to="/designer" className="back-link"><ArrowLeft aria-hidden="true" /> Back to dashboard</Link>}
         metadata={<div className="project-hero__meta"><ProjectId projectNumber={project.projectNumber} /><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
-        actions={<div className="project-status-header-actions"><StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} /><ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" /></div>}
+        actions={<div className="project-status-header-actions"><StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} /><KeyCollectionHeader projectId={project.id} projectName={project.name} /><ProjectStatusButton projectId={project.id} projectName={project.name} presentation="chip" /></div>}
       />
 
       <ProjectChatNavigation projectId={projectId} overviewTo={`/designer/projects/${projectId}`} showStatus={false} />
@@ -147,6 +148,7 @@ export function ProjectWorkspace() {
       </div>
 
       <ProjectWorkflowPanel
+        showAppointmentTimer={false}
         projectId={project.id}
         presentation="designer"
         onOpenTask={(taskId) => {

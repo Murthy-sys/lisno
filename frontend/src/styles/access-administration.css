@@ -150,6 +150,12 @@
   white-space: nowrap;
 }
 
+.access-administration__table td.access-administration__location {
+  min-inline-size: 8rem;
+  max-inline-size: 16rem;
+  overflow-wrap: anywhere;
+}
+
 .access-administration__table tbody tr:last-child td {
   border-block-end: 0;
 }
@@ -551,6 +557,12 @@ fieldset.admin-project-form__estimator {
   display: grid;
   gap: var(--space-5);
   padding: 0 var(--space-5) var(--space-5);
+}
+
+.admin-user-dialog__language-form {
+  display: grid;
+  gap: var(--space-5);
+  min-inline-size: 0;
 }
 
 .admin-user-dialog__error,

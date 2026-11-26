@@ -14,6 +14,12 @@ import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import { requireActor, type Clock } from "./workflow.js";
 import { isSecondaryMeasurementDesigner, type SecondaryMeasurementDesigner } from "../domain/measurement-ownership.js";
+import { projectDesignerHandoff, readDesignerHandoffSource, type DesignerHandoffSource } from "./designer-handoff.service.js";
+
+const keyCollectionScheduleSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("within_48_hours"), expectedAssignmentRevision: z.string().min(1).max(200) }).strict(),
+  z.object({ mode: z.literal("chosen_datetime"), scheduledAt: z.string().datetime({ offset: true }), expectedAssignmentRevision: z.string().min(1).max(200) }).strict()
+]);
 
 export const workflowActionSchema = z.object({
   expectedVersion: z.coerce.number().int().nonnegative(),
@@ -25,7 +31,11 @@ export const workflowActionSchema = z.object({
     if (typeof value !== "string") return value;
     try { return JSON.parse(value); } catch { return value; }
   }, z.record(z.unknown()).default({}))
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.action !== "key_collection_schedule") return;
+  const parsed = keyCollectionScheduleSchema.safeParse(value.data);
+  if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: ["data", ...issue.path] });
+});
 export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
 export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; secondaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
 export interface WorkflowAvailableAction { id: DesignWorkflowAction; label: string; actor: "designer" | "client" | "sales" | "finance"; requiresProof: boolean; disabledReason?: string }
@@ -35,6 +45,7 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
   client_kickoff_request: { type: "client_kickoff", label: "Request Client kickoff", actor: "designer" },
   client_kickoff_schedule: { type: "client_kickoff", label: "Choose meeting date", actor: "client" },
   client_kickoff_complete: { type: "client_kickoff", label: "Complete Client Kick off", actor: "client" },
+  key_collection_schedule: { type: "key_collection", label: "Confirm key collection appointment", actor: "client" },
   keys_handed_over: { type: "key_collection", label: "Confirm keys handed over", actor: "client" },
   keys_received: { type: "key_collection", label: "Confirm keys received", actor: "designer" },
   measurement_assign: { type: "site_measurement", label: "Assign measurement team member", actor: "designer" },
@@ -55,7 +66,7 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
 function missing(): never { throw new ApiError(404, "NOT_FOUND", "The requested resource was not found."); }
 function blocked(reasons: string[]): never { throw new ApiError(409, "DESIGN_WORKFLOW_BLOCKED", reasons.join(" ")); }
 export type WorkflowPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
-type WorkflowStageContext = { spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string; measurementOwners?: readonly SecondaryMeasurementDesigner[]; measurementAssignmentReason?: string };
+type WorkflowStageContext = { designerHandoffSource?: DesignerHandoffSource; spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string; measurementOwners?: readonly SecondaryMeasurementDesigner[]; measurementAssignmentReason?: string };
 const PAYMENT_APPROVAL_REQUIRED = "The project needs a confirmed approved estimate before Initial payment received can be recorded.";
 const PAYMENT_SOURCE_ISSUE = "Reconcile the project's approved estimate source before confirming Initial payment received.";
 const KICKOFF_DOCUMENT_UNAVAILABLE = "The submitted Internal Kick off document is unavailable. Contact your Designer to resolve the missing document.";
@@ -181,6 +192,8 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
   return designRequirementsReadiness;
 }
 function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowAction, "confirm_initial_payment">, at: number, actorId?: string): boolean {
+  // Scheduling has its own initial-approval/assignment gate and dedicated Client UI.
+  if (action === "key_collection_schedule") return false;
   if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) return false;
   if (!workflowDesignStartAt(state)) return false;
   if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
@@ -229,6 +242,7 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
 }
 
 function workflowActionActor(state: DesignWorkflowState, action: keyof typeof ACTIONS, capabilities: WorkflowCapabilities): WorkflowAvailableAction["actor"] | null {
+  if (action === "key_collection_schedule") return capabilities.client && !capabilities.representative ? "client" : null;
   if (state.estimationWorkflowVersion === 3) {
     if (action === "measurement_assign") return null;
     if (action === "measurement_complete") return capabilities.secondaryDesigner ? "designer" : null;
@@ -252,6 +266,11 @@ export function workflowAvailableActions(state: DesignWorkflowState, type: Desig
   return Object.entries(ACTIONS).flatMap(([id, definition]) => {
     const actionActor = workflowActionActor(state, id as keyof typeof ACTIONS, capabilities);
     if (definition.type !== type || !actionActor || !capabilities[actionActor]) return [];
+    if ((id === "keys_handed_over" || id === "keys_received") && context?.designerHandoffSource?.evidence.acceptedRequest) {
+      const keys = state.stages.key_collection;
+      if (context.designerHandoffSource.issue || !keys?.appointment && !keys?.handedOverAt && !keys?.receivedAt) return [];
+      if (id === "keys_received" && actorId !== context.designerHandoffSource.designer?.id) return [];
+    }
     if (state.estimationWorkflowVersion === 3 && id === "furniture_dimensions_return" && actionActor === "designer" &&
       !state.stages.existing_furniture_dimensions?.rooms?.some(room => room.dimensions?.provenance === "client_self" && room.dimensions.status === "approved")) return [];
     if (state.estimationWorkflowVersion === 3 && id === "furniture_dimensions_return" && actionActor === "client" &&
@@ -519,13 +538,16 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           const { project, capabilities } = await requireDesignWorkflowScope(tx, actor, projectId, true);
           if ((input.action as string) === "client_kickoff_not_required") throw new ApiError(400, "WORKFLOW_ACTION_RETIRED", "Client Kick off is mandatory. Complete it after reviewing the Internal Kick off document.");
           if (!project.designWorkflowStages?.length) blocked(["This project does not have the configured design workflow."]);
-          const state = await hydrateDesignWorkflowState(tx, projectId, await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
+          let state = await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
+          if (input.action !== "key_collection_schedule") state = await hydrateDesignWorkflowState(tx, projectId, state, true);
+          if (input.action === "key_collection_schedule" && (actor.role !== "client" || actor.id !== project.clientId || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can confirm the key collection appointment.");
           if (input.action === "space_planning_complete" && (actor.role !== "client" || project.clientId !== actor.id || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can complete this stage.");
           const repeated = state.history.find((event) => event.idempotencyKey === input.idempotencyKey);
           if (repeated) {
             if (repeated.actorId !== actor.id || repeated.requestHash !== hash) throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "This action key was already used for a different request.");
             return { version: state.version, replayed: true };
           }
+          if (input.action === "key_collection_schedule") state = await hydrateDesignWorkflowState(tx, projectId, state, true);
           if (mediaFiles.length && input.action !== "measurement_complete") throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Photos and videos are supported only for measurement completion.");
           if (state.version !== input.expectedVersion) throw new ApiError(409, "WORKFLOW_VERSION_CONFLICT", "The workflow changed. Refresh and try again.");
           if (state.estimationWorkflowVersion === 3 && state.designApprovalLocked && input.action.startsWith("furniture_")) {
@@ -536,7 +558,26 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           let recordedData = structuredClone(input.data);
           let auditDetails: Record<string, unknown> = {};
           const eventId = `workflow-event-${randomUUID()}`;
-          if (input.action === "confirm_initial_payment") {
+          if (input.action === "key_collection_schedule") {
+            if (!project.designWorkflowStages.some(stage => stage.type === "key_collection" && stage.id === input.stageId)) missing();
+            if (proof || mediaFiles.length) throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Key collection scheduling does not accept evidence uploads.");
+            const parsed = keyCollectionScheduleSchema.safeParse(input.data);
+            if (!parsed.success) throw new ApiError(400, "INVALID_WORKFLOW_ACTION", "Choose a valid key collection appointment option.");
+            const source = await readDesignerHandoffSource(tx, project, true);
+            if (source.assignmentRevision !== parsed.data.expectedAssignmentRevision) throw new ApiError(409, "ASSIGNMENT_VERSION_CONFLICT", "The Designer assignment changed. Refresh and confirm the appointment again.");
+            const current = state.stages.key_collection ??= {};
+            if (current.appointment) throw new ApiError(409, "KEY_COLLECTION_ALREADY_SCHEDULED", "The key collection appointment is already confirmed.");
+            if (!projectDesignerHandoff(source, project, state, actor, at).canSchedule || !source.approval || !source.designer || !source.assignmentRevision) blocked(["An approved initial estimate and an accepted Designer assignment are required to schedule key collection."]);
+            const deadline = parsed.data.mode === "within_48_hours" ? at.getTime() + 2 * DAY : Date.parse(parsed.data.scheduledAt);
+            if (!Number.isFinite(deadline) || deadline <= at.getTime()) throw new ApiError(400, "INVALID_WORKFLOW_DATE", "Choose a future date and time for key collection.");
+            const deadlineAt = new Date(deadline).toISOString();
+            current.appointment = { mode: parsed.data.mode, confirmedById: actor.id, confirmedAt: timestamp,
+              originalDeadlineAt: deadlineAt, deadlineAt, assignmentRevision: source.assignmentRevision,
+              designerId: source.designer.id, assignmentRequestId: source.evidence.acceptedRequest?.id ?? null,
+              estimateId: source.approval.estimateId, estimateVersion: source.approval.estimateVersion, approvalReviewRoundId: source.approval.reviewRoundId };
+            recordedData = { ...current.appointment };
+            auditDetails = recordedData;
+          } else if (input.action === "confirm_initial_payment") {
             checkData(input.data, []);
             const collaborative = project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3;
             if (!capabilities.finance || collaborative && actor.role !== "super_admin" || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
@@ -572,6 +613,14 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
             if (!stage) missing();
             const actionActor = workflowActionActor(state, input.action, capabilities);
             if (!actionActor || !capabilities[actionActor]) throw new ApiError(403, "FORBIDDEN", "You cannot perform this stage action.");
+            if (input.action === "keys_handed_over" || input.action === "keys_received") {
+              const source = await readDesignerHandoffSource(tx, project, true);
+              if (source.evidence.acceptedRequest) {
+                const keys = state.stages.key_collection;
+                if (projectDesignerHandoff(source, project, state, actor, at).state === "source_issue" || !keys?.appointment && !keys?.handedOverAt && !keys?.receivedAt) blocked(["The Client must confirm a key collection appointment before collecting keys."]);
+                if (input.action === "keys_received" && source.designer?.id !== actor.id) throw new ApiError(403, "FORBIDDEN", "Only the current primary Designer can confirm key receipt.");
+              }
+            }
             if (!allowed(state, input.action, at.getTime(), actor.id)) blocked(["This action is not available until its stage prerequisites are met."]);
             onBehalfOfClient = actionActor === "client" && capabilities.representative;
             const resolvingReturnedZeroValueRooms = input.action === "furniture_upload" && Object.hasOwn(input.data, "resolveReturnedZeroValueRoomIds");

@@ -2542,14 +2542,18 @@ describe("user invitation Mongo replica-set races", () => {
         "id",
         "invitedBy",
         "issuedAt",
+        "languagesKnown",
+        "location",
         "mobile",
         "name",
+        "preferredLanguage",
         "role",
         "sentAt",
         "status",
         "updatedAt",
         "version"
       ]);
+      expect(filtered.items[0]!.location).toBeNull();
       expect(JSON.stringify(filtered)).not.toMatch(
         /tokenHash|rawToken|passwordHash|acceptedUserId|deliveryFailureCode|tokenIssuer/i
       );
@@ -2566,14 +2570,18 @@ describe("user invitation Mongo replica-set races", () => {
         "id",
         "invitedBy",
         "issuedAt",
+        "languagesKnown",
+        "location",
         "mobile",
         "name",
+        "preferredLanguage",
         "role",
         "sentAt",
         "status",
         "updatedAt",
         "version"
       ]);
+      expect(item.location).toBeNull();
     }
     expect(JSON.stringify({ pendingFirstRead, pendingSecondRead, pendingPages })).not.toMatch(
       /tokenHash|rawToken|passwordHash|acceptedUserId|deliveryFailureCode|tokenIssuer/i
@@ -2672,5 +2680,63 @@ describe("user invitation Mongo replica-set races", () => {
     expect(capturedOutput).not.toMatch(
       /token|password|secret|E11000|duplicate key|write conflict|transaction aborted/i
     );
+  });
+});
+
+
+describe("invitation location Mongo persistence", () => {
+  it("carries location through create, directory projection, resend and accepted user persistence", async () => {
+    await insertUser("location-issuer", "super_admin");
+    const repository = createMongoRepository();
+    let now = Date.parse(NOW);
+    let tokenByte = 60;
+    const service = createUserInvitationService({
+      repository, audit: createAuditService(repository), mailer: immediateMailer(),
+      clock: () => new Date(now), randomBytes: size => Buffer.alloc(size, tokenByte++),
+      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+    });
+    const actor = publicUser("location-issuer");
+    const created = await service.create(actor, { name: "Location Alpha", email: "location.alpha@example.test", mobile: "+91 90000 00001", role: "designer", location: "  Mysuru  " });
+    expect(created.location).toBe("Mysuru");
+    expect((await repository.findUserInvitationById(created.id))?.location).toBe("Mysuru");
+    expect((await service.list(actor, {}, { limit: 20, offset: 0 })).items[0]?.location).toBe("Mysuru");
+    now += 61_000;
+    const resent = await service.resend(actor, created.id, { version: created.version });
+    expect(resent.location).toBe("Mysuru");
+    await service.accept({ rawToken: Buffer.alloc(32, 61).toString("base64url"), password: ACCEPTED_PASSWORD });
+    const beta = await service.create(actor, { name: "Location Beta", email: "location.beta@example.test", mobile: "+91 90000 00002", role: "procurement", location: "Chennai" });
+    await service.accept({ rawToken: Buffer.alloc(32, 62).toString("base64url"), password: ACCEPTED_PASSWORD });
+    expect((await repository.findUserByEmail("location.alpha@example.test"))?.location).toBe("Mysuru");
+    expect((await repository.findUserByEmail("location.beta@example.test"))?.location).toBe("Chennai");
+    const accepted = await service.list(actor, { status: "accepted" }, { limit: 20, offset: 0 });
+    expect(accepted.items.find(item => item.id === beta.id)?.location).toBe("Chennai");
+  });
+});
+
+describe("invitation language Mongo persistence", () => {
+  it("retains independent language pairs through list, resend and accepted-user persistence", async () => {
+    await insertUser("language-issuer", "super_admin");
+    const repository = createMongoRepository();
+    let now = Date.parse(NOW);
+    let tokenByte = 70;
+    const service = createUserInvitationService({
+      repository, audit: createAuditService(repository), mailer: immediateMailer(),
+      clock: () => new Date(now), randomBytes: size => Buffer.alloc(size, tokenByte++),
+      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+    });
+    const actor = publicUser("language-issuer");
+    const expected = { languagesKnown: ["english", "kannada"], preferredLanguage: "tamil" };
+    const created = await service.create(actor, { name: "Language Alpha", email: "language.alpha@example.test", mobile: "+91 90000 00001", role: "designer", languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    expect(created).toMatchObject(expected);
+    expect(await repository.findUserInvitationById(created.id)).toMatchObject(expected);
+    expect((await service.list(actor, {}, { limit: 20, offset: 0 })).items[0]).toMatchObject(expected);
+    now += 61_000;
+    expect(await service.resend(actor, created.id, { version: created.version })).toMatchObject(expected);
+    await service.accept({ rawToken: Buffer.alloc(32, 71).toString("base64url"), password: ACCEPTED_PASSWORD });
+    const beta = await service.create(actor, { name: "Language Beta", email: "language.beta@example.test", mobile: "+91 90000 00002", role: "procurement" });
+    await service.accept({ rawToken: Buffer.alloc(32, 72).toString("base64url"), password: ACCEPTED_PASSWORD });
+    expect(await repository.findUserByEmail("language.alpha@example.test")).toMatchObject(expected);
+    expect(await repository.findUserByEmail("language.beta@example.test")).toMatchObject({ languagesKnown: [], preferredLanguage: null });
+    expect((await service.list(actor, { status: "accepted" }, { limit: 20, offset: 0 })).items.find(item => item.id === beta.id)).toMatchObject({ languagesKnown: [], preferredLanguage: null });
   });
 });

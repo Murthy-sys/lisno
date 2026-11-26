@@ -321,3 +321,27 @@ describe("initiation intake retry compatibility", () => {
     expect(await f.repository.listAuditEvents({})).toEqual(auditsBefore);
   });
 });
+
+
+describe("Sales Manager invitation location-only edits", () => {
+  it("retains existing and new client invitations across location edits while preserving authorization revocation", async () => {
+    const f = setup({ existing: true });
+    const at = "2026-10-13T10:00:00.000Z";
+    const manager = await f.repository.createUser({ name: "Location Sales Manager", email: "location.manager@example.test", passwordHash: "unused", role: "admin" });
+    const actor = toPublicUser(manager);
+    for (const projectId of ["invited-project-1", "invited-project-2"]) await f.repository.createProjectAccessGrant({ projectId, userId: manager.id, module: "projects", source: "admin_initiator", accessRequestId: null, grantedById: f.actor.id, grantedAt: at, createdAt: at, updatedAt: at });
+    await f.service.send(actor, "invited-project-1");
+    await f.repository.updateUser(manager.id, 1, { location: "Bengaluru", updatedAt: at });
+    await f.repository.updateUser(manager.id, 2, { location: "Chennai", updatedAt: at });
+    await expect(f.service.inspect(f.deliveries[0]!.rawToken)).resolves.toMatchObject({ requiresSignIn: true });
+    f.advance();
+    await f.service.send(actor, "invited-project-2");
+    expect((await f.repository.findProjectClientInvitation("invited-project-2"))?.tokenIssuerVersion).toBe(1);
+    await expect(f.service.inspect(f.deliveries[1]!.rawToken)).resolves.toMatchObject({ requiresSignIn: true });
+    const client = (await f.repository.findUserByEmail("existing@project.test"))!;
+    await f.service.acceptExisting(toPublicUser(client), f.deliveries[0]!.rawToken);
+    await f.repository.updateUser(manager.id, 3, { active: false, updatedAt: at });
+    await f.repository.updateUser(manager.id, 4, { active: true, updatedAt: at });
+    await expect(f.service.inspect(f.deliveries[1]!.rawToken)).rejects.toMatchObject({ code: "PROJECT_INVITATION_UNAVAILABLE" });
+  });
+});

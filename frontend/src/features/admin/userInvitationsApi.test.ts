@@ -54,6 +54,26 @@ function jsonResponse<T>(data: T, status = 200): Response {
 }
 
 describe("user invitation API contracts", () => {
+  it.each([
+    { languagesKnown: undefined, preferredLanguage: undefined },
+    { languagesKnown: [] as const, preferredLanguage: null },
+    { languagesKnown: ["english", "kannada"] as const, preferredLanguage: "tamil" as const }
+  ])("serializes optional language metadata without dropping explicit empty values: %j", async (languages) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(invitation));
+    await createUserInvitation({ name: "Asha Rao", email: "asha@example.com", role: "designer", mobile: "+91 98765 43210", languagesKnown: languages.languagesKnown && [...languages.languagesKnown], preferredLanguage: languages.preferredLanguage });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    if (languages.languagesKnown === undefined) expect(body).not.toHaveProperty("languagesKnown");
+    else expect(body.languagesKnown).toEqual(languages.languagesKnown);
+    if (languages.preferredLanguage === undefined) expect(body).not.toHaveProperty("preferredLanguage");
+    else expect(body.preferredLanguage).toEqual(languages.preferredLanguage);
+  });
+  it.each([undefined, null])("preserves the optional location contract for %s", async (location) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(invitation));
+    await createUserInvitation({ name: "Asha Rao", email: "asha@example.com", role: "designer", mobile: "+91 98765 43210", location });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    if (location === undefined) expect(body).not.toHaveProperty("location");
+    else expect(body).toHaveProperty("location", null);
+  });
   it("keeps invitable roles and the six presentation statuses exact", () => {
     expectTypeOf<"client">().not.toMatchTypeOf<InvitableRole>();
     expectTypeOf<"super_admin">().not.toMatchTypeOf<InvitableRole>();
@@ -126,6 +146,7 @@ describe("user invitation API contracts", () => {
       email: "asha@example.com",
       role: "designer",
       mobile: "+91 98765 43210",
+      location: "Mysuru",
       title: "must-not-send",
       unexpected: "must-not-send"
     } as CreateUserInvitationInput & Record<string, string>;
@@ -141,7 +162,8 @@ describe("user invitation API contracts", () => {
       name: "Asha Rao",
       email: "asha@example.com",
       role: "designer",
-      mobile: "+91 98765 43210"
+      mobile: "+91 98765 43210",
+      location: "Mysuru"
     });
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "/api/v1/admin/user-invitations/invitation%2Fa%20b%3F/resend"

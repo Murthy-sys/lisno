@@ -256,12 +256,13 @@ describe("production server bootstrap", () => {
       startExecutionDelivery: () => { events.push("delivery-start"); },
       closeExecutionDelivery: async () => { events.push("delivery-stop"); }
     }));
-    const runtime = await startServer({ loadEnvironment: () => ({ ...env, VENDOR_ACCESS_DELIVERY_ENABLED: override }),
+    const runtime = await startServer({ loadEnvironment: () => ({ ...env, VENDOR_ACCESS_DELIVERY_ENABLED: override, KEY_COLLECTION_REMINDERS_ENABLED: override ?? "false" }),
       connect: async () => undefined, disconnect: async () => { events.push("disconnect"); },
       prepareIdentityIndexes: async () => undefined, repositoryFactory: () => ({} as AppRepository), appFactory,
       writeOutput: () => undefined, registerSignalHandlers: false });
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
-      enableVendorAccessDelivery: override === undefined ? undefined : override === "true", enableExecutionReminders: false
+      enableVendorAccessDelivery: override === undefined ? undefined : override === "true", enableExecutionReminders: false,
+      enableKeyCollectionReminders: override === "true"
     }));
     expect(events).toEqual(["listen", "delivery-start"]);
     await runtime.stop();

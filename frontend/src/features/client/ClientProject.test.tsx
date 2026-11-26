@@ -68,6 +68,26 @@ describe("ClientProject", () => {
   beforeEach(() => {
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:kickoff-document"), revokeObjectURL: vi.fn() });
   });
+  it("groups an approved project into persistent phase panels and keeps kickoff input on collapse", async () => {
+    const workflow = kickoffWorkflow();
+    workflow.designerHandoff = {
+      initialEstimateApproved: true, executionAvailable: false, state: "awaiting_designer", designer: null,
+      assignmentRevision: null, appointment: null, canSchedule: false, blockers: []
+    };
+    const fetch = installKickoffApi(() => workflow);
+    const user = userEvent.setup(); renderApp(["/client/projects/project-villa"]);
+    const design = await screen.findByRole("button", { name: "Design flow", expanded: true });
+    expect(screen.getByRole("button", { name: "Estimation" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Execution" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Your estimate is approved. We’ll assign your designer soon.")).toBeVisible();
+    const reviewed = await screen.findByRole("checkbox", { name: "I have reviewed the document submitted by the Designer" });
+    await waitFor(() => expect(reviewed).toBeEnabled()); await user.click(reviewed);
+    await user.click(design); expect(reviewed).not.toBeVisible(); expect(reviewed).toBeChecked();
+    await user.click(design); expect(reviewed).toBeVisible(); expect(reviewed).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Execution" }));
+    expect(screen.getByText("Execution will be available after design approval.")).toBeVisible();
+    expect(fetch.mock.calls.some(([input]) => /vendor-work-reviews|site-completion/.test(String(input)))).toBe(false);
+  });
   it("shows the active Client task and one top countdown, then closes the task and stops its timer", async () => {
     let completed = false;
     const saved: unknown[] = [];

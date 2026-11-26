@@ -197,6 +197,11 @@ export const PERMISSION_CODES = [
   "design.source_page_image.read",
   "design.section_revision_image.read",
   "design.plan_assignment.manage",
+  "workflow_timelines.read",
+  "workflow_timelines.update",
+  "design.key_collection_reminders.read",
+  "design.assignment_requests.read",
+  "design.assignment_requests.decide",
   "design.plan_task.read",
   "design.plan_response_tasks.read",
   "design.plan_response_tasks.decide",
@@ -329,7 +334,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-11-15.project-initiation-defaults.v1" as const;
+  "2026-11-25.designer-handoff.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

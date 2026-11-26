@@ -216,6 +216,7 @@ function renderIndex(entry = "/admin/configuration/estimation", navigation = fal
             path="/admin/configuration/estimation/items/:itemId"
             element={<WorkspaceStub />}
           />
+          <Route path="/admin/configuration/estimation/workflow-timelines" element={<h1>Timeline configuration</h1>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -331,6 +332,13 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
+  it("opens Design & execution timelines from the Configuration header", async () => {
+    const user = userEvent.setup();
+    renderIndex();
+    await user.click(screen.getByRole("button", { name: "Design & execution timelines" }));
+    expect(screen.getByRole("heading", { name: "Timeline configuration" })).toBeVisible();
+  });
+
   it("shows light tier controls and opens the chosen editor independently from the Sub-Basket disclosure", async () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();

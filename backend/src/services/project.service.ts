@@ -123,6 +123,7 @@ export interface DesignWorkflowStageDto {
 }
 
 export interface DesignWorkflowDto {
+  designerHandoff: DesignerHandoffView;
   notices?: Array<{ id: string; stageId: string; message: string }>;
   estimateApprovalStatus: "approved" | "awaiting_approval" | "source_issue";
   initialPayment?: Awaited<ReturnType<typeof projectInitialPayment>>;
@@ -262,7 +263,18 @@ export function createProjectService(
         };
       };
       const savedStages = hierarchy.designWorkflowStages;
-      const operationalState = savedStages ? await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId)) : null;
+      let operationalState = savedStages ? await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId) : null;
+      let workflowSourceIssue = false;
+      if (operationalState) {
+        try { operationalState = await hydrateDesignWorkflowState(repository, projectId, operationalState); }
+        catch (error) {
+          if (!(error instanceof RepositoryConflictError)) throw error;
+          workflowSourceIssue = true;
+          operationalState = { ...operationalState, estimationWorkflowVersion: project.estimationWorkflowVersion === 3 ? 3 : 2, quotationLocked: false, designApprovalLocked: false, designStartedAt: undefined };
+        }
+      }
+      const designerHandoffSource = await readDesignerHandoffSource(repository, project);
+      const designerHandoff = projectDesignerHandoff(designerHandoffSource, project, operationalState ?? emptyDesignWorkflowState(projectId), actor, now);
       let estimateApprovalStatus: DesignWorkflowDto["estimateApprovalStatus"];
       try {
         estimateApprovalStatus = await repository.findDesignWorkflowRoomContext(projectId) ? "approved" : "awaiting_approval";
@@ -270,7 +282,12 @@ export function createProjectService(
         if (!(error instanceof RepositoryConflictError)) throw error;
         estimateApprovalStatus = "source_issue";
       }
-      const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance, actor.role) : undefined;
+      let initialPayment: DesignWorkflowDto["initialPayment"];
+      if (operationalState) {
+        try { if (!workflowSourceIssue) initialPayment = await projectInitialPayment(repository, projectId, operationalState, capabilities.finance, actor.role); }
+        catch (error) { if (!(error instanceof RepositoryConflictError)) throw error; workflowSourceIssue = true; }
+        if (workflowSourceIssue) initialPayment = { status: "awaiting_estimate_approval", confirmedAt: null, canConfirm: false, version: operationalState.version, issue: "The project approval source needs review." };
+      }
       const measurementOwners = savedStages && project.estimationWorkflowVersion === 3 ? secondaryMeasurementDesigners(project,
         await Promise.all(secondaryMeasurementDesignerIds(project).map(id => repository.findUserById(id)))) : undefined;
       const measurementDesigners = savedStages && project.estimationWorkflowVersion !== 3 && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
@@ -305,7 +322,7 @@ export function createProjectService(
         if (workflowStageStartAt(operationalState, "client_kickoff", now.getTime()) && !workflowClientKickoffCompleted(operationalState)) addNotice("client_kickoff", "kickoff-pending", "Internal Kick off is complete. Your Client Kick off task is ready with a four-day countdown. Complete it once the meeting is done.");
         if (workflowStageStartAt(operationalState, "key_collection", now.getTime()) && !operationalState.stages.key_collection?.completedAt) addNotice("key_collection", "key-handover", operationalState.stages.key_collection?.handedOverAt ? "Key handover recorded; awaiting Designer receipt." : "Confirm that the keys have been handed over. Your Designer will separately confirm receipt.");
         if (workflowClientKickoffCompleted(operationalState)) addNotice("client_kickoff", "kickoff-complete", "Congratulations, we have officially kickstarted your project.");
-        if (workflowIsPaused(operationalState)) addNotice("site_measurement", "site-access-blocked", "Site access is unavailable. Measurement and all workflow clocks are paused; technical drawing preparation cannot proceed until access is restored.");
+        if (workflowIsPaused(operationalState)) addNotice("site_measurement", "site-access-blocked", "Site access is unavailable. Measurement and workflow SLA clocks are paused; a confirmed key collection appointment keeps its deadline. Technical drawing preparation cannot proceed until access is restored.");
         else if (operationalState.stages.site_measurement?.completedAt) addNotice("site_measurement", "measurement-complete", "Measurements are complete. Your project is on the right path.");
       }
       const snapshotById = new Map(savedStages?.map((stage) => [stage.id, stage]));
@@ -321,6 +338,7 @@ export function createProjectService(
         projectId: hierarchy.id,
         projectName: hierarchy.name,
         serverNow: now.toISOString(),
+        designerHandoff,
         estimateApprovalStatus,
         ...(savedStages === undefined ? {} : {
           ...(capabilities.client ? { notices } : {}),
@@ -331,7 +349,7 @@ export function createProjectService(
           projectStages: ordered(savedStages).map((stage) => {
             const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
             const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
-            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id, measurementOwners, measurementAssignmentReason: secondaryMeasurementAssignmentReason(project) });
+            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { designerHandoffSource, spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id, measurementOwners, measurementAssignmentReason: secondaryMeasurementAssignmentReason(project) });
             const instructions = instructionsForStage(stage.type, hierarchy.estimationWorkflowVersion);
             // Review-backed plans require the Client's explicit acknowledgement; legacy
             // floor-only projects keep their established task-derived progress.
@@ -896,3 +914,5 @@ function currentProjectModule() {
   }
   return operation.scope.module;
 }
+import type { DesignerHandoffView } from "../contracts/designer-assignment.js";
+import { projectDesignerHandoff, readDesignerHandoffSource } from "./designer-handoff.service.js";

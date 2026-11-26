@@ -9,6 +9,7 @@ import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
+import { collectionFeed } from "../../test/keyCollectionFixtures";
 import { SkipLink } from "./SkipLink";
 
 const shellFixtures = [
@@ -72,7 +73,8 @@ function numericToken(css: string, name: string) {
 
 function installAuthenticatedSession(
   user: PublicUser,
-  permissions?: readonly PermissionCode[]
+  permissions?: readonly PermissionCode[],
+  handleRequest?: (url: URL) => Response | undefined
 ) {
   tokenStorage.set(`${user.role}-token`);
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
@@ -93,11 +95,69 @@ function installAuthenticatedSession(
       );
     }
 
+    const response = handleRequest?.(new URL(url, window.location.origin));
+    if (response) return Promise.resolve(response);
+
     return new Promise<Response>(() => undefined);
   });
 }
 
 describe("AppShell", () => {
+  it.each(["/designer", "/designer/design-plans", "/designer/projects/project-1", "/project-messages"])(
+    "exposes one assignment reminder in the shared header at %s",
+    async (route) => {
+      const read = vi.fn((url: URL) => url.pathname === "/api/v1/designer/assignment-requests" ? Response.json({ data: {
+        items: [{ id: "request-shell", projectId: "project-1", projectName: "Harbour Home", projectLocation: "Pune", preferredLanguage: "english",
+          scopeSummary: { itemCount: 8, sectionCount: 3, roomCount: 2 }, status: "pending", version: 1,
+          createdAt: "2026-11-25T09:00:00Z", decidedAt: null, canDecide: true, blockedReason: null, closureReason: null }],
+        pagination: { limit: 20, offset: 0, total: 21, hasMore: true }
+      } }) : undefined);
+      installAuthenticatedSession({ id: "designer-one", name: "Designer One", email: "designer@lisno.example", role: "designer" }, undefined, read);
+      renderApp([route]);
+      const reminder = await screen.findByRole("button", { name: "Assignment requests (21)" });
+      expect(within(screen.getByRole("banner", { name: "Workspace tools" })).getByRole("button", { name: "Assignment requests (21)" })).toBe(reminder);
+      expect(screen.getAllByRole("button", { name: "Assignment requests (21)" })).toHaveLength(1);
+      expect(screen.queryByText("Harbour Home")).not.toBeInTheDocument();
+      await userEvent.click(reminder);
+      const dialog = await screen.findByRole("dialog", { name: "Assignment requests" });
+      expect(within(dialog).getByText("Harbour Home")).toBeVisible();
+      expect(within(dialog).getByRole("button", { name: "Accept assignment for Harbour Home" })).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(reminder).toHaveFocus());
+      await userEvent.click(screen.getByRole("button", { name: "Designer One" }));
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    }
+  );
+
+  it.each(["/designer", "/designer/design-plans", "/designer/projects/project-1", "/project-messages"])(
+    "keeps the red collection reminder in the Designer shell at %s", async route => {
+      installAuthenticatedSession({ id: "designer-a", name: "Designer A", email: "designer@lisno.example", role: "designer" }, undefined,
+        url => url.pathname === "/api/v1/designer/key-collection-reminders" ? Response.json({ data: collectionFeed() }) : undefined);
+      renderApp([route]);
+      const reminder = await screen.findByRole("button", { name: "Key collection needs attention (2)" });
+      expect(within(screen.getByRole("banner", { name: "Workspace tools" })).getByRole("button", { name: "Key collection needs attention (2)" })).toBe(reminder);
+      await userEvent.click(reminder);
+      const dialog = screen.getByRole("dialog", { name: "Key collection reminders" });
+      expect(within(dialog).getAllByRole("timer")).toHaveLength(2);
+      expect(within(dialog).getByRole("link", { name: "Open key collection for Lakeside Home" })).toHaveAttribute("href", "/designer/projects/project-b#key-collection");
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(reminder).toHaveFocus());
+      expect(reminder).toBeVisible();
+    }
+  );
+
+  it.each(["client", "super_admin", "estimator_sales"] as const)("does not fetch Designer requests for %s", async (role) => {
+    const read = vi.fn();
+    installAuthenticatedSession({ id: `${role}-1`, name: "Other Role", email: "other@lisno.example", role }, undefined, (url) => {
+      if (url.pathname === "/api/v1/designer/assignment-requests") read();
+      return undefined;
+    });
+    renderApp([role === "super_admin" ? "/admin/dashboard" : role === "estimator_sales" ? "/estimator-sales" : "/client"]);
+    await screen.findByRole("banner", { name: "Workspace tools" });
+    expect(screen.queryByRole("button", { name: /Assignment requests/ })).not.toBeInTheDocument();
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it.each(shellFixtures)(
     "renders one accessible %s workspace shell",
     async (role, path, label, name, email) => {
@@ -168,7 +228,8 @@ describe("AppShell", () => {
   it.each([
     "/admin/configuration/estimation",
     "/admin/configuration/estimation/items/material-study?section=quality",
-    "/admin/configuration/estimation/reusable-values"
+    "/admin/configuration/estimation/reusable-values",
+    "/admin/configuration/estimation/workflow-timelines"
   ])("shares the decorative backdrop on Configuration route %s while content loads", async (path) => {
     installAuthenticatedSession({
       id: "configuration-admin",

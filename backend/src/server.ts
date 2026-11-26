@@ -191,6 +191,7 @@ export async function startServer(
       executionDigestMailer,
       enableVendorAccessDelivery: env.VENDOR_ACCESS_DELIVERY_ENABLED === undefined ? undefined : env.VENDOR_ACCESS_DELIVERY_ENABLED === "true",
       enableExecutionReminders: env.EXECUTION_REMINDERS_ENABLED === "true",
+      enableKeyCollectionReminders: env.KEY_COLLECTION_REMINDERS_ENABLED === "true",
       vendorInductionMailer,
       procurementBasketBoqMailer,
       vendorPortalUrl,

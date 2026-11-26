@@ -223,19 +223,15 @@ describe("project workflow routes", () => {
     vi.restoreAllMocks();
   });
 
-  it("passes scoped Admin assignment and Designer task reads to the workflow service", async () => {
+  it("rejects immediate Admin assignment and preserves Designer task reads", async () => {
     const { app, service } = setup();
 
     const assignment = await request(app)
       .post("/api/v1/admin/projects/project-1/design-assignment")
       .set("Authorization", bearer("admin"))
       .send({ designerId: "designer-1" })
-      .expect(200);
-    expect(assignment.body.data).toMatchObject({
-      estimateId: "estimate-1",
-      projectId: "project-1",
-      status: "assigned"
-    });
+      .expect(409);
+    expect(assignment.body.error.code).toBe("DESIGNER_ACCEPTANCE_REQUIRED");
     expect(service.assignDesigner).toHaveBeenCalledWith(
       ACTORS.admin,
       "project-1",

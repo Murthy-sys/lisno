@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { PROJECT_LANGUAGE_OPTIONS, type ProjectLanguage } from "../../../../shared/projects/projectInitiation";
 
 import { isActiveFrontendRole, ROLE_LABELS } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
@@ -14,6 +15,9 @@ import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { createUserInvitation, userInvitationKeys } from "./userInvitationsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
+import { normalizeUserLocation, userLocationError } from "./userLocation";
+import { normalizeUserLanguages } from "./userLanguages";
+import { ProjectLanguageMultiSelect } from "./ProjectLanguageMultiSelect";
 
 interface InviteUserDialogProps {
   roles: readonly InvitableRole[];
@@ -22,8 +26,9 @@ interface InviteUserDialogProps {
 
 type InvitationField = keyof CreateUserInvitationInput;
 type FieldErrors = Partial<Record<InvitationField, string>>;
+type InvitationForm = Record<Exclude<InvitationField, "languagesKnown">, string> & { languagesKnown: ProjectLanguage[] };
 
-const fieldOrder: InvitationField[] = ["name", "email", "role", "mobile"];
+const fieldOrder: InvitationField[] = ["name", "email", "role", "mobile", "location", "languagesKnown", "preferredLanguage"];
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F]/u;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const mobilePattern = /^\+?[0-9 ()-]+$/u;
@@ -33,7 +38,7 @@ function normalizeMobile(value: string): string {
 }
 
 function validate(
-  values: Record<InvitationField, string>,
+  values: InvitationForm,
   roles: readonly InvitableRole[]
 ): { input?: CreateUserInvitationInput; errors: FieldErrors } {
   const errors: FieldErrors = {};
@@ -67,6 +72,9 @@ function validate(
   ) {
     errors.mobile = "Mobile must contain 7 to 15 ASCII digits.";
   }
+  const locationError = userLocationError(values.location);
+  const location = normalizeUserLocation(values.location);
+  if (locationError) errors.location = locationError;
 
   if (Object.keys(errors).length > 0) return { errors };
   return {
@@ -75,7 +83,10 @@ function validate(
       name,
       email,
       role: values.role as InvitableRole,
-      mobile
+      mobile,
+      ...(location ? { location } : {}),
+      ...(values.languagesKnown.length ? { languagesKnown: normalizeUserLanguages(values.languagesKnown) } : {}),
+      ...(values.preferredLanguage ? { preferredLanguage: values.preferredLanguage as ProjectLanguage } : {})
     }
   };
 }
@@ -90,15 +101,19 @@ export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDial
   const roles = useMemo(() => serverRoles.filter(isActiveFrontendRole), [serverRoles]);
   const queryClient = useQueryClient();
   const feedback = useFeedback();
-  const [values, setValues] = useState<Record<InvitationField, string>>({
+  const [values, setValues] = useState<InvitationForm>({
     name: "",
     email: "",
     role: roles[0] ?? "",
-    mobile: ""
+    mobile: "",
+    location: "",
+    languagesKnown: [],
+    preferredLanguage: ""
   });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [requestError, setRequestError] = useState("");
   const controls = useRef<Partial<Record<InvitationField, HTMLElement | null>>>({});
+  const errorFocus = useRef<InvitationField | undefined>(undefined);
 
   const mutation = useMutation({
     mutationFn: createUserInvitation,
@@ -121,8 +136,8 @@ export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDial
           if (failure.fields[field]) nextErrors[field] = failure.fields[field];
         }
         if (Object.keys(nextErrors).length > 0) {
+          errorFocus.current = fieldOrder.find((field) => nextErrors[field]);
           setErrors(nextErrors);
-          controls.current[fieldOrder.find((field) => nextErrors[field])!]?.focus();
           return;
         }
       }
@@ -136,11 +151,17 @@ export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDial
   });
 
   useEffect(() => {
+    if (mutation.isPending || !errorFocus.current) return;
+    controls.current[errorFocus.current]?.focus();
+    errorFocus.current = undefined;
+  }, [errors, mutation.isPending]);
+
+  useEffect(() => {
     if (roles.includes(values.role as InvitableRole)) return;
     setValues((current) => ({ ...current, role: roles[0] ?? "" }));
   }, [roles, values.role]);
 
-  const update = (field: InvitationField, value: string) => {
+  const update = <Field extends InvitationField>(field: Field, value: InvitationForm[Field]) => {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
     setRequestError("");
@@ -166,7 +187,7 @@ export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDial
       description="Send a secure invitation to a staff member."
       busy={mutation.isPending}
       width="medium"
-      dirty={Boolean(values.name || values.email || values.mobile || values.role !== (roles[0] ?? ""))}
+      dirty={Boolean(values.name || values.email || values.mobile || values.location || values.languagesKnown.length || values.preferredLanguage || values.role !== (roles[0] ?? ""))}
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="user-invitation-dialog__actions">
@@ -257,8 +278,43 @@ export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDial
             />
           )}
         </Field>
-
-
+        <Field id="invitation-location" label="Location" hint="City or area" error={errors.location}>
+          {(controlProps) => (
+            <Input
+              {...controlProps}
+              autoComplete="address-level2"
+              value={values.location}
+              disabled={mutation.isPending}
+              ref={(element) => { controls.current.location = element; }}
+              onChange={(event) => update("location", event.target.value)}
+            />
+          )}
+        </Field>
+        <Field id="invitation-languages-known" label="Known languages" error={errors.languagesKnown}>
+          {(controlProps) => (
+            <ProjectLanguageMultiSelect
+              {...controlProps}
+              value={values.languagesKnown}
+              onChange={(value) => update("languagesKnown", value)}
+              disabled={mutation.isPending}
+              inputRef={(element) => { controls.current.languagesKnown = element; }}
+            />
+          )}
+        </Field>
+        <Field id="invitation-preferred-language" label="Preferred language" error={errors.preferredLanguage}>
+          {(controlProps) => (
+            <Select
+              {...controlProps}
+              value={values.preferredLanguage}
+              onChange={(event) => update("preferredLanguage", event.target.value)}
+              disabled={mutation.isPending}
+              ref={(element) => { controls.current.preferredLanguage = element; }}
+            >
+              <option value="">Not set</option>
+              {PROJECT_LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </Select>
+          )}
+        </Field>
       </form>
     </ContextPanel>
   );

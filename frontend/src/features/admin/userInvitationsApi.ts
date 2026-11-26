@@ -46,7 +46,10 @@ export function createUserInvitation(
     name: input.name,
     email: input.email,
     role: input.role,
-    mobile: input.mobile
+    mobile: input.mobile,
+    ...(input.location === undefined ? {} : { location: input.location }),
+    ...(input.languagesKnown === undefined ? {} : { languagesKnown: input.languagesKnown }),
+    ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage })
   });
 }
 

@@ -9,6 +9,7 @@ import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import type { PreparedPlanDocuments } from "../contracts/estimate-plan-document.js";
 import { createEstimatePlanDocumentService } from "./estimate-plan-document.service.js";
 import { randomUUID } from "node:crypto";
+import { designerAssignmentRevision, designerLanguage } from "../domain/designer-assignment.js";
 
 import mongoose from "mongoose";
 
@@ -319,203 +320,9 @@ export function createProjectWorkflowService(input: {
       }));
     },
 
-    async assignDesigner(actor, projectId, designerId) {
+    async assignDesigner(actor, projectId, _designerId) {
       await requireAdminProjectScope(actor, projectId);
-      const designer = await UserModel.findOne({
-        _id: designerId,
-        role: "designer",
-        active: true, deletedAt: null
-      }).lean();
-      if (!designer) {
-        throw new ApiError(
-          400,
-          "DESIGNER_NOT_ASSIGNABLE",
-          "Choose an active Designer."
-        );
-      }
-      const assignedAt = now();
-      let result: DesignPlanTaskDto | null = null;
-      await withMongoTransaction(async (session) => {
-        await requireAdminProjectScope(actor, projectId, session);
-        const currentDesigner = await UserModel.findOne({
-          _id: designerId,
-          role: "designer",
-          active: true, deletedAt: null
-        }).session(session).lean();
-        if (!currentDesigner) {
-          throw new ApiError(
-            409,
-            "DESIGNER_NOT_ASSIGNABLE",
-            "The selected Designer is no longer active."
-          );
-        }
-        const project = await ProjectModel.findById(projectId).session(session).lean();
-        if (!project) notFound();
-        if (project.estimationWorkflowVersion === 3 && actor.role !== "super_admin") forbidden();
-        const linkedLeads = await LeadModel.find({ projectId })
-          .select({ _id: 1 })
-          .session(session)
-          .lean();
-        const linkedLeadIds = linkedLeads.map((lead) => String(lead._id));
-        const estimates = await EstimateModel.find({
-          status: "client_approved",
-          designPlanStatus: {
-            $in: [null, "pending_assignment", "assigned", "in_progress", "changes_requested"]
-          },
-          $or: [
-            { projectId },
-            ...(linkedLeadIds.length > 0
-              ? [{
-                  projectId: { $in: [null] },
-                  leadId: { $in: linkedLeadIds }
-                }]
-              : [])
-          ]
-        })
-          .sort({ clientDecisionAt: -1, updatedAt: -1, _id: 1 })
-          .limit(2)
-          .session(session)
-          .lean();
-        if (estimates.length === 0) {
-          throw new ApiError(
-            409,
-            "DESIGN_PLAN_NOT_ASSIGNABLE",
-            "The estimate must be approved before assigning Design work."
-          );
-        }
-        if (estimates.length !== 1) designPlanProjectLinkConflict();
-        const estimate = estimates[0]!;
-        if (estimate.designPlanStatus === "approved") {
-          throw new ApiError(409, "DESIGN_PLAN_APPROVED", "The approved Design plan cannot be reassigned.");
-        }
-        const lead = await LeadModel.findById(estimate.leadId).session(session).lean();
-        if (!lead) notFound();
-        const estimateProjectId = nonEmptyWorkflowId(estimate.projectId);
-        const leadProjectId = nonEmptyWorkflowId(lead.projectId);
-        if (
-          (estimateProjectId !== null && estimateProjectId !== projectId) ||
-          leadProjectId !== projectId
-        ) {
-          designPlanProjectLinkConflict();
-        }
-        const quotationApproval = await guardCollaborativeDesign(estimate, session, undefined, true);
-        const designPlanVersion = Number(estimate.designPlanVersion ?? 0);
-
-        const estimateUpdated = await EstimateModel.updateOne(
-          {
-            _id: estimate._id,
-            projectId: estimateProjectId === null ? { $in: [null] } : projectId,
-            leadId: lead._id,
-            status: "client_approved",
-            designPlanStatus: estimate.designPlanStatus == null
-              ? { $in: [null] }
-              : estimate.designPlanStatus,
-            designPlanVersion: legacyZeroVersionFilter(designPlanVersion)
-          },
-          {
-            $set: {
-              projectId,
-              designPlanStatus: "assigned",
-              designPlanVersion,
-              designPlanDesignerId: designer._id,
-              designPlanAssignedById: actor.id,
-              designPlanAssignedAt: assignedAt,
-              designPlanSubmittedAt: null,
-              designFrozenAt: null
-            },
-            $inc: { designLifecycleVersion: 1 }
-          },
-          { session }
-        );
-        requireMatched(estimateUpdated, "The Design assignment changed before it could be saved.");
-        const projectUpdated = await ProjectModel.updateOne(
-          { _id: projectId },
-          {
-            $set: {
-              assignedDesignerIds: [String(designer._id)],
-              ...(project.estimationWorkflowVersion === 3 ? { primaryDesignerId: String(designer._id), secondaryDesignerIds: [] } : {}),
-              managerId: null,
-              updatedAt: assignedAt
-            },
-            ...(project.estimationWorkflowVersion === 3 ? { $inc: { designTeamVersion: 1 } } : {})
-          },
-          { session }
-        );
-        requireMatched(projectUpdated, "The project changed before the Design assignment could be saved.");
-        const leadUpdated = await LeadModel.updateOne(
-          { _id: lead._id, projectId },
-          {
-            $set: {
-              nextAction: project.estimationWorkflowVersion === 3
-                ? quotationApproval?.currentQuotationApproved ? "Complete Internal Kick off" : "Designer to review quotation"
-                : "Designer to upload design plan",
-              nextActionAt: assignedAt,
-              updatedAt: assignedAt
-            }
-          },
-          { session }
-        );
-        requireMatched(leadUpdated, "The project handoff changed before the Design assignment could be saved.");
-        const dedupeKey = `${String(estimate._id)}:design-plan-upload`;
-        if (project.estimationWorkflowVersion === 3 && quotationApproval?.currentQuotationApproved) await ensureQuotationDesignTask({ ...estimate, designPlanDesignerId: String(designer._id), designPlanAssignedAt: assignedAt }, assignedAt, session, quotationApproval);
-        else await ProjectWorkflowTaskModel.findOneAndUpdate(
-          { dedupeKey },
-          {
-            $setOnInsert: {
-              _id: `workflow-task-${randomUUID()}`,
-              dedupeKey,
-              projectId,
-              estimateId: String(estimate._id),
-              designPlanVersion: Number(estimate.designPlanVersion ?? 0),
-              kind: "design_plan_upload",
-              title: "Upload design plan",
-              description: "Upload the approved-estimate design plan, review extracted drawings, and submit it to the Client.",
-              assigneeRole: "designer",
-              sourceSectionId: null,
-              sourceLineItemKey: null,
-              roomName: null,
-              openedAt: assignedAt,
-              dueAt: workflowTaskDueAt("design_plan_upload", assignedAt),
-              plannedEffort: WORKFLOW_TASK_SCHEDULE.design_plan_upload.plannedEffort
-            },
-            $set: {
-              assigneeUserId: String(designer._id),
-              status: "open",
-              completedAt: null
-            }
-          },
-          { upsert: true, new: true, runValidators: true, session }
-        ).lean();
-        await input.audit.appendInMongoTransaction({
-          actorId: actor.id,
-          action: "design_plan_designer_assigned",
-          entityType: "estimate",
-          entityId: String(estimate._id),
-          occurredAt: assignedAt.toISOString(),
-          oldValues: {
-            designPlanStatus: estimate.designPlanStatus,
-            designerId: estimate.designPlanDesignerId ?? null,
-            projectId: estimateProjectId,
-            projectManagerId: project.managerId ?? null,
-            nextAction: lead.nextAction
-          },
-          newValues: {
-            designPlanStatus: "assigned",
-            designerId: String(designer._id),
-            projectId,
-            projectManagerId: null,
-            nextAction: "Designer to upload design plan"
-          }
-        }, session);
-        result = taskDto({
-          ...estimate,
-          projectId,
-          designPlanStatus: "assigned",
-          designPlanDesignerId: designer._id
-        }, project, lead, undefined, quotationApproval ?? undefined);
-      });
-      if (!result) throw new Error("Design assignment did not complete.");
-      return result;
+      throw new ApiError(409, "DESIGNER_ACCEPTANCE_REQUIRED", "Send an assignment request. The Designer must accept before assignment takes effect.");
     },
 
     async listDesignerTasks(actor) {
@@ -2825,4 +2632,199 @@ export async function activateCollaborativeProjectWorkflow(projectId: string, ac
   await generateDownstreamTasks(estimate, design.designPlanVersion, executionOpenedAt, session);
   await ProjectModel.updateOne({ _id: projectId, status: "planning" }, { $set: { status: "active", actualStartAt: executionOpenedAt, updatedAt: occurredAt } }, { session });
   await LeadModel.updateOne({ _id: estimate.leadId, projectId }, { $set: { nextAction: "project kickoff", nextActionAt: executionOpenedAt } }, { session });
+}
+
+/** Internal assignment source. Never serialize these rows into a request preview. */
+export interface DesignerAssignmentSource {
+  project: Row;
+  estimate: Row | null;
+  lead: Row | null;
+  quotationApproval: QuotationApprovalResolution | null;
+  sourceSnapshot: Record<string, unknown> | null;
+  sourceRevision: string | null;
+  canRequest: boolean;
+  blockedReason: string | null;
+}
+
+export async function readDesignerAssignmentSource(projectId: string, session?: mongoose.ClientSession): Promise<DesignerAssignmentSource> {
+  const project = await ProjectModel.findById(projectId).session(session ?? null).lean();
+  if (!project) notFound();
+  const leads = await LeadModel.find({ projectId }).limit(2).session(session ?? null).lean();
+  if (leads.length > 1) designPlanProjectLinkConflict();
+  const lead = leads[0] ?? null;
+  const estimates = await EstimateModel.find({ status: "client_approved", $or: [
+    { projectId }, ...(lead ? [{ projectId: { $in: [null] }, leadId: lead._id }] : [])
+  ] }).sort({ clientDecisionAt: -1, updatedAt: -1, _id: 1 }).limit(2).session(session ?? null).lean();
+  if (estimates.length > 1) designPlanProjectLinkConflict();
+  const estimate = estimates[0] ?? null;
+  if (estimate && (!lead || String(estimate.leadId) !== String(lead._id) ||
+      nonEmptyWorkflowId(estimate.projectId) !== null && String(estimate.projectId) !== projectId)) designPlanProjectLinkConflict();
+  let blockedReason: string | null = !estimate ? "The estimate must be approved before requesting a Designer." : null;
+  let quotationApproval: QuotationApprovalResolution | null = null;
+  if (estimate && [2, 3].includes(project.estimationWorkflowVersion) && project.estimationWorkflowVersion !== estimate.estimation?.workflowVersion)
+    blockedReason = "The project and estimate workflow sources are inconsistent.";
+  if (estimate && isCollaborativeEstimate(estimate)) {
+    if (estimate.estimation.workflowVersion === 3) {
+      quotationApproval = await resolveCurrentQuotationApproval(estimate, session);
+      if (!estimate.estimation.preApproval || quotationApproval.quotationApprovalState === "source_issue")
+        blockedReason = "The quotation approval source must be resolved before requesting a Designer.";
+      if ((project.primaryDesignerId ?? null) !== (estimate.designPlanDesignerId || null))
+        blockedReason = "The current Designer assignment source is inconsistent.";
+    } else if (!estimate.estimation.preApproval || estimate.estimation.editClosedAt || estimate.estimation.finalApproval)
+      blockedReason = "The approved estimate is no longer open for Design assignment.";
+  }
+  if (project.status === "completed") blockedReason = "Completed projects cannot receive a new Designer assignment.";
+  if (estimate && ![null, undefined, "pending_assignment", "assigned", "in_progress", "changes_requested"].includes(estimate.designPlanStatus))
+    blockedReason = estimate.designPlanStatus === "approved" ? "The approved Design plan cannot be reassigned." : "Resolve the pending Design review before reassigning.";
+  const sourceSnapshot = estimate ? {
+    projectId, estimateId: String(estimate._id), leadId: String(lead!._id),
+    projectStatus: project.status, workflowVersion: project.estimationWorkflowVersion ?? null,
+    clientId: project.clientId ?? null, teamVersion: Number(project.designTeamVersion ?? 0),
+    primaryDesignerId: project.primaryDesignerId ?? null,
+    assignedDesignerIds: [...(project.assignedDesignerIds ?? [])].sort(),
+    secondaryDesignerIds: [...(project.secondaryDesignerIds ?? [])].sort(),
+    managerId: project.managerId ?? null,
+    estimateVersion: Number(estimate.version ?? 0), designLifecycleVersion: Number(estimate.designLifecycleVersion ?? 0),
+    designPlanVersion: Number(estimate.designPlanVersion ?? 0), designPlanStatus: estimate.designPlanStatus ?? null,
+    designerId: estimate.designPlanDesignerId || null,
+    initialApproval: estimate.estimation?.preApproval ?? null,
+    currentApproval: quotationApproval?.currentQuotationApproval ?? null,
+    approvalState: quotationApproval?.quotationApprovalState ?? null,
+    requirementsVersion: estimate.estimation?.requirementsVersion ?? null,
+    pricedRevision: estimate.estimation?.pricedRevision ?? null,
+    designScopeRevision: estimate.estimation?.designScopeRevision ?? null,
+    clientDecisionAt: estimate.clientDecisionAt ? new Date(estimate.clientDecisionAt).toISOString() : null,
+    projectName: project.name, projectLocation: project.location ?? null,
+    projectCity: project.cityName ?? null, projectCityKey: project.cityKey ?? null,
+    preferredLanguage: designerLanguage(lead?.preferredLanguage)
+  } : null;
+  return { project, estimate, lead, quotationApproval, sourceSnapshot,
+    sourceRevision: sourceSnapshot ? designerAssignmentRevision(sourceSnapshot) : null,
+    canRequest: blockedReason === null, blockedReason };
+}
+
+/** Runs only inside the accepted-request transaction; actor is the actual accepting Designer. */
+export async function applyAcceptedDesignerAssignment(input: {
+  actor: PublicUser; proposerId: string; designerId: string; source: DesignerAssignmentSource;
+  assignedAt: Date; audit: AuditService;
+}, session: mongoose.ClientSession): Promise<void> {
+  const { actor, proposerId, designerId, source, assignedAt, audit } = input;
+  if (!session.inTransaction()) throw new Error("Designer acceptance requires an existing transaction.");
+  if (actor.role !== "designer" || actor.id !== designerId) forbidden();
+  if (!source.canRequest || !source.estimate || !source.lead)
+    throw new ApiError(409, "DESIGN_ASSIGNMENT_SOURCE_CHANGED", source.blockedReason ?? "The assignment source changed. Refresh before trying again.");
+  const { project, estimate, lead } = source;
+  const projectId = String(project._id);
+  const estimateProjectId = nonEmptyWorkflowId(estimate.projectId);
+  const quotationApproval = await guardCollaborativeDesign(estimate, session, undefined, true);
+  const designPlanVersion = Number(estimate.designPlanVersion ?? 0);
+
+  const estimateUpdated = await EstimateModel.updateOne(
+    {
+      _id: estimate._id,
+      projectId: estimateProjectId === null ? { $in: [null] } : projectId,
+      leadId: lead._id,
+      status: "client_approved",
+      designPlanStatus: estimate.designPlanStatus == null
+        ? { $in: [null] }
+        : estimate.designPlanStatus,
+      designPlanVersion: legacyZeroVersionFilter(designPlanVersion)
+    },
+    {
+      $set: {
+        projectId,
+        designPlanStatus: "assigned",
+        designPlanVersion,
+        designPlanDesignerId: designerId,
+        designPlanAssignedById: proposerId,
+        designPlanAssignedAt: assignedAt,
+        designPlanSubmittedAt: null,
+        designFrozenAt: null
+      },
+      $inc: { designLifecycleVersion: 1 }
+    },
+    { session }
+  );
+  requireMatched(estimateUpdated, "The Design assignment changed before it could be saved.");
+  const projectUpdated = await ProjectModel.updateOne(
+    { _id: projectId, designTeamVersion: legacyZeroVersionFilter(Number(project.designTeamVersion ?? 0)) },
+    {
+      $set: {
+        assignedDesignerIds: [String(designerId)],
+        ...(project.estimationWorkflowVersion === 3 ? { primaryDesignerId: String(designerId), secondaryDesignerIds: [] } : {}),
+        managerId: null,
+        updatedAt: assignedAt
+      },
+      ...(project.estimationWorkflowVersion === 3 ? { $inc: { designTeamVersion: 1 } } : {})
+    },
+    { session }
+  );
+  requireMatched(projectUpdated, "The project changed before the Design assignment could be saved.");
+  const nextAction = project.estimationWorkflowVersion === 3
+    ? quotationApproval?.currentQuotationApproved ? "Complete Internal Kick off" : "Designer to review quotation"
+    : "Designer to upload design plan";
+  const leadUpdated = await LeadModel.updateOne(
+    { _id: lead._id, projectId },
+    {
+      $set: {
+        nextAction,
+        nextActionAt: assignedAt,
+        updatedAt: assignedAt
+      }
+    },
+    { session }
+  );
+  requireMatched(leadUpdated, "The project handoff changed before the Design assignment could be saved.");
+  const dedupeKey = `${String(estimate._id)}:design-plan-upload`;
+  if (project.estimationWorkflowVersion === 3 && quotationApproval?.currentQuotationApproved) await ensureQuotationDesignTask({ ...estimate, designPlanDesignerId: String(designerId), designPlanAssignedAt: assignedAt }, assignedAt, session, quotationApproval);
+  else await ProjectWorkflowTaskModel.findOneAndUpdate(
+    { dedupeKey },
+    {
+      $setOnInsert: {
+        _id: `workflow-task-${randomUUID()}`,
+        dedupeKey,
+        projectId,
+        estimateId: String(estimate._id),
+        designPlanVersion: Number(estimate.designPlanVersion ?? 0),
+        kind: "design_plan_upload",
+        title: "Upload design plan",
+        description: "Upload the approved-estimate design plan, review extracted drawings, and submit it to the Client.",
+        assigneeRole: "designer",
+        sourceSectionId: null,
+        sourceLineItemKey: null,
+        roomName: null,
+        openedAt: assignedAt,
+        dueAt: workflowTaskDueAt("design_plan_upload", assignedAt),
+        plannedEffort: WORKFLOW_TASK_SCHEDULE.design_plan_upload.plannedEffort
+      },
+      $set: {
+        assigneeUserId: String(designerId),
+        status: "open",
+        completedAt: null
+      }
+    },
+    { upsert: true, new: true, runValidators: true, session }
+  ).lean();
+  await audit.appendInMongoTransaction({
+    actorId: actor.id,
+    action: "design_plan_designer_assigned",
+    entityType: "estimate",
+    entityId: String(estimate._id),
+    occurredAt: assignedAt.toISOString(),
+    oldValues: {
+      designPlanStatus: estimate.designPlanStatus,
+      designerId: estimate.designPlanDesignerId ?? null,
+      projectId: estimateProjectId,
+      projectManagerId: project.managerId ?? null,
+      nextAction: lead.nextAction
+    },
+    newValues: {
+      designPlanStatus: "assigned",
+      designerId: String(designerId),
+      proposedById: proposerId,
+      projectId,
+      projectManagerId: null,
+      nextAction
+    }
+  }, session);
 }

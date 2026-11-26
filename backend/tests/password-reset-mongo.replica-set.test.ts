@@ -836,3 +836,49 @@ describe("password reset Mongo replica-set transactions", () => {
     });
   }
 });
+
+
+describe.each(["location", "languages"] as const)("password reset %s compatibility in Mongo", profile => {
+  const profileChange = (index: number) => profile === "location"
+    ? { location: ["Bengaluru", "Chennai", "Pune"][index]! }
+    : { languagesKnown: index === 0 ? ["english" as const] : ["kannada" as const], preferredLanguage: index === 2 ? null : "tamil" as const };
+  it.each(["before", "after"] as const)("completes a reset issued %s location edits without weakening the user CAS", async timing => {
+    await insertUser();
+    await insertSuperAdmin();
+    const repository = createMongoRepository();
+    const administration = createUserAdministrationService(repository, createAuditService(repository), () => new Date(NOW));
+    const editLocations = async () => {
+      await administration.update(superAdminActor(), "mongo-reset-user", { version: 1, ...profileChange(0) });
+      await administration.update(superAdminActor(), "mongo-reset-user", { version: 2, ...profileChange(1) });
+    };
+    if (timing === "after") await editLocations();
+    const reset = await issueReset({ repository });
+    expect(await repository.findPendingPasswordResetByUserId("mongo-reset-user")).toMatchObject({ userVersion: 1, sessionVersion: 1 });
+    if (timing === "before") await editLocations();
+    else await administration.update(superAdminActor(), "mongo-reset-user", { version: 3, ...profileChange(2) });
+    const before = (await repository.findUserById("mongo-reset-user"))!;
+    expect(before).toMatchObject({ version: timing === "before" ? 3 : 4, sessionVersion: 1, profileVersionOffset: timing === "before" ? 2 : 3 });
+    await expect(reset.inspect(RAW_TOKEN)).resolves.toEqual({ available: true });
+    await expect(reset.complete({ rawToken: RAW_TOKEN, password: "LocationPassword!2026" })).resolves.toEqual({ reset: true });
+    expect(await repository.findUserById("mongo-reset-user")).toMatchObject({ version: before.version + 1, sessionVersion: 2, profileVersionOffset: before.profileVersionOffset, ...(profile === "location" ? { location: before.location } : { languagesKnown: before.languagesKnown, preferredLanguage: before.preferredLanguage }), passwordHash: NEW_PASSWORD_HASH });
+    await expect(reset.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+  });
+
+  it.each(["role", "status", "credentials"] as const)("retains reset invalidation after a %s change following location edits", async change => {
+    await insertUser();
+    await insertSuperAdmin();
+    const repository = createMongoRepository();
+    const administration = createUserAdministrationService(repository, createAuditService(repository), () => new Date(NOW));
+    await administration.update(superAdminActor(), "mongo-reset-user", { version: 1, ...profileChange(0) });
+    const reset = await issueReset({ repository });
+    await expect(reset.inspect(RAW_TOKEN)).resolves.toEqual({ available: true });
+    if (change === "role") await administration.update(superAdminActor(), "mongo-reset-user", { version: 2, role: "procurement" });
+    else if (change === "status") await administration.update(superAdminActor(), "mongo-reset-user", { version: 2, active: false });
+    else await repository.updateUserCredentials("mongo-reset-user", 2, 1, { passwordHash: "independent-credential-change", updatedAt: NOW });
+    const changed = await repository.findUserById("mongo-reset-user");
+    expect(changed).toMatchObject({ version: 3, sessionVersion: 2, profileVersionOffset: 1 });
+    await expect(reset.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    await expect(reset.complete({ rawToken: RAW_TOKEN, password: "LocationPassword!2026" })).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    expect(await repository.findUserById("mongo-reset-user")).toEqual(changed);
+  });
+});

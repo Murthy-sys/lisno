@@ -1,3 +1,4 @@
+import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { requireValidNewPassword } from "./password-policy.js";
@@ -62,7 +63,7 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
   async function authority(repo: AppRepository, record: ProjectClientInvitationRecord) {
     const project = await repo.findProjectById(record.projectId);
     const issuer = await repo.findUserById(record.tokenIssuedById);
-    if (!project || !issuer || !issuer.active || issuer.version !== record.tokenIssuerVersion || !await canManage(repo, issuer, project) || !eligible(project, record.emailNormalized)) unavailable();
+    if (!project || !issuer || !issuer.active || userAuthorizationVersion(issuer) !== record.tokenIssuerVersion || !await canManage(repo, issuer, project) || !eligible(project, record.emailNormalized)) unavailable();
     const existing = await repo.findUserByEmail(record.emailNormalized);
     if (existing && (!existing.active || existing.role !== "client" || isReservedDevelopmentDemoIdentity(existing))) unavailable();
     return { project: project!, existing };
@@ -116,7 +117,7 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
       const rawToken = generateUserInvitationToken();
       const next: ProjectClientInvitationRecord = {
         id: current?.id ?? `project-client-invitation-${randomUUID()}`, projectId, emailNormalized, invitedById: current?.invitedById ?? stored.id,
-        tokenIssuedById: stored.id, tokenIssuerVersion: stored.version, tokenHash: hashUserInvitationToken(rawToken), tokenGeneration: (current?.tokenGeneration ?? 0) + 1,
+        tokenIssuedById: stored.id, tokenIssuerVersion: userAuthorizationVersion(stored), tokenHash: hashUserInvitationToken(rawToken), tokenGeneration: (current?.tokenGeneration ?? 0) + 1,
         issuedAt, expiresAt: new Date(Date.parse(issuedAt) + USER_INVITATION_TTL_MS).toISOString(), status: "pending", acceptedUserId: null, acceptedAt: null, revokedById: null, revokedAt: null,
         deliveryStatus: "queued", deliveryFailureCode: null, deliveryAttemptedAt: null, sentAt: null, version: (current?.version ?? 0) + 1, createdAt: current?.createdAt ?? issuedAt, updatedAt: issuedAt
       };

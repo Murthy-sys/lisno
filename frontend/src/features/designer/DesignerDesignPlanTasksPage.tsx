@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
@@ -28,12 +29,12 @@ import {
 } from "../leads/estimateDesignApi";
 import {
   getDesignerPlanTasks,
-  getDesignWorkflow,
   reconcileDesignPlanScope,
   type DesignWorkflowStage,
   type DesignWorkflowView,
   projectWorkflowKeys
 } from "../workflow/projectWorkflowApi";
+import { useDesignWorkflowQuery } from "../workflow/useDesignWorkflowQuery";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { currentProjectWorkflowStage, workflowStageNextStep, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
 import { refreshEstimateCollaboration } from "../leads/estimateCollaborationQueries";
@@ -109,11 +110,7 @@ export function DesignerDesignPlanTasksPage() {
   const requestedEstimateId = searchParams.get("estimate");
   const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId) ?? tasks.data?.[0];
   // This observer shares the panel's query; its polling updates upload eligibility and next action together.
-  const workflow = useQuery({
-    queryKey: [...projectWorkflowKeys.designWorkflow(task?.projectId ?? ""), user?.id ?? null, user?.role ?? null],
-    queryFn: () => getDesignWorkflow(task!.projectId),
-    enabled: Boolean(task?.projectId)
-  });
+  const { query: workflow, data: savedWorkflow } = useDesignWorkflowQuery(task?.projectId ?? "");
   const openPlanRequests = useQuery({
     queryKey: estimatePlanChangeRequestKeys.queue(task?.estimateId),
     queryFn: () => getEstimatePlanChangeRequests({ estimateId: task!.estimateId, status: "open" }),
@@ -133,7 +130,6 @@ export function DesignerDesignPlanTasksPage() {
     );
   }
 
-  const savedWorkflow = workflow.data?.projectId === task?.projectId ? workflow.data : undefined;
   const currentStage = savedWorkflow ? currentProjectWorkflowStage(savedWorkflow) : undefined;
   const uploadStage = savedWorkflow?.projectStages?.find((stage) => stage.type === "space_planning_tentative_look_feel");
   const uploadOperational = uploadStage?.operational;
@@ -247,7 +243,7 @@ export function DesignerDesignPlanTasksPage() {
                 </div>
                 <div className="project-status-header-actions">
                   <StatusBadge tone={statusTones[task.status]} label={statusLabels[task.status]} />
-                  {task.projectId ? <ProjectStatusButton projectId={task.projectId} projectName={task.projectName} presentation="chip" /> : null}
+                  {task.projectId ? <><KeyCollectionHeader projectId={task.projectId} projectName={task.projectName} /><ProjectStatusButton projectId={task.projectId} projectName={task.projectName} presentation="chip" /></> : null}
                 </div>
               </div>
               <dl>
@@ -264,7 +260,7 @@ export function DesignerDesignPlanTasksPage() {
 
             {task.estimationWorkflowVersion === 3 ? <DesignTeamPicker key={`team-${task.projectId}`} projectId={task.projectId} /> : null}
 
-            <ProjectWorkflowPanel key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
+            <ProjectWorkflowPanel showAppointmentTimer={false} key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
 
             {showDesignSection && task.status === "changes_requested" ? (
               <EstimatePlanChangeRequests key={`requests-${task.estimateId}`} estimateId={task.estimateId} />

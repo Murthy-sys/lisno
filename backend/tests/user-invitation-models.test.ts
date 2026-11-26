@@ -62,6 +62,17 @@ function invitation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("user invitation domain", () => {
+  it("persists canonical optional language metadata and rejects invalid raw values", async () => {
+    const record = invitation({ languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    await expect(record.validate()).resolves.toBeUndefined();
+    expect(record.languagesKnown).toEqual(["english", "kannada"]);
+    expect(record.preferredLanguage).toBe("tamil");
+    expect(invitation().languagesKnown).toEqual([]);
+    expect(invitation().preferredLanguage).toBeNull();
+    for (const metadata of [{ languagesKnown: "english" }, { languagesKnown: [1] }, { languagesKnown: ["english", "english"] }, { preferredLanguage: "unsupported" }, { preferredLanguage: 123 }]) {
+      await expect(invitation(metadata).validate()).rejects.toMatchObject({ name: "ValidationError" });
+    }
+  });
   it("derives every invitable role from the canonical roles except client and super admin", () => {
     expect(INVITABLE_ROLE_CODES).toEqual(
       ROLE_CODES.filter((role) => role !== "client" && role !== "super_admin")
@@ -403,5 +414,20 @@ describe("UserInvitation model", () => {
           options.unique === true && "emailNormalized" in fields && "status" in fields
       )
     ).toBe(false);
+  });
+});
+
+
+describe("invitation location persistence validation", () => {
+  it("normalizes a supplied location and permits old invitations without it", async () => {
+    const located = invitation({ location: "  Mysuru  " });
+    await expect(located.validate()).resolves.toBeUndefined();
+    expect(located.location).toBe("Mysuru");
+    const legacy = invitation();
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.location).toBeNull();
+  });
+  it.each(["x".repeat(121), "Pune\n", 123, {}])("rejects invalid location %j without mongoose string coercion", async (location) => {
+    await expect(invitation({ location }).validate()).rejects.toMatchObject({ name: "ValidationError" });
   });
 });

@@ -1,3 +1,6 @@
+import { WORKFLOW_TIMELINE_SCHEMAS } from "./openapi/workflow-timelines.js";
+import { USER_LOCATION_MAX_LENGTH } from "./domain/user-location.js";
+import { DESIGNER_ASSIGNMENT_SCHEMAS, DESIGNER_ASSIGNMENT_REQUESTS, DESIGNER_ASSIGNMENT_RESPONSES, DESIGNER_ASSIGNMENT_QUERIES } from "./openapi/designer-assignment.js";
 import { ROOM_CATEGORIES } from "./domain/estimate-room-options.js";
 import { PROJECT_NUMBER_SCHEMA } from "./openapi/project-number.js";
 import { USER_RESPONSIBILITY_SCHEMAS } from "./openapi/user-responsibilities.js";
@@ -172,17 +175,21 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...VENDOR_SUGGESTION_REQUESTS,
   ...VENDOR_KPI_REQUESTS,
   ...VENDOR_INDUCTION_REQUESTS,
+  ...DESIGNER_ASSIGNMENT_REQUESTS,
   "POST /projects/:projectId/design-requirements/actions": jsonRequest("DesignRequirementAction"),
   "POST /projects/:projectId/design-workflow/furniture-uoms": jsonRequest("FurnitureUomCreate"),
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
   "DELETE /admin/users/:userId": jsonRequest("ManagedUserDeletionRequest"),
+  "PATCH /admin/users/:userId": jsonRequest("ManagedUserUpdateRequest"),
+  "POST /admin/user-invitations": jsonRequest("CreateUserInvitationRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
   "POST /auth/password-reset/request": jsonRequest("PasswordResetRequest"),
   "POST /auth/password-reset/inspect": jsonRequest("PasswordResetInspectRequest"),
   "POST /auth/password-reset/complete": jsonRequest("PasswordResetCompleteRequest"),
   "POST /auth/user-invitations/inspect": jsonRequest("InvitationInspectRequest"),
   "POST /auth/user-invitations/accept": jsonRequest("InvitationAcceptRequest"),
+  "PUT /admin/workflow-timelines": jsonRequest("UpdateWorkflowTimelines"),
   "PUT /admin/project-initiation-defaults": jsonRequest("ProjectInitiationDefaultsUpdate"),
   "POST /admin/projects": jsonRequest("AdminProjectInitiationRequest"),
   "POST /admin/projects/:projectId/design-assignment": jsonRequest(
@@ -314,6 +321,13 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/users": "UserDirectoryPage",
   "GET /admin/users/:userId/responsibilities": "UserResponsibilitiesPage",
   "DELETE /admin/users/:userId": "ManagedUserDeletionResult",
+  "PATCH /admin/users/:userId": "ManagedUserMutationResult",
+  "GET /admin/user-invitations": "UserInvitationPage",
+  "POST /admin/user-invitations": "UserInvitationItem",
+  "POST /admin/user-invitations/:invitationId/resend": "UserInvitationItem",
+  "POST /admin/user-invitations/:invitationId/revoke": "UserInvitationItem",
+  "GET /admin/workflow-timelines": "WorkflowTimelineConfiguration",
+  "PUT /admin/workflow-timelines": "WorkflowTimelineConfiguration",
   "GET /admin/project-initiation-defaults": "ProjectInitiationDefaults",
   "PUT /admin/project-initiation-defaults": "ProjectInitiationDefaults",
   "GET /admin/projects": "AdminProjectPage",
@@ -327,6 +341,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /leads/:leadId/estimate": "NullableNumberedEstimateRecord",
   "GET /estimates": "NumberedEstimateList",
   "GET /admin/designers": "DesignerOptionList",
+  ...DESIGNER_ASSIGNMENT_RESPONSES,
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
   "GET /projects/:projectId/design-requirements": "DesignRequirements",
@@ -460,6 +475,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
   "POST /auth/user-invitations/accept": "Accept a staff invitation",
   "GET /admin/projects": "List projects for Admin or Super Admin",
+  "GET /admin/workflow-timelines": "Read Super Admin Design and Execution workday scenarios",
+  "PUT /admin/workflow-timelines": "Save timeline base workdays with version checking",
   "GET /admin/project-initiation-defaults": "Read the configured default Project Manager",
   "PUT /admin/project-initiation-defaults": "Set the global Project Manager default as Super Admin",
   "POST /admin/projects": "Initiate a project with its Sales owner and configured Project Manager",
@@ -467,7 +484,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /admin/projects/:projectId": "Read Admin project details",
   "GET /admin/designers": "List assignable Designers",
   "POST /admin/projects/:projectId/design-assignment":
-    "Assign a Designer to an approved estimate",
+    "Retired immediate assignment: returns 409 DESIGNER_ACCEPTANCE_REQUIRED",
   "GET /designer/design-plan-tasks": "List the current Designer's plan work",
   "GET /admin/design-plan-response-tasks":
     "List design-plan Client response tasks",
@@ -672,6 +689,7 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...ESTIMATE_REVISION_QUERIES,
+  ...DESIGNER_ASSIGNMENT_QUERIES,
   ...CHAT_QUERY_PARAMETERS,
   ...EXECUTION_QUERIES,
   ...PM_ESTIMATE_QUERIES,
@@ -1259,7 +1277,9 @@ function humanOperation(operation: HumanJwtOperation): OpenApiOperation {
     security: [{ bearerAuth: [] }],
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
-    responses: responsesFor(operation.key),
+    ...(operation.key === "POST /admin/projects/:projectId/design-assignment"
+      ? { deprecated: true, responses: { ...standardProtectedErrors } }
+      : { responses: responsesFor(operation.key) }),
     "x-lisno-permission": operation.permission,
     "x-lisno-operation-class": operation.operationClass,
     "x-lisno-super-admin-behavior": operation.superAdminBehavior,
@@ -1719,6 +1739,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   };
   return {
     ...ESTIMATE_COLLABORATION_SCHEMAS,
+    ...DESIGNER_ASSIGNMENT_SCHEMAS,
     ...QUOTATION_SCHEMAS,
     ...USER_RESPONSIBILITY_SCHEMAS,
     ...ESTIMATE_REVISION_SCHEMAS,
@@ -2284,6 +2305,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
       }
     },
+    ...WORKFLOW_TIMELINE_SCHEMAS,
     ProjectInitiationDefaultsUpdate: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "projectManagerId"],
       properties: { expectedVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, projectManagerId: { ...id, maxLength: 160 } },
@@ -2346,6 +2368,75 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         pagination: { $ref: "#/components/schemas/Pagination" }
       }
     },
+    UserLocation: {
+      type: "string", nullable: true, maxLength: USER_LOCATION_MAX_LENGTH,
+      description: "Optional city or area. Trimmed; blank, absent historical values and explicit null mean unset. Control characters are rejected. Independent of project location and address."
+    },
+    UserKnownLanguages: {
+      type: "array", items: { type: "string", enum: [...PROJECT_LANGUAGES] }, uniqueItems: true,
+      maxItems: PROJECT_LANGUAGES.length, description: "Known languages in catalog order. Missing historical values read as an empty array."
+    },
+    UserPreferredLanguage: {
+      type: "string", enum: [...PROJECT_LANGUAGES, null], nullable: true,
+      description: "Optional preferred language, independent of known languages. Missing historical values read as null."
+    },
+    ManagedUserUpdateRequest: {
+      oneOf: [
+        { type: "object", additionalProperties: false, required: ["version", "role"], properties: { version: { type: "integer", minimum: 1 }, role: { $ref: "#/components/schemas/Role" } } },
+        { type: "object", additionalProperties: false, required: ["version", "active"], properties: { version: { type: "integer", minimum: 1 }, active: { type: "boolean" } } },
+        { type: "object", additionalProperties: false, required: ["version", "location"], properties: { version: { type: "integer", minimum: 1 }, location: { $ref: "#/components/schemas/UserLocation" } } },
+        { type: "object", additionalProperties: false, required: ["version", "languagesKnown", "preferredLanguage"], properties: { version: { type: "integer", minimum: 1 }, languagesKnown: { $ref: "#/components/schemas/UserKnownLanguages" }, preferredLanguage: { $ref: "#/components/schemas/UserPreferredLanguage" } } }
+      ],
+      description: "Change one setting at a time. Location-only and language-only changes retain sessions, grants, assignments and previously issued invitation/reset authority. A changed value increments the user version; a stale version returns 409. The sole Super Admin remains immutable."
+    },
+    ManagedUserMutationResult: {
+      type: "object", additionalProperties: false, required: ["user", "revokedGrantCount", "responsibilities"],
+      properties: {
+        user: { $ref: "#/components/schemas/UserDirectoryItem" },
+        revokedGrantCount: { type: "integer", minimum: 0 },
+        responsibilities: USER_RESPONSIBILITY_SCHEMAS.UserResponsibilitiesPage.properties.counts
+      }
+    },
+    CreateUserInvitationRequest: {
+      type: "object", additionalProperties: false, required: ["name", "email", "role", "mobile"],
+      properties: {
+        name: { type: "string", minLength: 1, maxLength: 120 },
+        email: { type: "string", format: "email", maxLength: 254 },
+        role: { type: "string", enum: INVITABLE_ROLE_CODES.filter(role => role !== "program_manager") },
+        vendorId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", description: "Required only for Vendor invitations; forbidden for other roles." },
+        mobile: { type: "string", minLength: 1, maxLength: 30 },
+        location: { $ref: "#/components/schemas/UserLocation" },
+        languagesKnown: { $ref: "#/components/schemas/UserKnownLanguages" },
+        preferredLanguage: { $ref: "#/components/schemas/UserPreferredLanguage" }
+      },
+      description: "Super Admin invitation. Optional location and language metadata are retained on resend and copied to the user on acceptance. Existing mail preflight and invitation eligibility rules apply."
+    },
+    UserInvitationItem: {
+      type: "object", additionalProperties: false,
+      required: ["id", "name", "email", "role", "mobile", "location", "languagesKnown", "preferredLanguage", "status", "currentLinkAvailable", "availableActions", "invitedBy", "issuedAt", "expiresAt", "deliveryStatus", "deliveryAttemptedAt", "sentAt", "version", "createdAt", "updatedAt"],
+      properties: {
+        id, name: { type: "string" }, email: { type: "string", format: "email" },
+        role: { type: "string", enum: [...INVITABLE_ROLE_CODES] }, vendorId: id,
+        mobile: { type: "string" }, location: { $ref: "#/components/schemas/UserLocation" },
+        languagesKnown: { $ref: "#/components/schemas/UserKnownLanguages" },
+        preferredLanguage: { $ref: "#/components/schemas/UserPreferredLanguage" },
+        status: { type: "string", enum: ["pending", "delivery_failed", "expired", "accepted", "revoked", "superseded"] },
+        currentLinkAvailable: { type: "boolean" }, availableActions: { type: "array", items: { type: "string", enum: ["resend", "revoke"] } },
+        invitedBy: { type: "object", additionalProperties: false, required: ["id", "name", "email", "role"], properties: { id, name: { type: "string" }, email: { type: "string", format: "email" }, role: { $ref: "#/components/schemas/Role" } } },
+        issuedAt: dateTime, expiresAt: dateTime,
+        deliveryStatus: { type: "string", enum: ["queued", "sent", "failed"] },
+        deliveryAttemptedAt: { ...dateTime, nullable: true }, sentAt: { ...dateTime, nullable: true },
+        version: { type: "integer", minimum: 1 }, createdAt: dateTime, updatedAt: dateTime
+      }
+    },
+    UserInvitationPage: {
+      type: "object", additionalProperties: false, required: ["items", "pagination", "invitableRoles"],
+      properties: {
+        items: { type: "array", items: { $ref: "#/components/schemas/UserInvitationItem" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+        invitableRoles: { type: "array", items: { type: "string", enum: INVITABLE_ROLE_CODES.filter(role => role !== "program_manager") } }
+      }
+    },
     ManagedUserDeletionRequest: {
       type: "object",
       additionalProperties: false,
@@ -2383,7 +2474,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     UserDirectoryItem: {
       type: "object",
       additionalProperties: false,
-      required: ["id", "name", "email", "role", "active", "version", "createdAt", "updatedAt"],
+      required: ["id", "name", "email", "role", "active", "version", "location", "languagesKnown", "preferredLanguage", "createdAt", "updatedAt"],
       properties: {
         id,
         name: { type: "string" },
@@ -2393,6 +2484,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         version: { type: "integer", minimum: 1 },
         avatar: { type: "string" },
         title: { type: "string" },
+        location: { $ref: "#/components/schemas/UserLocation" },
+        languagesKnown: { $ref: "#/components/schemas/UserKnownLanguages" },
+        preferredLanguage: { $ref: "#/components/schemas/UserPreferredLanguage" },
         createdAt: dateTime,
         updatedAt: dateTime
       }
@@ -3066,7 +3160,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...DESIGN_REQUIREMENTS_SCHEMAS,
     DesignWorkflowActionRequest: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
-      description: "For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. Client Kick off is mandatory. client_kickoff_not_required is retired and rejected for new requests, including retries of historical exemptions. Historical exemption records remain readable; normal document-bound completion clears the active exemption without resetting established deadlines. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
+      description: "key_collection_schedule is personal to the linked Client; data must match KeyCollectionScheduleData. Confirmation creates an immutable project appointment; actual keys actions still require both kickoffs. For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. Client Kick off is mandatory. client_kickoff_not_required is retired and rejected for new requests, including retries of historical exemptions. Historical exemption records remain readable; normal document-bound completion clears the active exemption without resetting established deadlines. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
       properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { description: "furniture_scope accepts rooms: [{id, required}], optional notApplicable, and dimensions: [{roomId, items: [{estimateItemId, length, width, uomId}]}]. For both furniture_scope and furniture_upload, an approved estimate item with measurementType count instead requires {estimateItemId, measurementType: count, quantity, uomId}: quantity is a positive safe integer, without length/width/height. Dimensional rows may include measurementType: dimensions. The server derives the required mode solely from the frozen estimate unit (pt/pts/point/points after normalization), not the selected Configuration UOM or item name. Mixed-mode fields are rejected. Legacy pending points with dimensions must be sent back and corrected before approval; completed history remains unchanged. Combined scope submissions require every required room and its selected items plus a supporting proof; they create pending dimensions without approval. Their safe projection exposes requirementsSubmissionEventId. Combined furniture_accept and furniture_scope_return require {submissionEventId} matching that current token; Client approval atomically accepts scope and approves all its dimensions, while return retains values with a mandatory reason. Scope edits replace the token and preserve history; combined required-room submissions cannot be replaced by scope-only input. Legacy scope-only flows remain supported. furniture_upload requires rooms: [{roomId, items: [{estimateItemId, length, width, uomId}]}] and a proof file; positive finite dimensions require an active Configuration UOM ID. A Designer may instead resolve accepted, returned, zero-value-only legacy rooms with {resolveReturnedZeroValueRoomIds: [roomId]} and no file; the server validates the pinned approved source and original returned submission, retains its evidence, marks only those rooms optional, and audits the change. Its code/name are snapshotted in the submission; quantity decimalScale does not round measurements. Existing submitted unit snapshots remain valid after catalog changes. Every positive-value approved-estimate item in each submitted room is required; exact zero-value items are excluded from new submissions, while historical pending reviews retain their original item set. Names and saved IDs are canonicalized by the server. Upload creates pending revisions, never approval. Pending legacy rows without estimateItemId must be returned and resubmitted before approval. furniture_dimensions_approve and furniture_dimensions_return require submissions: [{roomId, submissionEventId}] matching current pending revisions. Legacy scope-only furniture_accept and furniture_scope_return take empty data. Both return actions require a note. Assigned Designers and Clients may upload; only Client-capable actors may review, with proof for representatives. furniture_proceed is retired and rejected. Draft design preparation is unchanged; final submissions require approved current dimensions, except valid already-completed legacy stages.", oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, dimensions evidence or Client representation proof, depending on the action. The measurement sketch is optional." }, mediaFiles: { type: "array", items: { type: "string", format: "binary" }, description: "Repeated multipart parts; one or more site photos/videos required for measurement_complete, with no application media count or size cap. The optional sketch retains the configured document upload limit (25 MiB by default). New measurement data is an empty object; folder URLs are not accepted." } }
     },
     FurnitureUomOption: { type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"], properties: { id, code: { type: "string", minLength: 1, maxLength: 64 }, name: { type: "string", minLength: 1, maxLength: 240 }, decimalScale: { type: "integer", minimum: 0, maximum: 3, description: "Estimate quantity precision; does not round furniture measurements." } } },
@@ -3104,6 +3198,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       "enum": ["approved", "awaiting_approval", "source_issue"],
       "description": "Visibility status from the project-linked approved Estimate source. A source issue must not reveal the design workflow."
     },
+    "designerHandoff": { "$ref": "#/components/schemas/DesignerHandoffView" },
     "floors": {
       "type": "array",
       "items": {

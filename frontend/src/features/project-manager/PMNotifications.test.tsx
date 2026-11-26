@@ -64,6 +64,17 @@ describe("PM notification destinations", () => {
     expect(within(dialog).getByRole("link", { name: "Finish decision" })).toHaveAttribute("href", "/projects/project-a/execution?tab=selections&entity=selection-a&locate=1");
   });
 
+  it.each(["super_admin", "site_manager"] as const)("opens the collection workflow for a %s warning", async role => {
+    state.role = role;
+    server.use(http.get("/api/v1/project-manager/notifications", () => HttpResponse.json({ data: {
+      items: [{ id: "collection-warning", projectId: "project-a", entityId: "appointment-a", family: "key_collection", action: "orange_warning", title: "Key collection changes to orange soon", at: "2026-11-26T08:30:00Z", read: false }], total: 1, unreadTotal: 1
+    } })));
+    mount(<PMNotifications />);
+    await userEvent.click(await screen.findByRole("button", { name: "Project updates, 1 unread" }));
+    expect(screen.getByRole("link", { name: "Key collection changes to orange soon" })).toHaveAttribute("href", role === "super_admin"
+      ? "/admin/projects/project-a#key-collection" : "/projects/project-a/execution?detail=1#key-collection");
+  });
+
   it.each(["super_admin", "site_manager"] as const)("keeps notification reads permission-gated for %s", async role => {
     state.role = role;
     state.permitted = false;

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PROJECT_LANGUAGE_OPTIONS, type ProjectLanguage } from "../../../../shared/projects/projectInitiation";
 
 import { isActiveFrontendRole, ROLE_LABELS, type Role } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
@@ -15,10 +16,13 @@ import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
-import { Field, Select } from "../../components/ui/Field";
+import { Field, Input, Select } from "../../components/ui/Field";
 import { adminUserKeys, updateManagedUser } from "./adminApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import { UserResponsibilitiesPanel } from "./UserResponsibilitiesPanel";
+import { normalizeUserLocation, userLocationError } from "./userLocation";
+import { normalizeUserLanguages } from "./userLanguages";
+import { ProjectLanguageMultiSelect } from "./ProjectLanguageMultiSelect";
 
 export interface UserMutationDialogProps {
   user: UserDirectoryItem;
@@ -30,6 +34,7 @@ export interface UserMutationDialogProps {
 }
 
 type ManageableRole = Exclude<Role, "super_admin">;
+type LanguageField = "languagesKnown" | "preferredLanguage";
 
 const missingCurrentPageMessage =
   "This user is no longer in the current directory view. Close this dialog and locate the account again.";
@@ -107,37 +112,63 @@ export function UserMutationDialog({
   const auth = useAuth();
   const feedback = useFeedback();
   const [selectedRole, setSelectedRole] = useState<Role>(user.role);
+  const [location, setLocation] = useState(user.location ?? "");
+  const [locationError, setLocationError] = useState<string>();
+  const locationControl = useRef<HTMLInputElement>(null);
+  const [languagesKnown, setLanguagesKnown] = useState(() => normalizeUserLanguages(user.languagesKnown));
+  const [preferredLanguage, setPreferredLanguage] = useState<ProjectLanguage | "">(user.preferredLanguage ?? "");
+  const [languageErrors, setLanguageErrors] = useState<Partial<Record<LanguageField, string>>>({});
+  const languageControls = useRef<Partial<Record<LanguageField, HTMLElement | null>>>({});
+  const languageErrorFocus = useRef<LanguageField | undefined>(undefined);
+  const savedLanguagesKey = normalizeUserLanguages(user.languagesKnown).join(",");
+  const previousUser = useRef({ id: user.id, version: user.version });
   const [confirmingDeactivation, setConfirmingDeactivation] = useState(false);
   const [error, setError] = useState("");
   const [conflictVersion, setConflictVersion] = useState<number | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     setSelectedRole(user.role);
-    if (conflictVersion !== null && user.version !== conflictVersion) {
+    setLocation(user.location ?? "");
+    setLocationError(undefined);
+    setLanguagesKnown(normalizeUserLanguages(user.languagesKnown));
+    setPreferredLanguage(user.preferredLanguage ?? "");
+    setLanguageErrors({});
+    const refreshedVersion = previousUser.current.id === user.id && previousUser.current.version !== user.version;
+    previousUser.current = { id: user.id, version: user.version };
+    if ((conflictVersion !== null && user.version !== conflictVersion) || refreshedVersion) {
       setConflictVersion(null);
       setError(
         "The user changed elsewhere. Latest details are now loaded; choose the change again."
       );
     }
-  }, [conflictVersion, user.id, user.role, user.version]);
+  }, [conflictVersion, user.id, user.location, user.role, user.version, savedLanguagesKey, user.preferredLanguage]);
 
   const mutation = useMutation({
     mutationFn: (change: UpdateManagedUserInput) =>
       updateManagedUser(user.id, change),
-    onSuccess: async (result) => {
+    onSuccess: async (result, change) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: adminUserKeys.all }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       feedback.success({
-        title: "User access updated",
-        message: successMessage(result)
+        title: "languagesKnown" in change ? "User languages updated" : "location" in change ? "User location updated" : "User access updated",
+        message: "languagesKnown" in change ? "Language preferences saved." : "location" in change
+          ? (result.user.location ? "Location saved." : "Location cleared.")
+          : successMessage(result)
       });
       onClose();
     },
-    onError: async (failure) => {
+    onError: async (failure, change) => {
       setConfirmingDeactivation(false);
       if (failure instanceof ApiError) {
+        if (failure.code === "NOT_FOUND") {
+          setUnavailable(true);
+          setError(missingCurrentPageMessage);
+          await queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+          return;
+        }
         if (failure.code === "VERSION_CONFLICT") {
           setSelectedRole(user.role);
           setConflictVersion(user.version);
@@ -154,15 +185,45 @@ export function UserMutationDialog({
           setError(failure.message);
           return;
         }
+        if ("location" in change && failure.fields?.location) {
+          setLocationError(failure.fields.location);
+          locationControl.current?.focus();
+          return;
+        }
+        if ("languagesKnown" in change && failure.fields) {
+          const fields: LanguageField[] = ["languagesKnown", "preferredLanguage"];
+          const nextErrors: Partial<Record<LanguageField, string>> = {};
+          for (const field of fields) if (failure.fields[field]) nextErrors[field] = failure.fields[field];
+          if (Object.keys(nextErrors).length) {
+            languageErrorFocus.current = fields.find((field) => nextErrors[field]);
+            setLanguageErrors(nextErrors);
+            return;
+          }
+        }
       }
-      setError("User access could not be updated. Please try again.");
+      setError("languagesKnown" in change ? "User languages could not be updated. Please try again." : "location" in change
+        ? "User location could not be updated. Please try again."
+        : "User access could not be updated. Please try again.");
     }
   });
 
+  useEffect(() => {
+    if (locationError && !mutation.isPending) locationControl.current?.focus();
+  }, [locationError, mutation.isPending]);
+  useEffect(() => {
+    if (mutation.isPending || !languageErrorFocus.current) return;
+    languageControls.current[languageErrorFocus.current]?.focus();
+    languageErrorFocus.current = undefined;
+  }, [languageErrors, mutation.isPending]);
+
   const interactionBlocked =
-    mutation.isPending || conflictVersion !== null || !isCurrentPageUser;
+    mutation.isPending || conflictVersion !== null || unavailable || !isCurrentPageUser || user.role === "super_admin";
   const hasRoleChanges = selectedRole !== user.role;
-  const deletionBlocked = interactionBlocked || !deletionReady || hasRoleChanges;
+  const hasLocationChanges = normalizeUserLocation(location) !== normalizeUserLocation(user.location ?? "") || Boolean(userLocationError(location));
+  const hasLanguageChanges = normalizeUserLanguages(languagesKnown).join(",") !== savedLanguagesKey || preferredLanguage !== (user.preferredLanguage ?? "");
+  const hasChanges = hasRoleChanges || hasLocationChanges || hasLanguageChanges;
+  const changedSetting = hasLanguageChanges ? "language" : hasLocationChanges ? "location" : "role";
+  const deletionBlocked = interactionBlocked || !deletionReady || hasChanges;
   const displayedError = !isCurrentPageUser
     ? missingCurrentPageMessage
     : error;
@@ -170,6 +231,8 @@ export function UserMutationDialog({
   const submitRole = () => {
     if (
       interactionBlocked ||
+      hasLocationChanges ||
+      hasLanguageChanges ||
       selectedRole === user.role ||
       !manageableRoles.includes(selectedRole as ManageableRole)
     ) {
@@ -180,9 +243,28 @@ export function UserMutationDialog({
   };
 
   const submitActive = (active: boolean) => {
-    if (interactionBlocked || active === user.active) return;
+    if (interactionBlocked || hasChanges || active === user.active) return;
     setError("");
     mutation.mutate({ version: user.version, active });
+  };
+
+  const submitLocation = () => {
+    if (interactionBlocked || hasRoleChanges || hasLanguageChanges || !hasLocationChanges) return;
+    const validationError = userLocationError(location);
+    setLocationError(validationError);
+    setError("");
+    if (validationError) {
+      locationControl.current?.focus();
+      return;
+    }
+    mutation.mutate({ version: user.version, location: normalizeUserLocation(location) });
+  };
+
+  const submitLanguages = () => {
+    if (interactionBlocked || hasRoleChanges || hasLocationChanges || !hasLanguageChanges) return;
+    setError("");
+    setLanguageErrors({});
+    mutation.mutate({ version: user.version, languagesKnown: normalizeUserLanguages(languagesKnown), preferredLanguage: preferredLanguage || null });
   };
 
   if (confirmingDeactivation) {
@@ -230,7 +312,7 @@ export function UserMutationDialog({
   return (
     <ContextPanel
       key="user-mutation"
-      dirty={hasRoleChanges}
+      dirty={hasChanges}
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="admin-user-dialog__actions">
@@ -242,10 +324,30 @@ export function UserMutationDialog({
             Cancel
           </Button>
           <Button
-            busy={mutation.isPending}
+            type="submit"
+            form={`managed-location-form-${user.id}`}
+            busy={mutation.isPending && mutation.variables?.location !== undefined}
+            busyLabel="Saving…"
+            disabled={interactionBlocked || hasRoleChanges || hasLanguageChanges || !hasLocationChanges}
+          >
+            Save location
+          </Button>
+          <Button
+            type="submit"
+            form={`managed-languages-form-${user.id}`}
+            busy={mutation.isPending && mutation.variables?.languagesKnown !== undefined}
+            busyLabel="Saving…"
+            disabled={interactionBlocked || hasRoleChanges || hasLocationChanges || !hasLanguageChanges}
+          >
+            Save languages
+          </Button>
+          <Button
+            busy={mutation.isPending && mutation.variables?.role !== undefined}
             busyLabel="Saving…"
             disabled={
               interactionBlocked ||
+              hasLocationChanges ||
+              hasLanguageChanges ||
               selectedRole === user.role ||
               !manageableRoles.includes(selectedRole as ManageableRole)
             }
@@ -257,7 +359,7 @@ export function UserMutationDialog({
       )}
       title={`Manage ${user.name}`}
       eyebrow="Access administration"
-      description="Change one access setting at a time."
+      description="Update location, languages, or one access setting at a time."
       busy={mutation.isPending}
       onClose={onClose}
     >
@@ -283,7 +385,7 @@ export function UserMutationDialog({
               {...controlProps}
               data-dialog-initial-focus
               value={manageableRoles.includes(selectedRole as ManageableRole) ? selectedRole : ""}
-              disabled={interactionBlocked}
+              disabled={interactionBlocked || hasLocationChanges || hasLanguageChanges}
               onChange={(event) => {
                 setError("");
                 setSelectedRole(event.target.value as ManageableRole);
@@ -298,6 +400,66 @@ export function UserMutationDialog({
             </Select>
           )}
         </Field>
+        <form id={`managed-location-form-${user.id}`} onSubmit={(event) => {
+          event.preventDefault();
+          submitLocation();
+        }} noValidate>
+          <Field id={`managed-location-${user.id}`} label="Location" hint="City or area" error={locationError}>
+            {(controlProps) => (
+              <Input
+                {...controlProps}
+                ref={locationControl}
+                autoComplete="address-level2"
+                value={location}
+                disabled={interactionBlocked || hasRoleChanges || hasLanguageChanges}
+                onChange={(event) => {
+                  setLocation(event.target.value);
+                  setLocationError(undefined);
+                  setError("");
+                }}
+              />
+            )}
+          </Field>
+        </form>
+        <form id={`managed-languages-form-${user.id}`} className="admin-user-dialog__language-form" onSubmit={(event) => {
+          event.preventDefault();
+          submitLanguages();
+        }} noValidate>
+          <Field id={`managed-languages-known-${user.id}`} label="Known languages" error={languageErrors.languagesKnown}>
+            {(controlProps) => (
+              <ProjectLanguageMultiSelect
+                {...controlProps}
+                value={languagesKnown}
+                disabled={interactionBlocked || hasRoleChanges || hasLocationChanges}
+                inputRef={(element) => { languageControls.current.languagesKnown = element; }}
+                onChange={(value) => {
+                  setLanguagesKnown(value);
+                  setLanguageErrors((current) => ({ ...current, languagesKnown: undefined }));
+                  setError("");
+                }}
+              />
+            )}
+          </Field>
+          <Field id={`managed-preferred-language-${user.id}`} label="Preferred language" error={languageErrors.preferredLanguage}>
+            {(controlProps) => (
+              <Select
+                {...controlProps}
+                value={preferredLanguage}
+                disabled={interactionBlocked || hasRoleChanges || hasLocationChanges}
+                ref={(element) => { languageControls.current.preferredLanguage = element; }}
+                onChange={(event) => {
+                  setPreferredLanguage(event.target.value as ProjectLanguage | "");
+                  setLanguageErrors((current) => ({ ...current, preferredLanguage: undefined }));
+                  setError("");
+                }}
+              >
+                <option value="">Not set</option>
+                {PROJECT_LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </Select>
+            )}
+          </Field>
+        </form>
+        {hasChanges ? <p className="text-muted">Save or cancel the {changedSetting} change before making another change.</p> : null}
         <UserResponsibilitiesPanel user={user} destinationRole={selectedRole}
           enabled={isCurrentPageUser}
           canReadProjects={hasFrontendPermission(auth.authorization, "projects.read")} />
@@ -316,7 +478,7 @@ export function UserMutationDialog({
           {user.active ? (
             <Button
               variant="destructive"
-              disabled={interactionBlocked}
+              disabled={interactionBlocked || hasChanges}
               onClick={() => {
                 setError("");
                 setConfirmingDeactivation(true);
@@ -327,9 +489,9 @@ export function UserMutationDialog({
           ) : (
             <Button
               variant="secondary"
-              busy={mutation.isPending}
+              busy={mutation.isPending && mutation.variables?.active === true}
               busyLabel="Activating…"
-              disabled={interactionBlocked}
+              disabled={interactionBlocked || hasChanges}
               onClick={() => submitActive(true)}
             >
               Activate user
@@ -344,14 +506,14 @@ export function UserMutationDialog({
             <div>
               <h3 id={`account-deletion-${user.id}`}>Delete account</h3>
               <p>Remove this user from the list and revoke access. Work history is kept.</p>
-              {hasRoleChanges ? (
-                <p id={`account-deletion-blocked-${user.id}`}>Save or cancel the role change before deleting.</p>
+              {hasChanges ? (
+                <p id={`account-deletion-blocked-${user.id}`}>Save or cancel the {changedSetting} change before deleting.</p>
               ) : null}
             </div>
             <Button
               variant="destructive-outline"
               disabled={deletionBlocked}
-              aria-describedby={hasRoleChanges ? `account-deletion-blocked-${user.id}` : undefined}
+              aria-describedby={hasChanges ? `account-deletion-blocked-${user.id}` : undefined}
               onClick={() => {
                 if (!deletionBlocked) onDelete();
               }}

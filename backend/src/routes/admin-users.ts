@@ -1,3 +1,5 @@
+import { userLanguageUpdateSchema } from "../domain/user-languages.js";
+import { userLocationSchema } from "../domain/user-location.js";
 import { Router } from "express";
 import { z } from "zod";
 
@@ -22,10 +24,23 @@ const directoryQuerySchema = z
   })
   .strict();
 
-const updateManagedUserSchema = z.union([
+const accessOrLocationUpdateSchema = z.union([
   z.object({ version: z.number().int().positive(), role: roleSchema }).strict(),
-  z.object({ version: z.number().int().positive(), active: z.boolean() }).strict()
+  z.object({ version: z.number().int().positive(), active: z.boolean() }).strict(),
+  z.object({ version: z.number().int().positive(), location: userLocationSchema }).strict()
 ]);
+
+// Select the language branch explicitly so field errors are not hidden by a union issue.
+const updateManagedUserSchema = z.unknown().transform((value, context) => {
+  const isLanguageUpdate = value !== null && typeof value === "object" &&
+    ("languagesKnown" in value || "preferredLanguage" in value);
+  const result = (isLanguageUpdate ? userLanguageUpdateSchema : accessOrLocationUpdateSchema).safeParse(value);
+  if (!result.success) {
+    for (const issue of result.error.issues) context.addIssue(issue);
+    return z.NEVER;
+  }
+  return result.data;
+});
 
 const responsibilitiesQuerySchema = z.object({ destinationRole: roleSchema.optional(), ...paginationShape }).strict();
 

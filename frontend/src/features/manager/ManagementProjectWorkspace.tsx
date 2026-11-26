@@ -1,3 +1,4 @@
+import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
@@ -92,10 +93,10 @@ export function ManagementProjectWorkspace() {
       className="designer-page management-workspace"
       aria-labelledby="management-project-title"
     >
-      <PageHeader id="management-project-title" title={data.name} metadata={<ProjectId projectNumber={data.projectNumber} />} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} actions={<ProjectStatusButton projectId={data.id} projectName={data.name} presentation="chip" />} />
+      <PageHeader id="management-project-title" title={data.name} metadata={<ProjectId projectNumber={data.projectNumber} />} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} actions={<div className="project-status-header-actions"><KeyCollectionHeader projectId={data.id} projectName={data.name} /><ProjectStatusButton projectId={data.id} projectName={data.name} presentation="chip" /></div>} />
 
       <ProjectChatNavigation projectId={projectId} overviewTo={`${base}/projects/${projectId}`} showStatus={false} />
-      <ProjectWorkflowPanel projectId={projectId} />
+      <ProjectWorkflowPanel showAppointmentTimer={false} projectId={projectId} />
 
       <section aria-labelledby="delivery-structure-title">
         <h2 id="delivery-structure-title">Delivery structure</h2>

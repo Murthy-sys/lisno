@@ -1,3 +1,6 @@
+import { readUserLanguages, sameUserLanguages, userLanguageUpdateSchema } from "../domain/user-languages.js";
+import type { ProjectLanguage } from "../contracts/project-initiation.js";
+import { userLocationSchema } from "../domain/user-location.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import type { UserResponsibilitiesPage, UserResponsibilityQuery, UserResponsibilityReader } from "../contracts/user-responsibilities.js";
 import { hasIncompatibleResponsibility } from "../domain/user-responsibilities.js";
@@ -27,13 +30,18 @@ export interface UserDirectoryItem {
   version: number;
   avatar?: string;
   title?: string;
+  location: string | null;
+  languagesKnown: ProjectLanguage[];
+  preferredLanguage: ProjectLanguage | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export type UpdateManagedUserInput =
-  | { version: number; role: Role; active?: never }
-  | { version: number; active: boolean; role?: never };
+  | { version: number; role: Role; active?: never; location?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; active: boolean; role?: never; location?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; location: string | null; role?: never; active?: never; languagesKnown?: never; preferredLanguage?: never }
+  | { version: number; languagesKnown: ProjectLanguage[]; preferredLanguage: ProjectLanguage | null; role?: never; active?: never; location?: never };
 
 export interface ManagedUserMutationResult {
   user: UserDirectoryItem;
@@ -134,9 +142,30 @@ export function createUserAdministrationService(
         if (target.role === "program_manager" && input.role !== undefined) {
           throw new ApiError(409, "PROJECT_MANAGER_MIGRATION_REQUIRED", "Use the reviewed Project Manager migration to preserve assignments and approval history.");
         }
+        let languageChange: ReturnType<typeof readUserLanguages> | undefined;
+        if ("languagesKnown" in input || "preferredLanguage" in input) {
+          const parsed = userLanguageUpdateSchema.safeParse(input);
+          if (!parsed.success) {
+            const fields: Record<string, string> = {};
+            for (const issue of parsed.error.issues) {
+              if (issue.code === "unrecognized_keys") {
+                for (const key of issue.keys) fields[key] = `Unrecognized field: ${key}.`;
+              } else fields[String(issue.path[0] ?? "languagesKnown")] = issue.message;
+            }
+            throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", fields);
+          }
+          languageChange = readUserLanguages(parsed.data);
+        }
+        const languageChanges = languageChange !== undefined && !sameUserLanguages(readUserLanguages(target), languageChange);
         const roleChanges = input.role !== undefined && input.role !== target.role;
         const activeChanges = input.active !== undefined && input.active !== target.active;
         const deactivates = activeChanges && input.active === false;
+        const locationResult = input.location === undefined ? undefined : userLocationSchema.safeParse(input.location);
+        if (locationResult && !locationResult.success) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", { location: locationResult.error.issues[0]?.message ?? "Location is invalid." });
+        }
+        const location = locationResult?.success ? locationResult.data : undefined;
+        const locationChanges = location !== undefined && location !== (target.location ?? null);
 
         const responsibilities = await transaction.countUserResponsibilities(target.id);
         if (
@@ -150,7 +179,7 @@ export function createUserAdministrationService(
           );
         }
 
-        if (!roleChanges && !activeChanges) {
+        if (!roleChanges && !activeChanges && !locationChanges && !languageChanges) {
           return {
             user: toUserDirectoryItem(target),
             revokedGrantCount: 0,
@@ -164,6 +193,8 @@ export function createUserAdministrationService(
           updated = await transaction.updateUser(target.id, target.version, {
             ...(roleChanges ? { role: input.role } : {}),
             ...(activeChanges ? { active: input.active } : {}),
+            ...(locationChanges ? { location } : {}),
+            ...(languageChanges ? languageChange : {}),
             updatedAt: occurredAt
           });
         } catch (error) {
@@ -186,7 +217,27 @@ export function createUserAdministrationService(
 
         await auditRevokedGrants(auditService, transaction, revoked, storedActor.id, occurredAt);
 
-        if (roleChanges) {
+        if (languageChanges) {
+          await auditService.append({
+            actorId: storedActor.id,
+            action: "user.languages_updated",
+            entityType: "user",
+            entityId: target.id,
+            occurredAt,
+            oldValues: { ...readUserLanguages(target), version: target.version },
+            newValues: { ...readUserLanguages(updated), version: updated.version }
+          }, transaction);
+        } else if (locationChanges) {
+          await auditService.append({
+            actorId: storedActor.id,
+            action: "user.location_updated",
+            entityType: "user",
+            entityId: target.id,
+            occurredAt,
+            oldValues: { location: target.location ?? null, version: target.version },
+            newValues: { location: updated.location ?? null, version: updated.version }
+          }, transaction);
+        } else if (roleChanges) {
           await auditService.append(
             {
               actorId: storedActor.id,
@@ -356,6 +407,8 @@ function toUserDirectoryItem(user: UserRecord): UserDirectoryItem {
     version: user.version,
     ...(user.avatar ? { avatar: user.avatar } : {}),
     ...(user.title ? { title: user.title } : {}),
+    location: user.location ?? null,
+    ...readUserLanguages(user),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
   };

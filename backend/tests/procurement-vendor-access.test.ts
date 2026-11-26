@@ -59,3 +59,25 @@ describe("Procurement invitation source authority", () => {
     expect(vendorOrderAccessCommandSchema.safeParse({ ...valid, action: "send_invitation", expectedOrderVersion: 1, expectedOrderRevision: 1, expectedAccessVersion: null }).success).toBe(true);
   });
 });
+
+
+describe.each(["location", "languages"] as const)("Procurement invitation %s-only edits", profile => {
+  const profileChange = (index: number) => profile === "location"
+    ? { location: ["Bengaluru", "Chennai"][index]! }
+    : { languagesKnown: index === 0 ? ["english" as const] : ["kannada" as const], preferredLanguage: "tamil" as const };
+  it("preserves pending authority across location edits and still rejects a later account change", async () => {
+    const f = fixture();
+    const pending = await f.service.createForProcurement(authority, command);
+    await f.repository.updateUser("issuer", 1, { ...profileChange(0), updatedAt: NOW.toISOString() });
+    await f.repository.updateUser("issuer", 2, { ...profileChange(1), updatedAt: NOW.toISOString() });
+    expect(await f.repository.findUserById("issuer")).toMatchObject({ version: 3, profileVersionOffset: 2 });
+    await expect(f.service.inspect(f.sends[0].rawToken)).resolves.toMatchObject({ role: "vendor" });
+    expect((await f.repository.pageUserInvitations({}, { limit: 10, offset: 0 }, NOW.toISOString())).items[0]?.currentLinkAvailable).toBe(true);
+    f.advance();
+    await f.service.createForProcurement(authority, { ...command, commandId: "location-resend", resend: true, invitationId: pending.id, expectedInvitationVersion: pending.version });
+    await expect(f.service.inspect(f.sends[1].rawToken)).resolves.toMatchObject({ role: "vendor" });
+    await f.repository.updateUser("issuer", 3, { active: false, updatedAt: NOW.toISOString() });
+    await f.repository.updateUser("issuer", 4, { active: true, updatedAt: NOW.toISOString() });
+    await expect(f.service.inspect(f.sends[1].rawToken)).rejects.toMatchObject({ code: "INVITATION_UNAVAILABLE" });
+  });
+});

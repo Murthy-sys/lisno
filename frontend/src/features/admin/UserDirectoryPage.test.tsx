@@ -154,6 +154,35 @@ function page(
 }
 
 describe("UserDirectoryPage", () => {
+  it("shows saved languages in Details without adding directory columns and reads historical values as not set", async () => {
+    installSession(superAdmin);
+    const users = directoryRows.map((row) => row.id === designer.id ? { ...row, languagesKnown: ["kannada" as const, "english" as const], preferredLanguage: "tamil" as const } : row);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(page(users, ROLE_CODES, OPERATIONAL_ROLES))));
+    const user = userEvent.setup();
+    renderApp(["/admin/users"]);
+    await user.click(await screen.findByRole("button", { name: "Details Arun Patel" }));
+    const details = screen.getByRole("dialog", { name: "Arun Patel" });
+    expect(within(details).getByText("English, Kannada")).toBeVisible();
+    expect(within(details).getByText("Tamil")).toBeVisible();
+    expect(screen.queryByRole("columnheader", { name: "Known languages" })).not.toBeInTheDocument();
+    await user.click(within(details).getByRole("button", { name: /Close Arun Patel/i }));
+    await user.click(screen.getByRole("button", { name: "Details Nia Fernandes" }));
+    const historical = screen.getByRole("dialog", { name: "Nia Fernandes" });
+    expect(within(historical).getByText("Known languages").nextElementSibling).toHaveTextContent("Not set");
+    expect(within(historical).getByText("Preferred language").nextElementSibling).toHaveTextContent("Not set");
+  });
+  it("shows each user's location in the table and details with an explicit missing value", async () => {
+    installSession(superAdmin);
+    const users = directoryRows.map((row) => row.id === designer.id ? { ...row, location: "Whitefield, Bengaluru" } : row);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(page(users, ROLE_CODES, OPERATIONAL_ROLES))));
+    const user = userEvent.setup();
+    renderApp(["/admin/users"]);
+    const row = await screen.findByRole("row", { name: /Arun Patel/ });
+    expect(within(row).getByText("Whitefield, Bengaluru")).toBeVisible();
+    expect(within(screen.getByRole("row", { name: /Nia Fernandes/ })).getByText("Not set")).toBeVisible();
+    await user.click(within(row).getByRole("button", { name: "Details Arun Patel" }));
+    expect(within(screen.getByRole("dialog", { name: "Arun Patel" })).getByText("Whitefield, Bengaluru")).toBeVisible();
+  });
   it("keeps directory detail bound to its stable ID and removes stale data after the row disappears", async () => {
     installSession(superAdmin);
     server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(page([designer], ROLE_CODES, OPERATIONAL_ROLES))));
@@ -422,7 +451,7 @@ describe("UserDirectoryPage", () => {
       within(table)
         .getAllByRole("columnheader")
         .map((header) => header.textContent)
-    ).toEqual(["User", "Role", "Status", "Created", "Updated", "Actions"]);
+    ).toEqual(["User", "Role", "Location", "Status", "Created", "Updated", "Actions"]);
     const actionsHeader = within(table).getByRole("columnheader", {
       name: "Actions"
     });

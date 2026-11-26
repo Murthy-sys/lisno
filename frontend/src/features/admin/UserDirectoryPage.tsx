@@ -23,6 +23,7 @@ import { adminUserKeys, getManagedUsers } from "./adminApi";
 import { UserInvitationsPanel } from "./UserInvitationsPanel";
 import { UserMutationDialog } from "./UserMutationDialog";
 import { UserDeletionDialog } from "./UserDeletionDialog";
+import { normalizeUserLanguages, userLanguageLabel } from "./userLanguages";
 
 const PAGE_SIZE = 20;
 
@@ -266,6 +267,7 @@ export function UserDirectoryPage() {
                 <tr>
                   <th scope="col">User</th>
                   <th scope="col">Role</th>
+                  <th scope="col">Location</th>
                   <th scope="col">Status</th>
                   <th scope="col">Created</th>
                   <th scope="col">Updated</th>
@@ -290,6 +292,7 @@ export function UserDirectoryPage() {
                         {ROLE_LABELS[user.role]}
                       </span>
                     </td>
+                    <td className="access-administration__location">{user.location || "Not set"}</td>
                     <td>
                       <StatusBadge
                         tone={user.active ? "success" : "neutral"}
@@ -434,6 +437,9 @@ export function UserDirectoryPage() {
             <dl className="administration-summary">
               <div><dt>Email</dt><dd>{summaryUser.email}</dd></div>
               <div><dt>Role</dt><dd>{ROLE_LABELS[summaryUser.role]}</dd></div>
+              <div><dt>Location</dt><dd>{summaryUser.location || "Not set"}</dd></div>
+              <div><dt>Known languages</dt><dd>{normalizeUserLanguages(summaryUser.languagesKnown).map(userLanguageLabel).join(", ") || "Not set"}</dd></div>
+              <div><dt>Preferred language</dt><dd>{userLanguageLabel(summaryUser.preferredLanguage)}</dd></div>
               {summaryUser.title ? <div><dt>Title</dt><dd>{summaryUser.title}</dd></div> : null}
               <div><dt>Status</dt><dd>{summaryUser.active ? "Active" : "Inactive"}</dd></div>
               <div><dt>Created</dt><dd>{dateTime.format(new Date(summaryUser.createdAt))}</dd></div>

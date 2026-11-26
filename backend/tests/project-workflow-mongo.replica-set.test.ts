@@ -1,3 +1,5 @@
+import { DesignerAssignmentRequestModel } from "../src/models/DesignerAssignmentRequest.js";
+import { createDesignerAssignmentService } from "../src/services/designer-assignment.service.js";
 import { defaultProjectManagerId, insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
 import { QuotationDesignHandoffModel } from "../src/models/QuotationDesignHandoff.js";
@@ -97,6 +99,7 @@ let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
   replica = await startMongoReplicaSet("project-workflow-tests");
   await Promise.all([
+    DesignerAssignmentRequestModel.syncIndexes(),
     EstimateModel.syncIndexes(),
     EstimateDesignDrawingModel.syncIndexes(),
     EstimateDesignExtractionJobModel.syncIndexes(),
@@ -507,7 +510,7 @@ describe("commercial approval handoff", () => {
 });
 
 describe("Designer assignment and task access", () => {
-  it("lets Super Admin assign an active Designer and exposes the task only to that Designer", async () => {
+  it("activates an accepted Super Admin request and exposes the task only to that Designer", async () => {
     const projectId = "workflow-assignment-project";
     const leadId = "workflow-assignment-lead";
     const estimateId = "workflow-assignment-estimate";
@@ -627,16 +630,14 @@ describe("Designer assignment and task access", () => {
       role: "designer"
     } as const;
 
-    await expect(
-      workflow.assignDesigner(superAdmin, projectId, designerId)
-    ).resolves.toMatchObject({
-      estimateId,
-      projectId,
-      projectName: "Assignment Residence",
-      clientName: "Asha Rao",
-      status: "assigned",
-      designPlanVersion: 0
-    });
+    await UserModel.create({ _id: superAdmin.id, name: superAdmin.name, email: superAdmin.email,
+      emailNormalized: superAdmin.email, role: superAdmin.role, active: true, passwordHash: "unused" });
+    await expect(workflow.assignDesigner(superAdmin, projectId, designerId)).rejects.toMatchObject({ code: "DESIGNER_ACCEPTANCE_REQUIRED" });
+    const assignments = createDesignerAssignmentService({ audit: { appendInMongoTransaction: vi.fn(async () => ({ id: "request-audit" })) } as unknown as AuditService, now: () => NOW });
+    const suggestions = await assignments.suggestions(superAdmin, projectId);
+    const pending = await assignments.createRequest(superAdmin, projectId, { designerId, expectedSourceRevision: suggestions.sourceRevision!, idempotencyKey: "assignment-request" });
+    await assignments.decideRequest(assignedDesigner, pending.id, { decision: "accept", expectedVersion: pending.version, idempotencyKey: "assignment-accept" });
+    expect(await workflow.listDesignerTasks(assignedDesigner)).toEqual([expect.objectContaining({ estimateId, projectId, status: "assigned" })]);
 
     const [estimate, project, workflowTasks] = await Promise.all([
       EstimateModel.findById(estimateId).lean(),
@@ -695,7 +696,7 @@ describe("Designer assignment and task access", () => {
     })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
   });
 
-  it("lets the scoped Admin assign a Designer from a legacy approval and normalizes its stale handoff", async () => {
+  it("accepts a Super Admin request from a legacy approval and normalizes its stale handoff", async () => {
     const projectId = "workflow-legacy-assignment-project";
     const leadId = "workflow-legacy-assignment-lead";
     const estimateId = "workflow-legacy-assignment-estimate";
@@ -839,17 +840,13 @@ describe("Designer assignment and task access", () => {
       now: () => NOW
     });
 
-    await expect(workflow.assignDesigner({
-      id: adminId,
-      name: "Ari Admin",
-      email: "ari@example.test",
-      role: "admin"
-    }, projectId, designerId)).resolves.toMatchObject({
-      estimateId,
-      projectId,
-      status: "assigned",
-      designPlanVersion: 0
-    });
+    const proposer = { id: "legacy-request-super-admin", name: "Sam", email: "sam@example.test", role: "super_admin" as const };
+    await UserModel.create({ _id: proposer.id, name: proposer.name, email: proposer.email, emailNormalized: proposer.email, role: proposer.role, active: true, passwordHash: "unused" });
+    const assignments = createDesignerAssignmentService({ audit, now: () => NOW });
+    const suggestions = await assignments.suggestions(proposer, projectId);
+    const pending = await assignments.createRequest(proposer, projectId, { designerId, expectedSourceRevision: suggestions.sourceRevision!, idempotencyKey: "legacy-request" });
+    await assignments.decideRequest({ id: designerId, name: "Nia Designer", email: "nia@example.test", role: "designer" }, pending.id,
+      { decision: "accept", expectedVersion: pending.version, idempotencyKey: "legacy-accept" });
 
     const [estimate, project, lead, workflowTasks] = await Promise.all([
       EstimateModel.findById(estimateId).lean(),
@@ -862,7 +859,7 @@ describe("Designer assignment and task access", () => {
       designPlanStatus: "assigned",
       designPlanVersion: 0,
       designPlanDesignerId: designerId,
-      designPlanAssignedById: adminId,
+      designPlanAssignedById: proposer.id,
       designFrozenAt: null
     });
     expect(project).toMatchObject({

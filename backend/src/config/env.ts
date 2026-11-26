@@ -85,6 +85,7 @@ const environmentSchema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
   VENDOR_ACCESS_DELIVERY_ENABLED: z.enum(["true", "false"]).optional(),
   EXECUTION_REMINDERS_ENABLED: z.enum(["true", "false"]).default("false"),
+  KEY_COLLECTION_REMINDERS_ENABLED: z.enum(["true", "false"]).default("false"),
   PROJECT_CHAT_AI_ENABLED: z.enum(["true", "false"]).default("false"),
   ASK_LISNO_ENABLED: z.enum(["true", "false"]).default("false"),
   ASSISTANT_SERVICE_URL: z.string().optional(),

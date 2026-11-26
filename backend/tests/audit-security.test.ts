@@ -4,7 +4,10 @@ import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS } from "../src/domain/audit-actions.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
-import { createAuditService } from "../src/services/audit.service.js";
+import { createAuditService, sanitizeAuditPage } from "../src/services/audit.service.js";
+import { ROLE_CODES } from "../src/domain/roles.js";
+import { defaultWorkflowTimelines } from "../src/contracts/workflow-timelines.js";
+import { createWorkflowTimelinesService } from "../src/services/workflow-timelines.service.js";
 
 const nestedSensitiveValues = {
   displayName: "Safe Name",
@@ -234,5 +237,126 @@ describe("audit persistence security", () => {
       provider: {},
       failureCode: "SMTP_REJECTED"
     });
+  });
+});
+
+
+describe("user location audit privacy", () => {
+  it("redacts user language values for a Design Head while preserving stored and Super Admin values", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.auditEvents = [];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const superAdmin = seed.users.find(user => user.role === "super_admin")!;
+    const designHead = seed.users.find(user => user.role === "design_head")!;
+    const oldValues = { languagesKnown: ["english"], preferredLanguage: "tamil", version: 1 };
+    const newValues = { languagesKnown: [], preferredLanguage: null, version: 2 };
+    await audit.append({ actorId: superAdmin.id, action: "user.languages_updated", entityType: "user", entityId: "language-user", occurredAt: "2026-11-25T10:00:00.000Z", oldValues, newValues });
+    expect((await audit.list(designHead, {}, { limit: 20, offset: 0 })).items[0]).toMatchObject({ oldValues: { version: 1 }, newValues: { version: 2 } });
+    const head = (await audit.list(designHead, {}, { limit: 20, offset: 0 })).items[0]!;
+    expect(head.oldValues).not.toHaveProperty("languagesKnown");
+    expect(head.newValues).not.toHaveProperty("preferredLanguage");
+    expect((await audit.list(superAdmin, {}, { limit: 20, offset: 0 })).items[0]).toMatchObject({ oldValues, newValues });
+    expect((await repository.pageAuditEvents({}, { limit: 20, offset: 0 })).items[0]).toMatchObject({ oldValues, newValues });
+  });
+  it("keeps stored and Super Admin locations while redacting both values for a Design Head", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.auditEvents = [];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const superAdmin = seed.users.find(user => user.role === "super_admin")!;
+    const designHead = seed.users.find(user => user.role === "design_head")!;
+    const designer = seed.users.find(user => user.role === "designer")!;
+    const locationEvent = await audit.append({
+      actorId: superAdmin.id, action: "user.location_updated", entityType: "user", entityId: designer.id,
+      occurredAt: "2026-11-25T10:00:00.000Z",
+      oldValues: { location: "Bengaluru", version: 1 },
+      newValues: { location: "Chennai", version: 2 }
+    });
+    const projectEvent = await audit.append({
+      actorId: superAdmin.id, action: "project_created", entityType: "project", entityId: "location-project",
+      occurredAt: "2026-11-25T10:01:00.000Z",
+      oldValues: { location: "Mysuru" }, newValues: { location: "Pune" }
+    });
+    const before = await repository.pageAuditEvents({}, { limit: 20, offset: 0 });
+    const headPage = await audit.list(designHead, {}, { limit: 20, offset: 0 });
+    const redacted = headPage.items.find(event => event.id === locationEvent.id)!;
+    expect(redacted.oldValues).toEqual({ version: 1 });
+    expect(redacted.newValues).toEqual({ version: 2 });
+    expect(headPage.items.find(event => event.id === projectEvent.id)).toMatchObject({ oldValues: { location: "Mysuru" }, newValues: { location: "Pune" } });
+    const adminPage = await audit.list(superAdmin, {}, { limit: 20, offset: 0 });
+    expect(adminPage.items.find(event => event.id === locationEvent.id)).toMatchObject({ oldValues: { location: "Bengaluru", version: 1 }, newValues: { location: "Chennai", version: 2 } });
+    expect(await repository.pageAuditEvents({}, { limit: 20, offset: 0 })).toEqual(before);
+  });
+
+  it("applies the same actor-specific redaction to designer activity projections without mutating repository results", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.auditEvents = [];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const superAdmin = seed.users.find(user => user.role === "super_admin")!;
+    const designHead = seed.users.find(user => user.role === "design_head")!;
+    const designer = seed.users.find(user => user.role === "designer")!;
+    const event = await audit.append({ actorId: superAdmin.id, action: "user.location_updated", entityType: "user", entityId: designer.id, occurredAt: "2026-11-25T10:00:00.000Z", oldValues: { location: "Bengaluru" }, newValues: { location: "Chennai" } });
+    const storedPage = { items: [event], total: 1 };
+    const read = vi.spyOn(repository, "pageAuditEvents").mockResolvedValue(storedPage);
+    try {
+      const headPage = await audit.listForDesigner(designHead, designer.id, { limit: 20, offset: 0 });
+      expect(headPage.items[0]).toMatchObject({ oldValues: {}, newValues: {} });
+      expect(headPage.items[0]?.oldValues).not.toHaveProperty("location");
+      expect(headPage.items[0]?.newValues).not.toHaveProperty("location");
+      const adminPage = await audit.listForDesigner(superAdmin, designer.id, { limit: 20, offset: 0 });
+      expect(adminPage.items[0]).toMatchObject({ oldValues: { location: "Bengaluru" }, newValues: { location: "Chennai" } });
+      expect(storedPage.items[0]).toMatchObject({ oldValues: { location: "Bengaluru" }, newValues: { location: "Chennai" } });
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
+
+describe("workflow timeline configuration audit privacy", () => {
+  it("redacts configuration values for every non-Super-Admin projection while preserving history and pagination", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.auditEvents = [];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const event = await audit.append({
+      actorId: "user-super-admin", action: "workflow_timelines_updated", entityType: "workflow_timelines", entityId: "organization",
+      occurredAt: "2026-11-27T10:00:00.000Z",
+      oldValues: { version: 1, bases: defaultWorkflowTimelines().bases },
+      newValues: { version: 2, bases: defaultWorkflowTimelines().bases.map(row => ({ ...row, designWorkdays: 37 })) }
+    });
+    const storedPage = { items: [event], total: 7 };
+    const original = structuredClone(storedPage);
+    for (const role of [...ROLE_CODES.filter(value => value !== "super_admin"), undefined]) {
+      const redacted = sanitizeAuditPage(storedPage, role);
+      expect(redacted).toEqual({ items: [{ ...event, oldValues: {}, newValues: {} }], total: 7 });
+    }
+    expect(sanitizeAuditPage(storedPage, "super_admin")).toEqual(original);
+    expect(storedPage).toEqual(original);
+    expect((await repository.pageAuditEvents({ entityType: "workflow_timelines" }, { limit: 1, offset: 0 })).items[0]).toEqual(event);
+  });
+
+  it("prevents a Design Head from reading saved timeline bases through the global audit list", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.auditEvents = [];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const superAdmin = seed.users.find(user => user.role === "super_admin")!;
+    const designHead = seed.users.find(user => user.role === "design_head")!;
+    const timelines = createWorkflowTimelinesService(repository, audit, () => new Date("2026-11-27T10:00:00.000Z"));
+    const defaults = defaultWorkflowTimelines().bases;
+    const bases = defaults.map(row => ({ ...row, executionWorkdays: row.executionWorkdays + 7 }));
+    await timelines.update(superAdmin, { expectedVersion: 0, bases });
+    await expect(timelines.read(designHead)).rejects.toMatchObject({ status: 403 });
+    const filters = { entityType: "workflow_timelines" };
+    const pagination = { limit: 1, offset: 0 };
+    const stored = await repository.pageAuditEvents(filters, pagination);
+    const head = await audit.list(designHead, filters, pagination);
+    expect(head).toEqual({ ...stored, items: stored.items.map(event => ({ ...event, oldValues: {}, newValues: {} })) });
+    expect(head.total).toBe(1);
+    const admin = await audit.list(superAdmin, filters, pagination);
+    expect(admin.items[0]).toMatchObject({ oldValues: { version: 0, bases: defaults }, newValues: { version: 1, bases } });
+    expect(await repository.pageAuditEvents(filters, pagination)).toEqual(stored);
   });
 });

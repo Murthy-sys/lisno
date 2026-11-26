@@ -1,3 +1,5 @@
+import { userKnownLanguagesSchema, userPreferredLanguageSchema } from "../domain/user-languages.js";
+import { userLocationSchema } from "../domain/user-location.js";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { newPasswordSchema } from "../domain/password-policy.js";
@@ -49,6 +51,9 @@ const createInvitationSchema = z
     email: invitationEmailSchema,
     role: invitableRoleSchema,
     mobile: invitationMobileSchema,
+    location: userLocationSchema.optional(),
+    languagesKnown: userKnownLanguagesSchema.optional(),
+    preferredLanguage: userPreferredLanguageSchema.optional(),
     vendorId: vendorInvitationIdSchema.optional()
   })
   .strict()

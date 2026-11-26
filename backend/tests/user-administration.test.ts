@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
+import { userAuthorizationVersion } from "../src/domain/user-authorization-version.js";
 import { createApp } from "../src/app.js";
 import { ACTIVE_ROLE_CODES, OPERATIONAL_ROLES, ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -984,5 +985,141 @@ describe("user deletion", () => {
     expect(replay.body).toEqual(response.body);
     const oldToken = await request(app).get("/api/v1/auth/me").set("Authorization", bearer(target));
     expect(oldToken.status).toBe(401);
+  });
+});
+
+
+describe("managed user location", () => {
+  it("adds, changes and clears location independently while preserving access and sessions", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = publicUser(canonicalSuperAdmin(seed));
+    const target = addUser(seed, "location-alpha", "designer", { sessionVersion: 5 });
+    const other = addUser(seed, "location-beta", "client", { location: "Mumbai", active: false });
+    seed.projectAccessGrants.push(grant("location-grant", target.id));
+    const { service, repository } = setup(seed);
+    const first = await service.update(operator, target.id, { version: 1, location: "  Bengaluru  " });
+    expect(first).toMatchObject({ user: { location: "Bengaluru", version: 2, role: "designer", active: true }, revokedGrantCount: 0 });
+    expect(await repository.findUserById(target.id)).toMatchObject({ sessionVersion: 5, profileVersionOffset: 1, managerId: target.managerId, authorizedClientIds: target.authorizedClientIds });
+    expect(await repository.listActiveProjectAccessGrants(target.id, "design")).toHaveLength(1);
+    const noOp = await service.update(operator, target.id, { version: 2, location: " Bengaluru " });
+    expect(noOp.user.version).toBe(2);
+    expect((await repository.findUserById(target.id))?.profileVersionOffset).toBe(1);
+    expect(await repository.listAuditEvents({})).toHaveLength(1);
+    await expect(service.update(operator, target.id, { version: 1, location: "Bengaluru" })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    const changed = await service.update(operator, target.id, { version: 2, location: "Mysuru" });
+    expect(changed.user).toMatchObject({ location: "Mysuru", version: 3 });
+    const cleared = await service.update(operator, target.id, { version: 3, location: " " });
+    expect(cleared.user).toMatchObject({ location: null, version: 4 });
+    expect(await repository.findUserById(other.id)).toMatchObject({ location: "Mumbai", active: false, version: 1 });
+    const inactive = await service.update(operator, other.id, { version: 1, location: "Chennai" });
+    expect(inactive.user).toMatchObject({ location: "Chennai", active: false });
+    const directory = await service.list(operator, {}, { limit: 20, offset: 0 });
+    expect(directory.items.find(item => item.id === target.id)?.location).toBeNull();
+    expect(directory.items.find(item => item.id === other.id)?.location).toBe("Chennai");
+    expect(await repository.listAuditEvents({})).toEqual(expect.arrayContaining([expect.objectContaining({ action: "user.location_updated", entityId: target.id, actorId: operator.id, oldValues: { location: null, version: 1 }, newValues: { location: "Bengaluru", version: 2 } })]));
+  });
+
+  it("retains saved location across role/status writes and rolls back a failed location audit", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = publicUser(canonicalSuperAdmin(seed));
+    const target = addUser(seed, "location-retained", "designer", { location: "Pune" });
+    const { service, repository } = setup(seed);
+    expect((await service.update(operator, target.id, { version: 1, role: "procurement" })).user.location).toBe("Pune");
+    expect((await service.update(operator, target.id, { version: 2, active: false })).user.location).toBe("Pune");
+    const before = await repository.findUserById(target.id);
+    const audits = await repository.listAuditEvents({});
+    const audit = createAuditService(repository);
+    vi.spyOn(audit, "append").mockRejectedValueOnce(new Error("location audit failed"));
+    const failing = createUserAdministrationService(repository, audit, clock);
+    await expect(failing.update(operator, target.id, { version: 3, location: "Mumbai" })).rejects.toThrow("location audit failed");
+    expect(await repository.findUserById(target.id)).toEqual(before);
+    expect(await repository.listAuditEvents({})).toEqual(audits);
+  });
+
+  it("enforces the strict HTTP location operation and existing target protections", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = canonicalSuperAdmin(seed);
+    const target = addUser(seed, "location-http", "designer");
+    const deleted = addUser(seed, "location-deleted", "designer", { deletedAt: clock().toISOString() });
+    const { repository } = setup(seed);
+    const app = createApp({ repository, auth, clock, developmentDemoAuthorization: developmentDemoAuthentication() });
+    const url = `/api/v1/admin/users/${target.id}`;
+    const saved = await request(app).patch(url).set("Authorization", bearer(operator)).send({ version: 1, location: " Pune " });
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.user.location).toBe("Pune");
+    for (const input of [{ version: 2 }, { version: 2, location: "Mumbai", active: false }, { version: 2, location: "Mumbai", role: "procurement" }, { version: 2, location: 12 }, { version: 2, location: "Pune\n" }, { version: 2, location: "x".repeat(121) }]) {
+      expect((await request(app).patch(url).set("Authorization", bearer(operator)).send(input)).status).toBe(400);
+    }
+    expect((await request(app).patch(url).send({ version: 2, location: null })).status).toBe(401);
+    expect((await request(app).patch(url).set("Authorization", bearer(target)).send({ version: 2, location: null })).status).toBe(403);
+    expect((await request(app).patch(`/api/v1/admin/users/${operator.id}`).set("Authorization", bearer(operator)).send({ version: operator.version, location: "Pune" })).body.error.code).toBe("SOLE_SUPER_ADMIN_IMMUTABLE");
+    expect((await request(app).patch(`/api/v1/admin/users/${deleted.id}`).set("Authorization", bearer(operator)).send({ version: 1, location: "Pune" })).status).toBe(404);
+  });
+});
+
+describe("managed user languages", () => {
+  it("adds, edits and clears independent preferences while preserving authority, grants and other users", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = publicUser(canonicalSuperAdmin(seed));
+    const target = addUser(seed, "languages-alpha", "designer", { location: "Pune", sessionVersion: 5 });
+    const other = addUser(seed, "languages-beta", "client", { active: false, languagesKnown: ["hindi"], preferredLanguage: "english" });
+    seed.projectAccessGrants.push(grant("languages-grant", target.id));
+    const { service, repository } = setup(seed);
+    const first = await service.update(operator, target.id, { version: 1, languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" });
+    expect(first).toMatchObject({ user: { languagesKnown: ["english", "kannada"], preferredLanguage: "tamil", location: "Pune", version: 2 }, revokedGrantCount: 0 });
+    expect(await repository.findUserById(target.id)).toMatchObject({ sessionVersion: 5, profileVersionOffset: 1 });
+    expect(userAuthorizationVersion((await repository.findUserById(target.id))!)).toBe(1);
+    expect(await repository.listActiveProjectAccessGrants(target.id, "design")).toHaveLength(1);
+    expect((await service.update(operator, target.id, { version: 2, languagesKnown: ["kannada", "english"], preferredLanguage: "tamil" })).user.version).toBe(2);
+    expect(await repository.listAuditEvents({})).toHaveLength(1);
+    await expect(service.update(operator, target.id, { version: 1, languagesKnown: [], preferredLanguage: null })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect((await service.update(operator, target.id, { version: 2, languagesKnown: ["hindi"], preferredLanguage: "english" })).user.version).toBe(3);
+    const cleared = await service.update(operator, target.id, { version: 3, languagesKnown: [], preferredLanguage: null });
+    expect(cleared.user).toMatchObject({ languagesKnown: [], preferredLanguage: null, version: 4 });
+    expect(await repository.findUserById(other.id)).toMatchObject({ languagesKnown: ["hindi"], preferredLanguage: "english", version: 1 });
+    await service.update(operator, other.id, { version: 1, languagesKnown: [], preferredLanguage: "tamil" });
+    const directory = await service.list(operator, {}, { limit: 20, offset: 0 });
+    expect(directory.items.find(item => item.id === other.id)).toMatchObject({ languagesKnown: [], preferredLanguage: "tamil", active: false });
+    expect(await repository.listAuditEvents({})).toEqual(expect.arrayContaining([expect.objectContaining({ action: "user.languages_updated", entityId: target.id, oldValues: { languagesKnown: [], preferredLanguage: null, version: 1 }, newValues: { languagesKnown: ["english", "kannada"], preferredLanguage: "tamil", version: 2 } })]));
+    await service.update(operator, target.id, { version: 4, role: "procurement" });
+    expect(userAuthorizationVersion((await repository.findUserById(target.id))!)).toBe(2);
+    expect((await repository.findUserById(target.id))!.sessionVersion).toBe(6);
+  });
+
+  it("rejects malformed HTTP and service pairs with named fields and preserves target protections", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = canonicalSuperAdmin(seed);
+    const target = addUser(seed, "languages-http", "designer");
+    const deleted = addUser(seed, "languages-deleted", "designer", { deletedAt: clock().toISOString() });
+    const { repository, service } = setup(seed);
+    const app = createApp({ repository, auth, clock, developmentDemoAuthorization: developmentDemoAuthentication() });
+    const pair = { version: 1, languagesKnown: ["english"], preferredLanguage: "kannada" };
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...pair, languagesKnown: "english" }, "languagesKnown"],
+      [{ ...pair, languagesKnown: [12] }, "languagesKnown"],
+      [{ ...pair, languagesKnown: ["english", "english"] }, "languagesKnown"],
+      [{ ...pair, preferredLanguage: "unsupported" }, "preferredLanguage"],
+      [{ version: 1, preferredLanguage: null }, "languagesKnown"],
+      [{ version: 1, languagesKnown: [] }, "preferredLanguage"],
+      [{ ...pair, role: "procurement" }, "role"],
+      [{ ...pair, active: false }, "active"],
+      [{ ...pair, location: "Pune" }, "location"],
+      [{ ...pair, unexpected: "value" }, "unexpected"]
+    ];
+    for (const [input, field] of cases) {
+      const response = await request(app).patch(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(operator)).send(input);
+      expect(response.status).toBe(400);
+      expect(response.body.error.fields[field]).toEqual(expect.any(String));
+      await expect(service.update(publicUser(operator), target.id, input as never)).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { [field]: expect.any(String) } });
+    }
+    expect((await repository.findUserById(target.id))?.version).toBe(1);
+    expect(await repository.listAuditEvents({})).toEqual([]);
+    expect((await request(app).patch(`/api/v1/admin/users/${target.id}`).send(pair)).status).toBe(401);
+    expect((await request(app).patch(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(target)).send(pair)).status).toBe(403);
+    expect((await request(app).patch(`/api/v1/admin/users/${operator.id}`).set("Authorization", bearer(operator)).send({ ...pair, version: operator.version })).body.error.code).toBe("SOLE_SUPER_ADMIN_IMMUTABLE");
+    expect((await request(app).patch(`/api/v1/admin/users/${deleted.id}`).set("Authorization", bearer(operator)).send(pair)).status).toBe(404);
+    const saved = await request(app).patch(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(operator)).send(pair);
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.user).toMatchObject({ languagesKnown: ["english"], preferredLanguage: "kannada", version: 2 });
   });
 });
