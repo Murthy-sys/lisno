@@ -422,7 +422,8 @@ describe("Collaborative project preparation snapshot", () => {
       estimate: { ...project.estimate!, status: "draft", estimationPhase: "post", finalEstimateApproved: true } }} />);
     const stage = screen.getByRole("heading", { name: "7. Execution queues" }).closest("section")!;
     expect(await within(stage).findByText(/1 of 3 preparation tasks assigned/)).toBeVisible();
-    expect(stage).toHaveTextContent("execution deadlines and effort tracking start only after Super Admin confirms the initial payment");
+    expect(stage).toHaveTextContent("execution deadlines and effort tracking start when execution is activated after current Client and design approvals");
+    expect(stage).toHaveTextContent("Recording a payment does not restart them.");
     expect(stage).toHaveTextContent("Preparation in progress");
     expect(within(stage).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(within(stage).queryByText("Complete", { exact: true })).not.toBeInTheDocument();

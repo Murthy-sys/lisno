@@ -1,0 +1,125 @@
+const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+const id = { type: "string", minLength: 1, maxLength: 500 };
+const amount = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: "Integer paise. Cash settlement is distinct from expense recognition." };
+const version = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 1 };
+const digest = { type: "string", pattern: "^[a-f0-9]{64}$" };
+const envelope = { expectedVersion: version, sourceDigest: digest, idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" } };
+export const PROCUREMENT_LIFECYCLE_SCHEMAS = {
+  ProcurementLifecycleCommand: { type: "object", required: ["expectedVersion", "sourceDigest", "idempotencyKey"], properties: {
+    ...envelope, action: { type: "string" }, reason: { type: "string", minLength: 3, maxLength: 2000 },
+    orderId: id, amountPaise: amount, transactionId: id, supersedesReconciliationId: { ...id, description: "For Finance/Admin append-only opening corrections, the current opening reconciliation ID. The original record remains immutable; correction evidence and reason are required." },
+    policy: { type: "object", additionalProperties: false, required: ["timezone", "reviewIntervalDays", "inspectionCount"], properties: { timezone: { type: "string" }, reviewIntervalDays: { type: "integer", minimum: 1, maximum: 7 }, inspectionCount: { type: "integer", enum: [2,3] } } }
+  }, additionalProperties: true, description: "Endpoint-specific discriminated command. Runtime Zod schemas reject unknown fields and enforce role, version, source, evidence, money and priority invariants. Retry the identical payload with the same key; altered reuse returns 409. No command executes a bank transfer." },
+  ProcurementLifecycleView: { type: "object", additionalProperties: true, description: "Current authorized project projection with server-derived blockers, allowedActions, immutable lineage and version/sourceDigest. Missing historical payment coverage is null, never a fabricated zero. Reads do not create records." },
+  ProcurementLifecycleBlocker: { type: "object", required: ["code","message","tab"], properties: { code: id, message: { type: "string" }, tab: { type: "string", enum: ["vendors","payments","progress","handover","signoff"] }, entityId: id } },
+  ProcurementLifecycleEvidenceUpload: { type: "object", required: ["entityId","purpose"], properties: { entityId: id, purpose: { type: "string", enum: ["payment","inspection","handover"] }, mediaFiles: { type: "array", maxItems: 12, items: { type: "string", format: "binary" } }, file: { type: "string", format: "binary" } }, description: "Authenticated project/record-bound evidence. File signatures and limits are checked; no public storage URL is returned." },
+  ProcurementLifecycleNotificationRead: { type: "object", additionalProperties: false, properties: {} }
+};
+export const PROCUREMENT_LIFECYCLE_REQUESTS: Record<string, unknown> = {
+  "POST /procurement/projects/:projectId/lifecycle/setup": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/policy": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/reviews/actions": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/inspection-plan": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/inspections": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/inspections/:inspectionId/corrections": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/findings": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/handover/actions": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/readiness/actions": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/correction-requests": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/payments": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/payment-dates": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/evidence": { required: true, content: { "multipart/form-data": { schema: ref("ProcurementLifecycleEvidenceUpload") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payments": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-dates": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/evidence": { required: true, content: { "multipart/form-data": { schema: ref("ProcurementLifecycleEvidenceUpload") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-authorizations": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-reversals": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-reconciliation": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/retention": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-corrections": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payments": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-dates": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/evidence": { required: true, content: { "multipart/form-data": { schema: ref("ProcurementLifecycleEvidenceUpload") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-authorizations": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-reversals": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-reconciliation": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/retention": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-corrections": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement/projects/:projectId/lifecycle/payment-correction-requests": { required: true, content: { "application/json": { schema: ref("ProcurementLifecycleCommand") } } },
+  "POST /procurement-lifecycle/notifications/:notificationId/read": { required: false, content: { "application/json": { schema: ref("ProcurementLifecycleNotificationRead") } } },
+};
+export const PROCUREMENT_LIFECYCLE_RESPONSES: Record<string, string> = {
+  "GET /procurement/projects/:projectId/lifecycle": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/reviews": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/reviews/:roundId": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/inspections": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/handover": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/readiness": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/reviews": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/reviews/:roundId": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/inspections": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/handover": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/readiness": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/setup": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/policy": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/reviews/actions": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/inspection-plan": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/inspections": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/inspections/:inspectionId/corrections": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/findings": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/handover/actions": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/readiness/actions": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/correction-requests": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/payments": "ProcurementLifecycleView",
+  "GET /procurement/projects/:projectId/lifecycle/payments/history": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/payments": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/payment-dates": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/evidence": "ProcurementLifecycleView",
+  "GET /finance/projects/:projectId/procurement-lifecycle/payments": "ProcurementLifecycleView",
+  "GET /finance/projects/:projectId/procurement-lifecycle/payments/history": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payments": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-dates": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/evidence": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-authorizations": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-reversals": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-reconciliation": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/retention": "ProcurementLifecycleView",
+  "POST /finance/projects/:projectId/procurement-lifecycle/payment-corrections": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/payments": "ProcurementLifecycleView",
+  "GET /admin/projects/:projectId/procurement-lifecycle/payments/history": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payments": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-dates": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/evidence": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-authorizations": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-reversals": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-reconciliation": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/retention": "ProcurementLifecycleView",
+  "POST /admin/projects/:projectId/procurement-lifecycle/payment-corrections": "ProcurementLifecycleView",
+  "POST /procurement/projects/:projectId/lifecycle/payment-correction-requests": "ProcurementLifecycleView",
+  "GET /procurement-lifecycle/notifications": "ProcurementLifecycleView",
+  "POST /procurement-lifecycle/notifications/:notificationId/read": "ProcurementLifecycleView",
+  "GET /admin/procurement-lifecycle/health": "ProcurementLifecycleView",
+};
+export const PROCUREMENT_LIFECYCLE_QUERIES: Record<string, unknown[]> = {
+  "GET /procurement/projects/:projectId/lifecycle/reviews": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /procurement/projects/:projectId/lifecycle/inspections": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /procurement/projects/:projectId/lifecycle/handover": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /admin/projects/:projectId/procurement-lifecycle/reviews": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /admin/projects/:projectId/procurement-lifecycle/inspections": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /admin/projects/:projectId/procurement-lifecycle/handover": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+  "GET /procurement/projects/:projectId/lifecycle/payments": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /procurement/projects/:projectId/lifecycle/payments/history": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /finance/projects/:projectId/procurement-lifecycle/payments": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /finance/projects/:projectId/procurement-lifecycle/payments/history": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /admin/projects/:projectId/procurement-lifecycle/payments": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /admin/projects/:projectId/procurement-lifecycle/payments/history": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}, {"in": "query", "name": "vendorId", "schema": {"type": "string"}}, {"in": "query", "name": "orderId", "schema": {"type": "string"}}],
+  "GET /procurement-lifecycle/notifications": [{"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0, "default": 0}}],
+};
+
+for (const prefix of ["/procurement/projects/:projectId/lifecycle", "/finance/projects/:projectId/procurement-lifecycle", "/admin/projects/:projectId/procurement-lifecycle"]) {
+  PROCUREMENT_LIFECYCLE_QUERIES[`GET ${prefix}/payments`]!.push({ in: "query", name: "status", schema: { type: "string", enum: ["overdue", "due_today", "upcoming", "paid", "setup_required"] } });
+  PROCUREMENT_LIFECYCLE_QUERIES[`GET ${prefix}/payments/history`]!.push({ in: "query", name: "transactionId", schema: id });
+  if (PROCUREMENT_LIFECYCLE_QUERIES[`GET ${prefix}/handover`]) PROCUREMENT_LIFECYCLE_QUERIES[`GET ${prefix}/handover`]!.push({ in: "query", name: "revisionId", schema: id });
+}
+PROCUREMENT_LIFECYCLE_QUERIES["GET /procurement-lifecycle/notifications"]!.push({ in: "query", name: "projectId", schema: id }, { in: "query", name: "unreadOnly", schema: { type: "boolean", default: false } });

@@ -1,0 +1,12 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e4]: "[plugin:vite:react-babel] Cannot find package 'react-refresh' imported from /Users/murthy/Desktop/personal/lisno/output/playwright/initial-payment-gate/vite.config.mjs.timestamp-1795805613795-0d40f06b63e598.mjs"
+  - generic [ref=f1e5]: /Users/murthy/Desktop/personal/lisno/output/playwright/initial-payment-gate/harness.tsx
+  - generic [ref=f1e6]: "at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9) at packageResolve (node:internal/modules/esm/resolve:768:81) at moduleResolve (node:internal/modules/esm/resolve:859:18) at defaultResolve (node:internal/modules/esm/resolve:992:11) at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20) at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38) at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56) at #resolve (node:internal/modules/esm/loader:683:17) at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35) at node:internal/modules/esm/loader:632:32"
+  - generic [ref=f1e7]:
+    - text: Click outside, press Esc key, or fix the code to dismiss.You can also disable this overlay by setting
+    - code [ref=f1e8]: server.hmr.overlay
+    - text: to
+    - code [ref=f1e9]: "false"
+    - text: in
+    - code [ref=f1e10]: vite.config.mjs
+    - text: .

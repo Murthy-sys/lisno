@@ -6,6 +6,20 @@ import {
 } from "./knowledgeSectionPayload";
 
 describe("knowledge section update payloads", () => {
+  it.each([true, false])("rebases the edited selection-needed value %s without overwriting concurrent Overview settings", selectionNeeded => {
+    const latest = { selectionNeeded: !selectionNeeded, uomId: "server-unit", clientVisible: false, showByDefault: true, surfaceIds: ["server-surface"] };
+    const local = { selectionNeeded, uomId: "local-unit", clientVisible: true, showByDefault: false, surfaceIds: [] };
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["selectionNeeded"])))
+      .toEqual({ ...latest, selectionNeeded });
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["uomId"])))
+      .toEqual({ ...latest, uomId: "local-unit" });
+  });
+
+  it("does not add selection needed when an unrelated legacy Overview field is saved", () => {
+    expect(knowledgeOverviewPayloadForUpdate({ uomId: "old-unit" }, { uomId: "new-unit", selectionNeeded: false }, new Set(["uomId"])))
+      .toEqual({ uomId: "new-unit" });
+  });
+
   it("preserves the other editor’s fields when closure priority and Overview share a revision", () => {
     const latest = { closurePriority: "P2", uomId: "current", priorityId: "high" };
     const local = { closurePriority: "P1", uomId: "new", priorityId: "stale" };

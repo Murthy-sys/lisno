@@ -1,3 +1,4 @@
+import { readOrderPayments } from "./procurement-payments.service.js";
 import mongoose, { type ClientSession } from "mongoose";
 import PDFDocument from "pdfkit";
 import { ApiError } from "../middleware/errors.js";
@@ -29,7 +30,7 @@ export interface BasketPackageMonitorDto {
     tasks: Array<{ id: string; label: string; status: string; progressPercent: number; evidenceCount: number;
       reviewOwnerName: string | null }> };
   finance: { assessmentStatus: "pending" | "reviewed"; invoiceTotalPaise: number | null;
-    tdsPaise: number | null; netPayablePaise: number | null; recordedCostPaise: number | null; paidPaise: null;
+    tdsPaise: number | null; netPayablePaise: number | null; recordedCostPaise: number | null; paidPaise: number | null;
     gstRegistration: { registered: boolean | null; gstin: string | null };
     paymentSchedule: Array<{ id: string; name: string; basisPoints: number; amountPaise: number;
       reviewerSlots?: Array<"program_manager" | "designer" | "procurement" | "finance_head"> }> };
@@ -166,7 +167,7 @@ async function readMonitor(projectId: string, basketId: string, awardId: string,
       invoiceTotalPaise: financeAssessment ? Number(financeAssessment.invoiceTotalPaise) : null,
       tdsPaise: financeAssessment ? Number(financeAssessment.tdsPaise) : null,
       netPayablePaise: financeAssessment ? Number(financeAssessment.netPayablePaise) : null,
-      recordedCostPaise: recordedCost === null ? null : Number(recordedCost), paidPaise: null,
+      recordedCostPaise: recordedCost === null ? null : Number(recordedCost), paidPaise: (await readOrderPayments(projectId, String(order._id), session, observedAt)).paidPaise,
       gstRegistration: { registered: profile?.gstRegistered ?? null, gstin: profile?.gstNumber ?? null },
       paymentSchedule: (proposal.milestones as Row[]).map(row => ({ id: String(row.id), name: String(row.name),
         basisPoints: Number(row.basisPoints), amountPaise: Number(row.amountPaise),

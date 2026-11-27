@@ -4,13 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Role, AuthorizationSnapshot } from "../../api/authorization-contract";
+import type { DesignPlanReviewTask } from "../../api/types";
+import { ApiError } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
 import { ProjectWorkflowPanel } from "./ProjectWorkflowPanel";
 import { designWorkflowQueryKey } from "./useDesignWorkflowQuery";
 import { projectWorkflowKeys, type DesignWorkflowView } from "./projectWorkflowApi";
+import * as workflowApi from "./projectWorkflowApi";
+import { EXECUTION_CHOICE_OPTIONS } from "../../../../shared/projects/executionChoice";
 
-vi.mock("./ProjectClientActions", () => ({ ProjectClientActions: () => null }));
 const authState = vi.hoisted(() => ({ user: { id: "viewer-one", role: "client" as Role }, authorization: null as AuthorizationSnapshot | null }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => authState }));
 beforeEach(() => { server.use(http.get("/api/v1/projects/project-ui/design-requirements", () => HttpResponse.json({ data: { version: 0, sourceToken: "empty", entries: [], blockers: [], canReadInternal: false } }))); authState.user = { id: "viewer-one", role: "client" }; authState.authorization = authorizationFor("client", ["projects.design_workflow.read"]); });
@@ -34,6 +37,124 @@ function setup(presentation: "full" | "client" | "designer" = "full", timelineCo
 }
 
 describe("ProjectWorkflowPanel", () => {
+  it("keeps a newer authorized workflow when a cancelled older read later returns not found", async () => {
+    let rejectOld!: (error: Error) => void;
+    const oldRead = new Promise<Awaited<ReturnType<typeof workflowApi.getDesignWorkflow>>>((_resolve, reject) => { rejectOld = reject; });
+    const fresh = { ...workflow, receivedAt: Date.now(), projectName: "Current authorized project" };
+    const read = vi.spyOn(workflowApi, "getDesignWorkflow").mockReturnValueOnce(oldRead).mockResolvedValue(fresh);
+    const client = setup();
+    const queryKey = designWorkflowQueryKey("project-ui", "viewer-one", "client");
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    await act(async () => {
+      await client.cancelQueries({ queryKey, exact: true });
+      await client.refetchQueries({ queryKey, exact: true });
+    });
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(client.getQueryData(queryKey)).toEqual(fresh);
+    await act(async () => {
+      rejectOld(new ApiError(404, "NOT_FOUND", "Earlier access was unavailable"));
+      await oldRead.catch(() => undefined);
+    });
+    expect(client.getQueryData(queryKey)).toEqual(fresh);
+    expect(screen.getByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.getByText("Keys can now be handed over.")).toBeVisible();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([401, 403, 404])("clears private workflow after a save returns %s even when revalidation fails, then recovers after an authorized read", async status => {
+    authState.authorization = authorizationFor("client", ["projects.design_workflow.read", "projects.design_workflow.act", "design.plan_response_tasks.read"]);
+    let denied = false;
+    let revalidated = false;
+    const current: DesignWorkflowView = { ...workflow, executionChoice: {
+      status: "available", version: 7, canSelect: true, keyCollectionStageId: "keys", blockingReason: null, options: EXECUTION_CHOICE_OPTIONS, selection: null
+    } };
+    const cachedReview: DesignPlanReviewTask = {
+      id: "review-private", estimateId: "estimate-private", projectId: "project-ui", projectName: "Private review project", clientName: "Private review client",
+      designPlanVersion: 15, status: "approved", deliveryStatus: "sent", submittedAt: "2026-11-27T09:00:00Z", version: 2, attachmentNames: [], canDecide: false, decision: null
+    };
+    const read = vi.fn(() => denied && !revalidated
+      ? HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Refresh unavailable" } }, { status: 503 })
+      : HttpResponse.json({ data: revalidated ? { ...current, executionChoice: { ...current.executionChoice!, canSelect: false } } : current }));
+    server.use(
+      http.get("/api/v1/projects/project-ui/design-workflow", read),
+      http.get("/api/v1/admin/design-plan-response-tasks", () => HttpResponse.json({ data: [cachedReview] })),
+      http.post("/api/v1/projects/project-ui/design-workflow/actions", () => { denied = true; return HttpResponse.json({ error: { code: "DENIED", message: "Unavailable" } }, { status }); })
+    );
+    const client = setup("client");
+    const otherActorKey = designWorkflowQueryKey("project-ui", "viewer-other", "client");
+    client.setQueryData(otherActorKey, current);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("radio", { name: "Option 1" }));
+    expect(await screen.findByRole("region", { name: "Design reviews" })).toBeVisible();
+    expect(screen.getByText("Private review client")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save execution choice" }));
+    await user.click(screen.getByRole("button", { name: "Save permanently" }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Project stages could not be refreshed");
+    expect(client.getQueryData(designWorkflowQueryKey("project-ui", "viewer-one", "client"))).toBeNull();
+    expect(client.getQueryData(otherActorKey)).toEqual(current);
+    expect(screen.queryByRole("region", { name: "Execution choice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Keys can now be handed over.")).not.toBeInTheDocument();
+    expect(client.getQueryData(projectWorkflowKeys.projectReviews("project-ui"))).toEqual([cachedReview]);
+    expect(screen.queryByRole("region", { name: "Design reviews" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Private review client")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reload workflow" }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("region", { name: "Execution choice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Design reviews" })).not.toBeInTheDocument();
+    revalidated = true;
+    await user.click(screen.getByRole("button", { name: "Reload workflow" }));
+    expect(await screen.findByRole("region", { name: "Execution choice" })).toBeVisible();
+    expect(screen.getByText("Awaiting Client selection.")).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Design reviews" })).toBeVisible();
+    expect(screen.getByText("Private review client")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(client.getQueryData<DesignWorkflowView>(designWorkflowQueryKey("project-ui", "viewer-one", "client"))?.executionChoice?.canSelect).toBe(false);
+  });
+
+  it("saves the dedicated execution choice and refreshes its canonical locked display", async () => {
+    authState.authorization = authorizationFor("client", ["projects.design_workflow.read", "projects.design_workflow.act"]);
+    let current: DesignWorkflowView = { ...workflow, executionChoice: {
+      status: "available", version: 7, canSelect: true, keyCollectionStageId: "keys", blockingReason: null, options: EXECUTION_CHOICE_OPTIONS, selection: null
+    } };
+    const save = vi.fn(async ({ request }: { request: Request }) => {
+      const command = await request.json();
+      expect(command).toMatchObject({ action: "execution_path_select", expectedVersion: 7, stageId: "keys", data: { optionId: "option_2", definitionVersion: 1, acknowledgedIrreversible: true } });
+      expect(command.idempotencyKey).toEqual(expect.any(String));
+      const option = EXECUTION_CHOICE_OPTIONS[1]!;
+      current = { ...current, executionChoice: { ...current.executionChoice!, status: "locked", version: 8, canSelect: false,
+        selection: { optionId: option.id, optionLabel: option.label, definitionVersion: 1, phases: option.phases, selectedAt: "2026-11-27T09:00:00Z" } } };
+      return HttpResponse.json({ data: { version: 8 } });
+    });
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: current })), http.post("/api/v1/projects/project-ui/design-workflow/actions", save));
+    setup("client");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("radio", { name: "Option 2" }));
+    await user.click(screen.getByRole("button", { name: "Save execution choice" }));
+    await user.click(screen.getByRole("button", { name: "Save permanently" }));
+    expect(await screen.findByRole("list", { name: "Planned sequence" })).toHaveTextContent("3D layoutRendersSelectionsProduction");
+    expect(save).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  });
+
+  it("keeps a saved choice visible through an estimate source issue and removes it when project access is revoked", async () => {
+    const option = EXECUTION_CHOICE_OPTIONS[0]!;
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: { ...workflow, estimateApprovalStatus: "source_issue", executionChoice: {
+      status: "locked", version: 8, canSelect: false, keyCollectionStageId: "keys", blockingReason: null, options: EXECUTION_CHOICE_OPTIONS,
+      selection: { optionId: option.id, optionLabel: option.label, definitionVersion: 1, phases: option.phases, selectedAt: "2026-11-27T09:00:00Z" }
+    } } })));
+    const client = setup("client");
+    expect(await screen.findByRole("list", { name: "Planned sequence" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument();
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ error: { code: "NOT_FOUND", message: "Unavailable" } }, { status: 404 })));
+    await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Execution choice" })).not.toBeInTheDocument());
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Unavailable" } }, { status: 503 })));
+    await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });
+    expect(screen.queryByRole("list", { name: "Planned sequence" })).not.toBeInTheDocument();
+  });
+
   it.each([
     { role: "client", presentation: "full", title: "Selections requiring your approval" },
     { role: "client", presentation: "client", title: "Selections requiring your approval" },

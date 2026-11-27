@@ -1,3 +1,4 @@
+import { LifecycleWorkspace } from "./lifecycle/LifecycleWorkspace";
 import { KeyCollectionHeader } from "../workflow/KeyCollectionHeader";
 import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectId } from "../../components/projects/ProjectId";
@@ -48,21 +49,21 @@ export function ProcurementProjectPage() {
       className="procurement-project-page"
       aria-labelledby="procurement-project-page-title"
     >
-      <PMCounterpartPanel projectId={projectId ?? ""} />
       <PageHeader
         id="procurement-project-page-title"
         eyebrow="Project procurement"
         actions={canRead && (details.project || visibleProject) ? <div className="project-status-header-actions"><KeyCollectionHeader projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} /><ProjectStatusButton projectId={projectId} projectName={details.project?.name ?? visibleProject?.projectName} presentation="chip" /></div> : undefined}
         title={canRead ? details.project?.name ?? visibleProject?.projectName ?? "Project procurement" : "Project procurement"}
-        description="Plan each main basket, compare vendor BOQs and issue approved work orders."
+        description="Appoint vendors, keep payments and inspections on schedule, and prepare each project for handover."
         breadcrumb={<Link to="/procurement">Back to projects</Link>}
         metadata={canRead && (details.project || visibleProject) ? <ProjectId projectNumber={details.project ? details.project.projectNumber : visibleProject!.projectNumber} /> : undefined}
       />
 
       {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" showStatus={false} /> : null}
-      {details.project ? <><AssignedProjectOverview project={details.project} />
+      <PMCounterpartPanel projectId={projectId} />
+      {details.project ? <details className="procurement-project-details"><summary>Project details & workflow</summary><AssignedProjectOverview project={details.project} />
         {hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel showAppointmentTimer={false} projectId={projectId} showInitialPayment={false} /> : null}
-      </> : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
+      </details> : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
         : details.canRead && details.query.isError ? <PageState state="error" message={procurementError(details.query.error, "Project details could not be loaded.")} action={{ label: "Retry project details", onAction: () => void details.query.refetch() }} /> : null}
       {!canRead ? (
         <PageState
@@ -89,12 +90,14 @@ export function ProcurementProjectPage() {
           message={details.project ? "Procurement preparation is not available yet. You can review project details and progress while estimation and approval continue." : "This project is not available for procurement preparation."}
         />
       ) : null}
+      {canRead && !accessRevoked && (visibleProject || details.project) ? <LifecycleWorkspace key={`${actor}:${projectId}`} projectId={projectId} actorId={auth.user?.id ?? ""} disabled={projectSourceStale}>
       {canRead && !accessRevoked && visibleProject && hasFrontendPermission(auth.authorization, "execution.tracker.read") ? <p><Link to={`/projects/${encodeURIComponent(projectId)}/execution`}>View Main Line execution</Link></p> : null}
       {canRead && !accessRevoked && visibleProject ? <ProcurementEstimateSource source={visibleProject.preparationSource} readiness={visibleProject.issueReadiness} stale={projectSourceStale} /> : null}
       {canRead && !accessRevoked && visibleProject ? <VendorAccessPanel projectId={projectId} /> : null}
       {canRead && !accessRevoked && visibleProject ? <ProcurementBasketWorkspace key={`basket-workspace-${projectId}`}
         projectId={projectId} projectName={visibleProject.projectName} projectSourceStale={projectSourceStale} issueReadiness={visibleProject.issueReadiness}
         currentEstimate={project && query.isSuccess && !integrityError ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined} /> : null}
+      </LifecycleWorkspace> : null}
     </section>
   );
 }

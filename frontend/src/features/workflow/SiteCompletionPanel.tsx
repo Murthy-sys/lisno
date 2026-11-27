@@ -22,6 +22,8 @@ export function SiteCompletionPanel({ projectId, projectName, onDirty, onBusy }:
   const current = query.data;
   useEffect(() => { setProgress(null); setNote(null); setDraftVersion(null); }, [projectId]);
   const refresh = async () => Promise.all([
+    client.invalidateQueries({ queryKey: ["procurement-lifecycle"] }),
+    client.invalidateQueries({ queryKey: ["procurement-lifecycle-notifications"] }),
     client.invalidateQueries({ queryKey: siteCompletionKeys.project(projectId) }),
     client.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
     client.invalidateQueries({ queryKey: ["admin", "project-completion-tasks"] }),

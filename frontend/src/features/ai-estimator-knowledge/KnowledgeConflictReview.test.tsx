@@ -203,6 +203,13 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
 });
 
 describe("KnowledgeConflictReview Mode Overview projection", () => {
+  it.each([[undefined, "No"], [true, "Yes"], [false, "No"], ["true", "Saved configuration needs review"], [1, "Saved configuration needs review"], [null, "Saved configuration needs review"]] as const)("reviews server selection-needed value %s as %s", (selectionNeeded, expected) => {
+    render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}
+      payload={selectionNeeded === undefined ? {} : { selectionNeeded }} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(within(review).getByText("Selection needed?").parentElement).toHaveTextContent(`Selection needed?${expected}`);
+  });
+
   it.each([[{}, "All rooms and places"], [{ applicableRoomCategories: ["bedroom", "living"] }, "Bedroom, Living & Dining"],
     [{ applicableRoomCategories: ["legacy"] }, "Saved selection needs review"]])("reviews server room applicability (%j)", (payload, expected) => {
     render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}

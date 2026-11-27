@@ -10,6 +10,8 @@ import {
 import { ApiError } from "../../middleware/errors.js";
 import { ProjectClientEscalationModel } from "../../models/ProjectClientEscalation.js";
 import { ProjectSnagModel } from "../../models/ProjectSnag.js";
+import { ProcurementFindingModel } from "../../models/ProcurementFinding.js";
+import { ProcurementLifecycleEvidenceModel } from "../../models/ProcurementLifecycleEvidence.js";
 import { ProjectSnagVisitModel } from "../../models/ProjectSnagVisit.js";
 import { ProjectWorkflowTaskModel } from "../../models/ProjectWorkflowTask.js";
 import { ProjectPurchaseOrderModel } from "../../models/ProjectPurchaseOrder.js";
@@ -20,6 +22,7 @@ import { EstimateClientReviewRoundModel } from "../../models/EstimateClientRevie
 import { EstimateModel } from "../../models/Estimate.js";
 import { AiEstimatorKnowledgeVendorModel } from "../../models/AiEstimatorKnowledgeVendor.js";
 import type { PublicUser } from "../auth.service.js";
+import { handoverEvidenceEntityId } from "../procurement-handover.service.js";
 import { assertPMEvidence } from "./evidence.js";
 import {
   pmConflict, pmHistory, pmMissing, pmNewId, pmPanel, pmRecord, pmReplay, pmTransaction,
@@ -61,6 +64,17 @@ function snagDto(row: PMRow, actor: PublicUser, ownerName?: string): PMItem {
       { label: "Verification", value: row.verifiedAt ? iso(row.verifiedAt)! : row.status === "resolved" ? "Repair awaiting verification" : "Not verified" }],
     actions: actor.role === "site_manager" ? actions(available) : [] };
 }
+async function withProcurementOrigin(item: PMItem, row: PMRow, actor: PublicUser, session?: ClientSession): Promise<PMItem> {
+  if (actor.role !== "site_manager" || !row.procurementFindingId) return item;
+  const finding = await ProcurementFindingModel.findOne({ _id: row.procurementFindingId, projectId: row.projectId, snagId: String(row._id),
+    "origin.kind": { $in: ["inspection", "handover", "urgent"] } }).session(session ?? null).lean();
+  if (!finding) return item;
+  const evidenceEntityId = finding.origin.kind === "handover" ? handoverEvidenceEntityId(row.projectId) : finding.origin.entityId;
+  const files = await ProcurementLifecycleEvidenceModel.find({ _id: { $in: finding.evidenceIds }, projectId: row.projectId,
+    entityId: evidenceEntityId, purpose: finding.origin.kind === "inspection" ? "inspection" : "handover" }).session(session ?? null).lean();
+  return { ...item, procurementOrigin: { findingId: String(finding._id), kind: finding.origin.kind,
+    evidence: files.map(file => ({ id: String(file._id), name: file.originalFilename, mimeType: file.mimeType, kind: file.kind })) } };
+}
 function visitDto(row: PMRow, actor?: PublicUser): PMItem {
   return { id: String(row._id), kind: "snag_visit", title: "Site visit", description: row.reason, status: "recorded", severity: "neutral", version: 1, sourceToken: null,
     evidenceIds: actor?.role === "client" ? [] : row.evidenceIds ?? [], facts: [{ label: "Visited", value: iso(row.visitedAt)! }, { label: "Linked snags", value: String(row.snagIds.length) },
@@ -87,6 +101,8 @@ async function requireOwner(project: PMRow, id: string, session: ClientSession):
   if (!person) return pmConflict("Choose an active person assigned to this project.");
   return person;
 }
+/** Shared origin bridge validates the same active participants as ordinary PM snags. */
+export { requireOwner as requireProjectSnagOwner, peopleFor as readProjectSnagOwners };
 async function currentAssignment(projectId: string, assignmentId: string, session: ClientSession): Promise<PMRow> {
   const row = await VendorWorkAssignmentModel.findOne({ _id: assignmentId, projectId, status: { $ne: "superseded" } }).session(session).lean();
   if (!row) pmMissing();
@@ -168,7 +184,7 @@ export function createProjectManagerClientService(deps: PMDependencies) {
         panel.total = await ProjectSnagVisitModel.countDocuments(visitFilter);
       } else {
         const rows = await ProjectSnagModel.find(filter).sort({ createdAt: -1, _id: 1 }).skip(offset).limit(limit).lean();
-        panel.items = await Promise.all(rows.map(async row => ({ ...snagDto(row, actor, people.find(person => person.id === row.ownerId)?.name), ...(actor.role !== "client" ? { history: await pmHistory(projectId, String(row._id)) } : {}) })));
+        panel.items = await Promise.all(rows.map(async row => ({ ...await withProcurementOrigin(snagDto(row, actor, people.find(person => person.id === row.ownerId)?.name), row, actor), ...(actor.role !== "client" ? { history: await pmHistory(projectId, String(row._id)) } : {}) })));
         panel.total = await ProjectSnagModel.countDocuments(filter);
       }
       panel.snagFilters = await snagFilterOptions(projectId, actor);
@@ -280,7 +296,7 @@ export function createProjectManagerClientService(deps: PMDependencies) {
           evidenceIds: [...new Set<string>([...(row.evidenceIds ?? []), ...fields.evidenceIds])] };
         const changed = await ProjectSnagModel.updateOne({ _id: entityId, projectId, version: fields.expectedVersion }, { $set: update, $inc: { version: 1 } }, { session });
         if (changed.matchedCount !== 1) pmConflict();
-        const result = snagDto({ ...row, ...update, version: row.version + 1 }, actor, owner.name);
+        const result = await withProcurementOrigin(snagDto({ ...row, ...update, version: row.version + 1 }, actor, owner.name), row, actor, session);
         await pmRecord(deps, { projectId, entityId, family: "snag", actor, key: fields.idempotencyKey, payload, action: fields.action,
           version: result.version, reason: fields.reason, result, recipientIds: await notifyIds(project, session, owner.id) }, session);
         return withHistory(result, projectId, session);

@@ -38,6 +38,7 @@ export function createDesignWorkflowStateRouter(auth: AuthService, service: Retu
     };
     try {
       signal?.throwIfAborted();
+      if (request.body.action === "execution_path_select" && (request.validatedUpload || request.validatedWorkflowMedia?.length)) throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Execution choice does not accept evidence uploads.");
       if (request.validatedWorkflowMedia?.length && request.body.action !== "measurement_complete") throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Photos and videos are supported only for measurement completion.");
       if (request.validatedUpload) proof = await storage.saveProof(request.validatedUpload);
       for (const file of request.validatedWorkflowMedia ?? []) mediaFiles.push(await storage.saveMedia(file, signal));

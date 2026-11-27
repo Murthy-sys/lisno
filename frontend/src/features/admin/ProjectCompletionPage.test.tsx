@@ -30,6 +30,13 @@ const summary = (ready: boolean) => ({
 });
 
 describe("ProjectCompletionPage", () => {
+  it("opens the exact linked project beyond the queue page and routes Procurement blockers", async () => {
+    server.use(http.get("/api/v1/admin/project-completion-tasks", () => HttpResponse.json({ data: { items: [], total: 0, limit: 100, offset: 0 } })), http.get("/api/v1/admin/projects/project-linked/completion", () => HttpResponse.json({ data: { ...summary(false), projectId: "project-linked", projectName: "Linked courtyard", blockers: [{ code: "PROCUREMENT_READINESS_PENDING", message: "Vendor balance is outstanding.", procurementTab: "payments", entityId: "order-linked" }] } })));
+    renderWithQuery(<MemoryRouter initialEntries={["/admin/project-completion?projectId=project-linked"]}><ProjectCompletionPage /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Linked courtyard" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Procurement action" })).toHaveAttribute("href", "/admin/procurement/projects/project-linked/lifecycle?tab=payments&entity=order-linked");
+    expect(screen.getByRole("button", { name: "Mark project completed" })).toBeDisabled();
+  });
   it("loads one chip for the selected final task and replaces its project identity when selection changes", async () => {
     server.use(http.get("/api/v1/admin/project-completion-tasks", () => HttpResponse.json({ data: { items: [summary(true), { ...summary(false), projectId: "project-b", projectName: "Garden home" }], total: 2, limit: 100, offset: 0 } })));
     renderWithQuery(<MemoryRouter><ProjectCompletionPage /></MemoryRouter>);

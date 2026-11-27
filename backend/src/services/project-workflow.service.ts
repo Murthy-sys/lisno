@@ -1,3 +1,4 @@
+import { assertDesignLayoutSubmission } from "./design-layout-requirements.service.js";
 import { readProjectNumber, projectNumberStateConflict } from "../domain/project-number.js";
 import { readProjectNumbers } from "./project-number-read.service.js";
 import { assignmentConflict, projectManagerProjectIds, resolveProjectManagerAssignment, setProjectManagerAssignment } from "./project-manager-assignment.service.js";
@@ -5,7 +6,6 @@ import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { QuotationDesignHandoffModel } from "../models/QuotationDesignHandoff.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
-import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import type { PreparedPlanDocuments } from "../contracts/estimate-plan-document.js";
 import { createEstimatePlanDocumentService } from "./estimate-plan-document.service.js";
 import { randomUUID } from "node:crypto";
@@ -48,6 +48,7 @@ import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequ
 import { LeadModel } from "../models/Lead.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { ProjectModel } from "../models/Project.js";
+import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { UserModel } from "../models/User.js";
 import { createMongoRepository } from "../repositories/mongo.js";
@@ -57,7 +58,7 @@ import type { PublicUser } from "./auth.service.js";
 import type { DesignPlanMailer } from "./design-plan-mailer.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import { approvePlanTargetsForDrawingRevision } from "./estimate-plan-review.service.js";
-import type { OpenFinanceBucketInput } from "./project-finance.service.js";
+import { openProjectFinanceBucket, type OpenFinanceBucketInput } from "./project-finance.service.js";
 import { assertDesignWorkflowSubmissionAllowed, reconcileWorkflowRoomScope } from "./design-workflow-state.service.js";
 import { quotationApprovalPublicFields, resolveCurrentQuotationApproval, type QuotationApprovalResolution } from "./quotation-approval-state.service.js";
 
@@ -421,8 +422,10 @@ export function createProjectWorkflowService(input: {
         throw new ApiError(409, "DESIGN_PLAN_DOCUMENT_NOT_READY", "Prepare the updated full PDF before submitting for Client review.");
       }
       await planDocuments.validateForSubmission(estimateId, preparedDocuments, submittedRevisionIds, session);
+      const designLayoutSnapshot = await assertDesignLayoutSubmission(estimate, session, preparedDocuments);
       const attachmentSnapshots = preparedDocuments.documents.map((document) => ({
         uploadId: document.sourceUploadId,
+        ...(document.manifest.layoutType ? { layoutType: document.manifest.layoutType } : {}),
         filename: document.filename,
         mimeType: document.mimeType,
         byteSize: document.byteSize,
@@ -436,6 +439,7 @@ export function createProjectWorkflowService(input: {
       await DesignPlanReviewRoundModel.create([{
         _id: roundId,
         designRequirementsReadiness,
+        ...(designLayoutSnapshot ? { designLayoutSnapshot } : {}),
         estimateId,
         projectId: String(project._id),
         leadId: String(lead._id),
@@ -1385,7 +1389,7 @@ export function createProjectWorkflowService(input: {
         }
 
         if (task.preparationOnly === true) {
-          throw new ApiError(409, "WORK_ORDER_NOT_READY", "Site execution starts after final approval and initial payment.");
+          throw new ApiError(409, "WORK_ORDER_NOT_READY", "Site execution starts after current quotation and design approval.");
         }
 
         const currentVersion = Number(task.version ?? 1);
@@ -1513,6 +1517,8 @@ export function createProjectWorkflowService(input: {
             status: { $ne: "completed" }
           }).session(session);
           if (!remainingExecutionTask) {
+            const issuedProcurement = await ProjectPurchaseOrderModel.exists({ projectId: task.projectId, approvedRevisionId: { $type: "string" }, cancelledAt: null }).session(session);
+            if (issuedProcurement) throw new ApiError(409, "PROCUREMENT_LIFECYCLE_ADOPTION_REQUIRED", "Set up this project's Procurement lifecycle before final closure. Procurement readiness and the existing Client and Super Admin signoff are required.");
             const completedProject = await ProjectModel.findOneAndUpdate(
               {
                 _id: task.projectId,
@@ -1825,7 +1831,7 @@ async function finalizeDesignApproval(input: {
     { _id: input.estimate.leadId, projectId: input.estimate.projectId },
     {
       $set: {
-        nextAction: quotation ? "Procurement handoff; confirm payment before issuing work orders" : collaborative ? "Final estimate approval" : "project kickoff",
+        nextAction: quotation ? "Procurement handoff; review work-order release checks" : collaborative ? "Final estimate approval" : "project kickoff",
         nextActionAt: input.occurredAt
       }
     },
@@ -1958,7 +1964,7 @@ async function activatePreparationSiteTask(
   };
   await new ProjectWorkflowTaskModel({ ...current, ...activation, version: current.version + 1 }).validate();
   // The source and phase remain schema-immutable for every ordinary write.
-  // This validated, versioned one-way payment transition is the sole exception.
+  // This validated, versioned one-way execution activation is the sole exception.
   const changed = await ProjectWorkflowTaskModel.collection.updateOne({
     _id: current._id,
     projectId,
@@ -2564,7 +2570,7 @@ export async function ensureQuotationDesignTask(estimate: Row, occurredAt: Date,
   return openedAt;
 }
 
-/** Immutable commercial/design binding. Execution still has a separate payment/issue gate. */
+/** Immutable commercial/design binding and transactional execution activation. */
 export async function recordQuotationDesignHandoff(estimate: Row, actorId: string, occurredAt: Date, session: mongoose.ClientSession) {
   const lifecycle = estimate.estimation;
   if (lifecycle?.workflowVersion !== 3 || !lifecycle.designApproval) return;
@@ -2587,7 +2593,8 @@ export async function recordQuotationDesignHandoff(estimate: Row, actorId: strin
     { $set: { "estimation.designApproval.estimateReviewRoundId": quote.reviewRoundId } }, { session, runValidators: true });
   }
   await ProjectWorkflowTaskModel.updateOne({ estimateId: String(estimate._id), kind: "procurement" },
-    { $set: { description: "Quotation and uploaded design approved. Review procurement; work-order issuing still requires payment and source checks." } }, { session });
+    { $set: { description: "Quotation and uploaded design approved. Review procurement and the remaining work-order release checks." } }, { session });
+  await activateCollaborativeProjectWorkflow(String(estimate.projectId), actorId, occurredAt, session);
 }
 
 export async function ensureCollaborativePreparationTask(estimate: Row, occurredAt: Date, session: mongoose.ClientSession) {
@@ -2601,7 +2608,7 @@ export async function ensureCollaborativePreparationTask(estimate: Row, occurred
     await ProjectWorkflowTaskModel.updateOne({ dedupeKey: blueprint.dedupeKey }, { $setOnInsert: {
       _id: `workflow-task-${randomUUID()}`, ...blueprint,
       title: preparationOnly ? "Prepare Site supervision" : blueprint.kind === "finance" ? "Review provisional project budget" : blueprint.title,
-      description: "Prepare and review the approved pre-estimate. Execution and work orders require final approval and initial payment.",
+      description: "Prepare and review the approved pre-estimate. Execution and work orders require current quotation and design approval.",
       projectId: String(estimate.projectId), estimateId, designPlanVersion: Number(estimate.designPlanVersion ?? 0),
       assigneeUserId: preparationOnly ? managerAssignment.ownerId : null, status: "open", progress: 0, version: 1, openedAt: occurredAt,
       preparationOnly,
@@ -2613,22 +2620,28 @@ export async function ensureCollaborativePreparationTask(estimate: Row, occurred
 }
 
 export async function activateCollaborativeProjectWorkflow(projectId: string, actorId: string, occurredAt: Date, session: mongoose.ClientSession) {
+  const project = await ProjectModel.findById(projectId).session(session).lean();
+  if (!project) throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found.");
+  if (![2, 3].includes(project.estimationWorkflowVersion)) return;
+  await assertProjectWorkOrderIssueEligible(projectId, session);
   const estimate = await EstimateModel.findOne({ projectId, "estimation.workflowVersion": { $in: [2, 3] } }).session(session).lean();
   const effective = estimate?.estimation?.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate, session) : null;
   const final = estimate?.estimation?.workflowVersion === 3 ? effective?.currentQuotationApproval : estimate?.estimation?.finalApproval;
   const design = estimate?.estimation?.workflowVersion === 3 ? estimate.estimation.designApproval : { reviewRoundId: final?.designReviewRoundId, designPlanVersion: final?.designPlanVersion };
-  const payment = await DesignWorkflowStateModel.findById(projectId).session(session).lean();
   if (!estimate || !final || !design?.reviewRoundId || !design.designPlanVersion ||
     estimate.estimation.workflowVersion === 3 && (!effective?.currentQuotationApproved ||
-      design.estimateReviewRoundId !== final.reviewRoundId || payment?.initialPaymentEstimateId !== String(estimate._id) || payment?.initialPaymentEstimateVersion !== final.estimateVersion) ||
+      design.estimateReviewRoundId !== final.reviewRoundId) ||
     estimate.designPlanStatus !== "approved" || estimate.estimation.approvedDesignScopeRevision !== final.designScopeRevision ||
-    final.designScopeRevision !== estimate.estimation.designScopeRevision || payment?.initialPaymentReviewRoundId !== final.reviewRoundId ||
-    payment.initialPaymentDesignReviewRoundId !== design.reviewRoundId || !payment.initialPaymentAt)
-    throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "Final estimate, design and initial payment must match before execution starts.");
-  const executionOpenedAt = new Date(payment.initialPaymentAt);
-  if (!Number.isFinite(executionOpenedAt.getTime()) || executionOpenedAt > occurredAt) throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "The initial payment date is invalid for execution activation.");
+    final.designScopeRevision !== estimate.estimation.designScopeRevision)
+    throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "Current quotation and design approval must match before execution starts.");
+  if (project.status !== "planning" && project.status !== "active") return;
+  const executionOpenedAt = new Date(project.actualStartAt ?? occurredAt);
+  if (!Number.isFinite(occurredAt.getTime()) || !Number.isFinite(executionOpenedAt.getTime()) || executionOpenedAt > occurredAt)
+    throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "The execution activation date is invalid.");
   await fenceCollaborativeEstimate(estimate, session);
-  if (estimate.estimation.workflowVersion === 3) await assertProjectWorkOrderIssueEligible(projectId, session);
+  await openProjectFinanceBucket({ projectId, designPlanVersion: design.designPlanVersion, openedById: actorId,
+    occurredAt: executionOpenedAt }, session);
+  if (project.status === "active") return;
   await generateDownstreamTasks(estimate, design.designPlanVersion, executionOpenedAt, session);
   await ProjectModel.updateOne({ _id: projectId, status: "planning" }, { $set: { status: "active", actualStartAt: executionOpenedAt, updatedAt: occurredAt } }, { session });
   await LeadModel.updateOne({ _id: estimate.leadId, projectId }, { $set: { nextAction: "project kickoff", nextActionAt: executionOpenedAt } }, { session });

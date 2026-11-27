@@ -1,3 +1,6 @@
+import { ProjectModel } from "../src/models/Project.js";
+import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
+import { layoutChoiceFixture } from "./fixtures/design-layout.js";
 import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
@@ -110,7 +113,10 @@ function lean(value: unknown) {
 }
 
 function sortedLean(value: unknown) {
-  return { sort: vi.fn().mockReturnValue(lean(value)) };
+  const result = { ...lean(value), sort: vi.fn() };
+  result.sort.mockReturnValue(result);
+  result.session.mockReturnValue(result);
+  return result;
 }
 
 function mockWorkspaceSource() {
@@ -174,12 +180,20 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     leadId: "lead-aurora",
     ownerId: "user-estimator-sales",
     status: "client_approved",
+    projectId: "layout-project",
     designPlanDesignerId: "user-designer-ananya",
     designPlanStatus: "assigned",
     designLifecycleVersion: 0,
     designFrozenAt: null
   };
 
+  const chain = (value: unknown) => {
+    const result: any = { session: () => result, select: () => result, lean: () => result, exec: async () => value,
+      then: (resolve: any, reject: any) => Promise.resolve(value).then(resolve, reject) };
+    return result;
+  };
+  vi.spyOn(ProjectModel, "findById").mockReturnValue(chain({ _id: "layout-project", name: "Layout project", plannedStartAt: now(), plannedEndAt: now(), createdAt: now(), updatedAt: now() }));
+  vi.spyOn(DesignWorkflowStateModel, "findById").mockReturnValue(chain(layoutChoiceFixture("layout-project", "option_2").state));
   vi.spyOn(EstimateModel, "findOne").mockImplementation((query) => {
     const value = query._id === "estimate-draft" ? estimate : null;
     return lean(value) as never;
@@ -234,6 +248,7 @@ function upload(
   return request(app)
     .post("/api/v1/estimates/estimate-draft/design-uploads")
     .set("Authorization", authorization)
+    .field("layoutType", "layout_3d")
     .attach("file", data, { filename, contentType });
 }
 

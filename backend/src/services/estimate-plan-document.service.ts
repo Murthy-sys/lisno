@@ -62,7 +62,7 @@ export function createEstimatePlanDocumentService(input: {
       const expired = row?.status === "preparing" && (!row.attemptExpiresAt || new Date(row.attemptExpiresAt).getTime() <= now().getTime());
       const status = expired ? "failed" : row?.status ?? "not_prepared";
       return {
-        sourceUploadId: manifest.sourceUploadId, originalFilename: manifest.originalFilename,
+        sourceUploadId: manifest.sourceUploadId, originalFilename: manifest.originalFilename, layoutType: manifest.layoutType ?? null,
         documentId: row ? String(row._id) : null, manifestHash: hashPlanDocumentManifest(manifest),
         status, pageCount: row?.status === "ready" ? Number(row.pageCount) : manifest.pages.length,
         pdfUrl: status === "ready" ? `/estimates/${encodeURIComponent(manifest.estimateId)}/design-plan-documents/${encodeURIComponent(String(row!._id))}/pdf` : null,
@@ -201,7 +201,7 @@ export function createEstimatePlanDocumentService(input: {
       for (const pin of (round.planDocuments ?? []) as Row[]) {
         const row = await EstimateDesignPlanDocumentModel.findOne({ _id: pin.documentId, estimateId, manifestHash: pin.manifestHash, status: "ready" }).select("+manifest").lean();
         if (!row) throw planDocumentNotFound();
-        documents.push({ sourceUploadId: String(row.sourceUploadId), originalFilename: String(row.manifest.originalFilename), documentId: String(row._id),
+        documents.push({ layoutType: row.manifest.layoutType ?? null, sourceUploadId: String(row.sourceUploadId), originalFilename: String(row.manifest.originalFilename), documentId: String(row._id),
           manifestHash: String(row.manifestHash), status: "ready", pageCount: Number(row.pageCount), failureCode: null, failureMessage: null,
           pdfUrl: `/client/estimates/${encodeURIComponent(estimateId)}/design-plan-documents/${encodeURIComponent(String(row._id))}/pdf?roundId=${encodeURIComponent(String(round._id))}` });
       }

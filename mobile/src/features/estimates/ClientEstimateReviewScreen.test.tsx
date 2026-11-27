@@ -92,6 +92,17 @@ async function mount(ui: ReactElement) {
 describe("ClientEstimateReviewScreen", () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it("describes final approval without requiring initial-payment confirmation for work orders", async () => {
+    const approved = estimate("estimate-one", "project-one", 101_000, "client_approved");
+    const { post } = setup([{ ...approved, workflowVersion: 2, publishedReview: { ...approved.publishedReview, workflowVersion: 2, phase: "post" } }]);
+    await mount(<ClientEstimateReviewScreen estimateId="estimate-one" session={session()} />);
+    expect(await screen.findByText(/Your final approval is recorded and estimate changes are closed/)).toHaveTextContent(
+      "Your final approval is recorded and estimate changes are closed. Work orders can be issued after design approval and the required procurement checks. Initial payment confirmation is optional for release."
+    );
+    expect(screen.queryByRole("button", { name: "Approve estimate" })).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("opens each published estimate from the Client list by its own ID", async () => {
     const { get } = setup();
     const client = session();
@@ -282,7 +293,7 @@ describe("ClientEstimateReviewScreen", () => {
     expect(mockDocumentViewer.mock.calls.some(([props]) => (props as ProtectedDocumentViewerProps).source?.path === "/client/estimates/estimate-one/pdf?roundId=approved-pre-round")).toBe(true);
     await fireEvent.press(screen.getByRole("button", { name: "Close document viewer" }));
     await fireEvent.press(screen.getByRole("button", { name: "Approve final post-estimate" }));
-    expect(screen.getByText("Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and procurement checks.")).toBeTruthy();
+    expect(screen.getByText("Final approval closes estimate changes. Work orders require design approval and procurement release checks. Initial payment confirmation is optional for release.")).toBeTruthy();
   });
 
   it("blocks final approval without a comparison and preserves a withdrawn review as history", async () => {

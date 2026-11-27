@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS } from "../src/domain/ai-estimator-knowledge.js";
 
 import {
   findOverlappingEffectiveWindows,
@@ -47,6 +48,20 @@ describe("AI estimator knowledge validation", () => {
     for (const section of ["advanced", "pricing", "recommendations"] as const) {
       expect(validateKnowledgeSectionPayload(section, { showByDefault: true }))
         .toContainEqual(expect.objectContaining({ path: "payload.showByDefault", code: "UNKNOWN_FIELD" }));
+    }
+  });
+
+  it("accepts optional strict selection-needed metadata in Overview only", () => {
+    for (const payload of [{}, { selectionNeeded: true }, { selectionNeeded: false }]) {
+      expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
+    }
+    for (const selectionNeeded of [null, "true", "false", 0, 1, [], {}]) {
+      expect(validateKnowledgeSectionPayload("overview", { selectionNeeded }))
+        .toContainEqual(expect.objectContaining({ path: "payload.selectionNeeded", code: "INVALID_TYPE" }));
+    }
+    for (const section of AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.filter(key => key !== "overview")) {
+      expect(validateKnowledgeSectionPayload(section, { selectionNeeded: true }))
+        .toContainEqual(expect.objectContaining({ path: "payload.selectionNeeded", code: "UNKNOWN_FIELD" }));
     }
   });
 

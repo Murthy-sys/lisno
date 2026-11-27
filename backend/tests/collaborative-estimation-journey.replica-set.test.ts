@@ -72,7 +72,7 @@ beforeEach(async () => { await replica.clear(); vi.clearAllMocks(); });
 afterAll(async () => { await replica?.stop(); });
 
 describe("collaborative estimation service journey", () => {
-  it("preserves the version-2 journey from invitation through both approvals, payment and explicit vendor issue", async () => {
+  it("activates the version-2 journey after approvals and issues before optional payment recording", async () => {
     await UserModel.insertMany([admin, sales, designer, buyer, finance, site].map(user => ({ _id: user.id, ...user,
       emailNormalized: user.email, passwordHash: "synthetic-unused", active: true, accountKind: "standard", version: 1,
       sessionVersion: 1, managerId: null, authorizedClientIds: [] })));
@@ -142,6 +142,8 @@ describe("collaborative estimation service journey", () => {
     const final = await publish(); await approve(final.clientReview);
     expect(await EstimateModel.findById(estimateId).lean()).toMatchObject({ estimation: { editClosedAt: at.toISOString(), finalApproval: { reviewRoundId: final.clientReview.id, designReviewRoundId: "journey-design-round", requirementsVersion: 2 } } });
     expect(await DesignWorkflowStateModel.findById(project.id).lean()).toBeNull();
+    expect(await ProjectModel.findById(project.id).lean()).toMatchObject({ status: "active", actualStartAt: at });
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: project.id }).lean()).toMatchObject({ status: "open", openedById: client.id });
 
     await AiEstimatorKnowledgeUomModel.create({ _id: "journey-uom", code: "SFT", name: "Square foot", decimalScale: 0, displayOrder: 1, status: "active", version: 1, createdById: admin.id, updatedById: admin.id });
     await AiEstimatorKnowledgeVendorModel.create({ _id: "journey-vendor", code: "JV-1", name: "Synthetic Vendor", displayOrder: 1, status: "active", version: 1, createdById: admin.id, updatedById: admin.id });
@@ -152,19 +154,20 @@ describe("collaborative estimation service journey", () => {
     const submitted = await orders.submit(buyer, project.id, draft.id, { expectedVersion: draft.version, idempotencyKey: "journey-order-submit" });
     const ready = await orders.decide(admin, project.id, draft.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!, decision: "approve", reason: null, budgetOverrideReason: null, idempotencyKey: "journey-order-approve" });
     expect(ready.status).toBe("ready_to_issue");
-    await expect(orders.issue(buyer, project.id, ready.id, { expectedVersion: ready.version, idempotencyKey: "journey-early-issue" })).rejects.toMatchObject({ code: "WORK_ORDER_NOT_READY" });
     expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0);
-    const designState = createDesignWorkflowStateService(repository, audit, () => at);
+    const issued = await orders.issue(buyer, project.id, ready.id, { expectedVersion: ready.version, idempotencyKey: "journey-explicit-issue" });
+    expect(issued).toMatchObject({ status: "approved", approvedRevisionId: submitted.submittedRevisionId });
+    expect(await DesignWorkflowStateModel.findById(project.id).lean()).toBeNull();
+    const tasksBeforeReceipt = await ProjectWorkflowTaskModel.find({ projectId: project.id }).sort({ _id: 1 }).lean();
+    const designState = createDesignWorkflowStateService(repository, audit, () => new Date(at.getTime() + 86_400_000));
     const payment = { action: "confirm_initial_payment" as const, expectedVersion: 0, idempotencyKey: "journey-final-payment", data: {}, note: "Synthetic receipt reference" };
     await expect(designState.act(finance, project.id, payment, null)).rejects.toMatchObject({ code: "PAYMENT_CONFIRMATION_NOT_ALLOWED" });
     const confirmed = await designState.act(admin, project.id, payment, null);
     expect(await designState.act(admin, project.id, payment, null)).toMatchObject({ version: confirmed.version, replayed: true });
     expect(await DesignWorkflowStateModel.findById(project.id).lean()).toMatchObject({ initialPaymentReviewRoundId: final.clientReview.id, initialPaymentDesignReviewRoundId: "journey-design-round" });
     expect(await ProjectFinanceBucketModel.findOne({ projectId: project.id }).lean()).toMatchObject({ status: "open" });
-    expect(await ProjectModel.findById(project.id).lean()).toMatchObject({ status: "active" });
-    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0);
-    const issued = await orders.issue(buyer, project.id, ready.id, { expectedVersion: ready.version, idempotencyKey: "journey-explicit-issue" });
-    expect(issued).toMatchObject({ status: "approved", approvedRevisionId: submitted.submittedRevisionId });
+    expect(await ProjectModel.findById(project.id).lean()).toMatchObject({ status: "active", actualStartAt: at });
+    expect(await ProjectWorkflowTaskModel.find({ projectId: project.id }).sort({ _id: 1 }).lean()).toEqual(tasksBeforeReceipt);
     expect(await VendorWorkAssignmentModel.countDocuments({ projectId: project.id, orderId: ready.id })).toBe(1);
     expect(await VendorExecutionStateModel.countDocuments({ projectId: project.id })).toBe(1);
     expect(await ProjectModel.findById(project.id).lean()).toMatchObject({ completionAuthority: "vendor_client" });

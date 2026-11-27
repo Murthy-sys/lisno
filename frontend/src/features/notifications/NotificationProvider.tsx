@@ -1,3 +1,4 @@
+import { ProcurementNotificationProvider } from "./ProcurementNotifications";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, tokenStorage } from "../../api/client";
@@ -46,7 +47,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const token = tokenStorage.get();
   const enabled = auth.status === "authenticated" && Boolean(auth.user && token) && hasFrontendPermission(auth.authorization, "chat.read");
   const identity = useMemo(() => crypto.randomUUID(), [auth.user?.id, enabled, token]);
-  return <BasketNotificationProvider><ExecutionNotificationProvider><NotificationSession key={identity} enabled={enabled} sessionToken={token}>{children}</NotificationSession></ExecutionNotificationProvider></BasketNotificationProvider>;
+  return <ProcurementNotificationProvider><BasketNotificationProvider><ExecutionNotificationProvider><NotificationSession key={identity} enabled={enabled} sessionToken={token}>{children}</NotificationSession></ExecutionNotificationProvider></BasketNotificationProvider></ProcurementNotificationProvider>;
 }
 
 function NotificationSession({ children, enabled, sessionToken }: { children: ReactNode; enabled: boolean; sessionToken: string | null }) {

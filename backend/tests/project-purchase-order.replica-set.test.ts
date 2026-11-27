@@ -1,6 +1,6 @@
 import * as designRequirements from "../src/services/design-requirements.service.js";
 import { ApiError } from "../src/middleware/errors.js";
-import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
+import { collaborativePurchasePreparation, collaborativePurchaseFinal } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
@@ -390,11 +390,12 @@ describe("project final completion Mongo transactions", () => {
     await siteCompletionService.decide(clientActor, "project-po-zero", { expectedVersion: sent.review!.version,
       idempotencyKey: "zero-scope-client-accept", decision: "approve", reason: null });
     const ready = await completionService.summary(admin, "project-po-zero");
-    expect(ready).toMatchObject({ readyForCompletion: true, pendingOwner: "super_admin" });
-    const completed = await completionService.complete(admin, "project-po-zero", {
-      expectedAuthorityVersion: ready.completionAuthorityVersion, idempotencyKey: "zero-scope-complete" });
-    expect(await ProjectCompletionDecisionModel.findById(completed.id).lean()).toMatchObject({
-      sourceLineItemKeys: ["line-first", "line-zero", "line-positive-zero-quantity"], exceptionIds: [recorded.id] });
+    expect(ready).toMatchObject({ readyForCompletion: false, pendingOwner: "procurement" });
+    expect(ready.blockers).toContainEqual(expect.objectContaining({ code: "PROCUREMENT_READINESS_PENDING" }));
+    await expect(completionService.complete(admin, "project-po-zero", {
+      expectedAuthorityVersion: ready.completionAuthorityVersion, idempotencyKey: "zero-scope-complete" })).rejects.toMatchObject({ code: "PROJECT_COMPLETION_BLOCKED" });
+    expect(await ProjectCompletionDecisionModel.countDocuments({ projectId: "project-po-zero" })).toBe(0);
+    expect(ready.scope.find(row => row.sourceLineItemKey === "line-positive-zero-quantity")?.exception?.id).toBe(recorded.id);
   });
 
   it("preserves explicit exception and approved-order precedence for a zero-value scope line", async () => {
@@ -639,12 +640,12 @@ describe("project final completion Mongo transactions", () => {
     await siteCompletionService.decide(clientActor, "project-po-a", { expectedVersion: submittedSite.review!.version,
       idempotencyKey: "client-accept-a", decision: "approve", reason: null });
     const ready = await mongoose.connection.transaction(session => readProjectCompletionSummary("project-po-a", session));
-    expect(ready.readyForCompletion).toBe(true);
-    expect(ready.pendingOwner).toBe("super_admin");
-    const completed = await completionService.complete(admin, "project-po-a", { expectedAuthorityVersion: ready.completionAuthorityVersion,
-      idempotencyKey: "complete-vendor-a" });
-    expect(await ProjectCompletionDecisionModel.findById(completed.id).lean()).toMatchObject({
-      approvedRevisionIds: [approved.approvedRevisionId], acceptedAssignmentIds: [], siteCompletionReviewId: submittedSite.review!.id });
+    expect(ready.readyForCompletion).toBe(false);
+    expect(ready.pendingOwner).toBe("procurement");
+    expect(ready.blockers).toContainEqual(expect.objectContaining({ code: "PROCUREMENT_READINESS_PENDING" }));
+    await expect(completionService.complete(admin, "project-po-a", { expectedAuthorityVersion: ready.completionAuthorityVersion,
+      idempotencyKey: "complete-vendor-a" })).rejects.toMatchObject({ code: "PROJECT_COMPLETION_BLOCKED" });
+    expect(await ProjectCompletionDecisionModel.countDocuments({ projectId: "project-po-a" })).toBe(0);
     expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
   });
 });
@@ -674,7 +675,7 @@ describe("collaborative individual purchase-order issuance", () => {
     const ready = await prepare();
     const original = await ProjectPurchaseOrderRevisionModel.findById(ready.submittedRevisionId).lean();
     await collaborativePurchaseFinal("project-po-a", now);
-    await collaborativePurchasePayment("project-po-a", now);
+    // Existing approved planning project has no initial-payment record.
     await expect(service.issue(buyer, "project-po-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "issue-stale-source" })).rejects.toMatchObject({ code: "WORK_ORDER_SOURCE_RECONCILIATION_REQUIRED" });
     const draft = await service.reconcile(buyer, "project-po-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "reconcile-final-source", reason: "Reviewed final estimate against original vendor quote", acknowledgeScopeChanges: false });
     expect(draft).toMatchObject({ status: "draft", submittedRevisionId: null, approvedRevisionId: null, estimateSource: { estimateVersion: 3, estimateReviewRoundId: "final-project-po-a" } });
@@ -685,6 +686,7 @@ describe("collaborative individual purchase-order issuance", () => {
     const issue = { expectedVersion: finalReady.version, idempotencyKey: "issue-final-source" };
     const results = await Promise.all([service.issue(buyer, "project-po-a", draft.id, issue), service.issue(buyer, "project-po-a", draft.id, issue)]);
     expect(results.every(row => row.status === "approved")).toBe(true); expect(callback).toHaveBeenCalledTimes(1);
+    expect(await ProjectModel.findById("project-po-a").lean()).toMatchObject({ status: "active", actualStartAt: now });
     expect(await service.commitments(buyer, "project-po-a")).toMatchObject({ committedPaise: 12_500 });
     expect(await service.issue(buyer, "project-po-a", draft.id, issue)).toMatchObject({ approvedRevisionId: submitted.submittedRevisionId });
     expect(callback).toHaveBeenCalledTimes(1);

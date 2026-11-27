@@ -12,6 +12,7 @@ import type { ClientPlanPage, ClientPlanRequest, ClientPlanWorkspace } from "./c
 export interface PlanUploadGroup {
   readonly id: string;
   readonly originalFilename: string;
+  readonly layoutType?: "layout_2d" | "layout_3d" | null | undefined;
   readonly pages: readonly ClientPlanPage[];
 }
 
@@ -20,6 +21,7 @@ export function orderedPlanUploads(workspace: ClientPlanWorkspace): readonly Pla
   return workspace.uploads.map((upload) => ({
     id: upload.id,
     originalFilename: upload.originalFilename,
+    layoutType: upload.layoutType,
     pages: upload.pages
       .map((page) => {
         const canonical = pages.get(page.id);

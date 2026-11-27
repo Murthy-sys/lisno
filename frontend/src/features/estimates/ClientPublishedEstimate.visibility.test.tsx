@@ -127,6 +127,16 @@ it("distinguishes the v3 quotation approval from the later drawing approval", ()
   expect(screen.queryByText(/Design and procurement preparation can continue/)).not.toBeInTheDocument();
 });
 
+it("explains v2 final approval without making initial payment a release prerequisite", () => {
+  const estimate = projectedEstimate(true);
+  estimate.workflowVersion = 2;
+  estimate.publishedReview = { ...estimate.publishedReview!, workflowVersion: 2, phase: "post", status: "approved", canDecide: false };
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText(/Your final approval is recorded and estimate changes are closed/)).toHaveTextContent("Work orders can be issued after design approval and the required procurement checks.");
+  expect(screen.getByText(/Your final approval is recorded and estimate changes are closed/)).toHaveTextContent("Initial payment confirmation is optional for release.");
+  expect(screen.queryByText(/confirm the initial payment before issuing/)).not.toBeInTheDocument();
+});
+
 it("explains that initial approval remains current until a material revision", () => {
   const estimate = projectedEstimate(true);
   estimate.workflowVersion = 3;

@@ -9,6 +9,7 @@ import { formatPaise } from "./ProjectFinancePanel";
 import { financeWorkOrderKeys, getFinanceWorkOrderAssessment, listFinanceWorkOrders,
   saveFinanceWorkOrderAssessment, type FinanceWorkOrderAssessmentRead } from "./financeWorkOrdersApi";
 import "./finance-work-orders.css";
+import { refreshProcurementLifecycle } from "../procurement/procurementLifecycleQueries";
 
 const rupees = (paise: number) => (paise / 100).toFixed(2);
 const percent = (bps: number) => (bps / 100).toFixed(2);
@@ -79,7 +80,8 @@ function AssessmentEditor({ data, projectId }: { data: FinanceWorkOrderAssessmen
     setEditingVersion(saved.version);
     await Promise.all([
       client.invalidateQueries({ queryKey: financeWorkOrderKeys.assessment(data.order.id) }),
-      client.invalidateQueries({ queryKey: ["finance", "work-orders", projectId] })
+      client.invalidateQueries({ queryKey: ["finance", "work-orders", projectId] }),
+      refreshProcurementLifecycle(client)
     ]);
   }, onError: (error) => setLocalError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : "The invoice review could not be saved.") });
 

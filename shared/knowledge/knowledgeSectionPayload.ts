@@ -1,6 +1,6 @@
 import type { KnowledgeJsonObject, KnowledgeSectionKey } from "./knowledgeTypes";
 
-export type KnowledgeOverviewEditableField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "showByDefault" | "applicableTiers" | "dimensionsMandatory" | "closurePriority" | "applicableRoomCategories";
+export type KnowledgeOverviewEditableField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "showByDefault" | "selectionNeeded" | "applicableTiers" | "dimensionsMandatory" | "closurePriority" | "applicableRoomCategories";
 
 /**
  * Rebases only locally edited Overview controls onto the latest server

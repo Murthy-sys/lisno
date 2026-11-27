@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DESIGN_LAYOUT_LABELS, type DesignLayoutType } from "../../../../shared/projects/designLayoutRequirements";
 import { View } from "react-native";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { pickDocument, releaseSelectedAsset, type SelectedAsset } from "../../platform/files";
@@ -7,7 +8,7 @@ import { KnowledgeText, knowledgeStyles as styles } from "../knowledge/knowledge
 import { createIdempotencyKey } from "../finance/money";
 import { designFilePolicy, replaceDesignDrawing, replacePlanRequest, uploadDesign } from "./designPlanApi";
 import { DesignCommandState, useDesignCommand, useDesignDraftGuard, useDesignOwner } from "./DesignPlanControls";
-export type DesignUploadTarget = { kind: "ordinary" } | { kind: "drawing"; drawingId: string; version: number } | { kind: "request"; requestId: string; version: number };
+export type DesignUploadTarget = { kind: "ordinary"; layoutType?: DesignLayoutType } | { kind: "drawing"; drawingId: string; version: number } | { kind: "request"; requestId: string; version: number };
 export function DesignFileUpload({ estimateId, target, session, disabled = false, label = "Upload design plan", onChanged, onDenied, onLockChange }: { readonly estimateId: string; readonly target: DesignUploadTarget; readonly session: AuthenticatedSession; readonly disabled?: boolean; readonly label?: string; readonly onChanged: () => Promise<unknown>; readonly onDenied?: () => void; readonly onLockChange?: (locked: boolean) => void }) {
   const owner = useDesignOwner(estimateId, session); const [asset, setAsset] = useState<SelectedAsset | null>(null); const file = useRef<SelectedAsset | null>(null); const controller = useRef<AbortController | null>(null); const [progress, setProgress] = useState<number | null>(null); const [selectionError, setSelectionError] = useState(""); const [notice, setNotice] = useState(""); const key = useRef(createIdempotencyKey());
   const command = useDesignCommand(owner, onChanged, onDenied);
@@ -26,7 +27,7 @@ export function DesignFileUpload({ estimateId, target, session, disabled = false
     await command.run(async () => {
       controller.current = new AbortController(); setProgress(0);
       try {
-        return captured.kind === "ordinary" ? await uploadDesign(owner.context.runtime, estimateId, selected, updateProgress, controller.current.signal)
+        return captured.kind === "ordinary" ? await uploadDesign(owner.context.runtime, estimateId, selected, updateProgress, controller.current.signal, captured.layoutType)
           : captured.kind === "drawing" ? await replaceDesignDrawing(owner.context.runtime, estimateId, captured.drawingId, captured.version, selected, updateProgress, controller.current.signal)
             : await replacePlanRequest(owner.context.runtime, estimateId, captured.requestId, captured.version, attemptKey, selected, updateProgress, controller.current.signal);
       } finally { controller.current = null; updateProgress(null); }
@@ -34,7 +35,7 @@ export function DesignFileUpload({ estimateId, target, session, disabled = false
   }
   return <View style={styles.stack}>
     <KnowledgeText>PDF, PNG, JPEG, WebP, TIFF or HEIC. Maximum 25 MB.</KnowledgeText>
-    <Button label={asset ? `Selected: ${asset.name}` : "Choose design file"} variant="secondary" disabled={disabled || command.busy || command.blocked} onPress={() => void choose()} />
+    <Button label={asset ? `Selected: ${asset.name}` : target.kind === "ordinary" && target.layoutType ? `Choose ${DESIGN_LAYOUT_LABELS[target.layoutType]} file` : "Choose design file"} variant="secondary" disabled={disabled || command.busy || command.blocked} onPress={() => void choose()} />
     {asset ? <View style={styles.row}><Button label={label} loading={command.busy} disabled={disabled || command.blocked} onPress={() => void send()} /><Button label="Clear selected design" variant="quiet" disabled={command.busy || command.retryAvailable} onPress={clear} /></View> : null}
     {progress !== null ? <KnowledgeText>{progress >= 1 ? "Upload complete. Processing…" : `Uploading ${Math.round(progress * 100)}%`}</KnowledgeText> : null}
     {selectionError ? <KnowledgeText error>{selectionError}</KnowledgeText> : null}{notice ? <KnowledgeText>{notice}</KnowledgeText> : null}

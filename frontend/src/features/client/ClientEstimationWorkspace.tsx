@@ -3,12 +3,12 @@ import { useAuth } from "../../auth/AuthProvider";
 import { ClientEstimateDesignReview } from "../estimates/ClientEstimateDesignReview";
 import { ClientQuotation } from "./ClientQuotation";
 
-export function ClientEstimationWorkspace({ projectId, workspace = false }: { projectId: string; workspace?: boolean }) {
+export function ClientEstimationWorkspace({ projectId, workspace = false, showDesignReview = true }: { projectId: string; workspace?: boolean; showDesignReview?: boolean }) {
   const { user, reviewSession } = useAuth();
-  return <ClientEstimateQueryProvider><WorkspaceForProject key={`${projectId}:${reviewSession?.id ?? user?.id}`} projectId={projectId} workspace={workspace} /></ClientEstimateQueryProvider>;
+  return <ClientEstimateQueryProvider><WorkspaceForProject key={`${projectId}:${reviewSession?.id ?? user?.id}`} projectId={projectId} workspace={workspace} showDesignReview={showDesignReview} /></ClientEstimateQueryProvider>;
 }
 
-function WorkspaceForProject({ projectId, workspace }: { projectId: string; workspace: boolean }) {
+function WorkspaceForProject({ projectId, workspace, showDesignReview }: { projectId: string; workspace: boolean; showDesignReview: boolean }) {
   const reviews = useClientEstimates();
   const matching = reviews.isError ? [] : reviews.data?.filter(estimate => estimate.projectId === projectId) ?? [];
   const estimate = matching.length === 1 ? matching[0]! : null;
@@ -19,6 +19,6 @@ function WorkspaceForProject({ projectId, workspace }: { projectId: string; work
         : matching.length > 1 ? "The current estimate for this project could not be verified. Please contact your Sales team." : null,
       refresh: async () => (await reviews.refetch()).isSuccess
     }} />
-    {estimate ? <ClientEstimateDesignReview estimate={estimate} /> : null}
+    {showDesignReview && estimate ? <ClientEstimateDesignReview estimate={estimate} /> : null}
   </div>;
 }

@@ -1,0 +1,15 @@
+import { useState } from "react";
+import { Button } from "../../../components/ui/Button";
+import { lifecycleApi, type LifecycleSummary } from "./lifecycleApi";
+import { EvidenceField, isoInputDate, MutationNotice, newRecordId, useLifecycleWrite, type LifecyclePanelProps } from "./LifecycleShared";
+
+export function FindingForm({ summary, onSaved, ...props }: LifecyclePanelProps & { summary: LifecycleSummary; onSaved: () => void }) {
+  const [recordId] = useState(() => newRecordId("finding")); const [title, setTitle] = useState(""); const [note, setNote] = useState(""); const [itemId, setItemId] = useState("");
+  const [ownerId, setOwnerId] = useState(""); const [dueAt, setDueAt] = useState(""); const [evidenceIds, setEvidenceIds] = useState<string[]>([]); const [source] = useState(summary.sourceDigest); const [version] = useState(summary.version);
+  const command = useLifecycleWrite(value => lifecycleApi(props.projectId, props.audience).finding(value), onSaved);
+  const stale = props.disabled || source !== summary.sourceDigest || version !== summary.version;
+  return <form className="lc-form" onSubmit={event => { event.preventDefault(); command.mutate({ recordId, expectedVersion: 0, sourceDigest: source, title, note, itemId: itemId || null, ownerId, dueAt: isoInputDate(dueAt), evidenceIds }); }}>
+    <fieldset disabled={stale || command.isPending}><legend>Report urgent finding</legend><p>Urgent findings are available for every priority. The responsible person receives a snag that must be independently verified.</p><label>Finding title<input required minLength={3} maxLength={180} value={title} onChange={event => setTitle(event.target.value)} /></label><label>Observation and required action<textarea required minLength={3} maxLength={2000} value={note} onChange={event => setNote(event.target.value)} /></label><div className="lc-fields"><label>Related work<select value={itemId} onChange={event => setItemId(event.target.value)}><option value="">Project-wide finding</option>{summary.source.items.map(item => <option key={item.id} value={item.id}>{item.itemName} · {item.roomName} · {item.vendorName}</option>)}</select></label><label>Responsible person<select required value={ownerId} onChange={event => setOwnerId(event.target.value)}><option value="">Choose assigned person</option>{summary.findingOwners.map(person => <option key={person.id} value={person.id}>{person.name} · {person.role.replaceAll("_", " ")}</option>)}</select></label><label>Corrective action due<input type="datetime-local" required value={dueAt} onChange={event => setDueAt(event.target.value)} /></label></div>
+    <EvidenceField {...props} entityId={recordId} purpose="handover" value={evidenceIds} onChange={setEvidenceIds} /><Button type="submit" busy={command.isPending} disabled={!summary.findingOwners.length}>Report finding</Button></fieldset>{stale ? <p role="alert">The project source changed. Reopen this finding form after reviewing the current work.</p> : null}<MutationNotice error={command.error} />
+  </form>;
+}

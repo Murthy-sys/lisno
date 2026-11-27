@@ -1,3 +1,5 @@
+import type { DesignLayoutClassification, DesignLayoutType } from "./design-layout-requirements.js";
+
 /** Internal immutable inputs. Storage references must never be serialized into public DTOs. */
 export interface PlanDocumentRect { x: number; y: number; width: number; height: number }
 
@@ -39,6 +41,9 @@ export interface PlanDocumentManifest {
   originalMimeType: string;
   originalFileReference: string;
   originalSizeBytes: number;
+  /** Absent on historical/unclassified manifests; never rewrite their hashes. */
+  layoutType?: DesignLayoutType;
+  layoutClassification?: DesignLayoutClassification;
   pages: PlanDocumentPage[];
 }
 
@@ -59,6 +64,8 @@ export interface PlanDocumentDto {
   pdfUrl: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  /** Historical views use the pinned document/round classification. */
+  layoutType?: DesignLayoutType | null;
 }
 
 export interface PlanDocumentWorkspace {

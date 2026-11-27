@@ -244,12 +244,12 @@ function definitionConflictValues(
   ];
 }
 
-export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "showByDefault" | "applicableTiers" | "dimensionsMandatory" | "closurePriority" | "applicableRoomCategories";
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "showByDefault" | "selectionNeeded" | "applicableTiers" | "dimensionsMandatory" | "closurePriority" | "applicableRoomCategories";
 
 function overviewValues(
   payload: KnowledgeJsonObject,
   masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
-  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory", "applicableRoomCategories"]
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "showByDefault", "selectionNeeded", "applicableTiers", "dimensionsMandatory", "applicableRoomCategories"]
 ): readonly ConflictReviewValue[] {
   const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
     applicableRoomCategories: { label: "Applicable rooms / places", value: roomCategorySummary(payload.applicableRoomCategories) },
@@ -263,6 +263,10 @@ function overviewValues(
     showByDefault: {
       label: "Show this Main Line by default?",
       value: payload.showByDefault === true ? "Yes" : payload.showByDefault === undefined || payload.showByDefault === false ? "No" : "Saved configuration needs review"
+    },
+    selectionNeeded: {
+      label: "Selection needed?",
+      value: payload.selectionNeeded === true ? "Yes" : payload.selectionNeeded === undefined || payload.selectionNeeded === false ? "No" : "Saved configuration needs review"
     },
     uomId: {
       label: "Unit of measure (UOM)",

@@ -17,6 +17,8 @@ import {
 } from "./authorization-contract";
 import { ROUTE_REGISTRY } from "../app/routeRegistry";
 
+const historicalPermissionCodes = PERMISSION_CODES.filter(permission => !permission.startsWith("procurement.lifecycle.") && !permission.startsWith("procurement.payments.") && permission !== "finance.procurement_payments.manage");
+
 const expectedRoles = [
   "super_admin",
   "admin",
@@ -116,16 +118,16 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-11-25.designer-handoff.v1"
+      "2026-11-27.procurement-lifecycle.v1"
     );
   });
 
-  it("publishes all 231 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(233);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(233);
-    expect(PERMISSION_CODES.slice(0, 2)).toEqual(["projects.initiation_defaults.read", "projects.initiation_defaults.manage"]);
-    expect(PERMISSION_CODES.slice(2, 23)).toEqual(["pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage", "pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
-    expect(PERMISSION_CODES.filter(permission => !permission.startsWith("pm.") && !permission.startsWith("projects.initiation_defaults.")).slice(0, 29)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
+  it("publishes all 248 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(248);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(248);
+    expect(historicalPermissionCodes.slice(0, 2)).toEqual(["projects.initiation_defaults.read", "projects.initiation_defaults.manage"]);
+    expect(historicalPermissionCodes.slice(2, 23)).toEqual(["pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage", "pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
+    expect(historicalPermissionCodes.filter(permission => !permission.startsWith("pm.") && !permission.startsWith("projects.initiation_defaults.")).slice(0, 29)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
@@ -136,18 +138,18 @@ describe("frontend authorization contract", () => {
     expect(PERMISSION_CODES).toContain("procurement.work_order_approval.decide");
     expect(PERMISSION_CODES).toContain("finance.vendor_invoice.manage");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
-    const identityMutationIndex = PERMISSION_CODES.indexOf(
+    const identityMutationIndex = historicalPermissionCodes.indexOf(
       "identity.users.update"
     );
     expect(
-      PERMISSION_CODES.slice(identityMutationIndex, identityMutationIndex + 7)
+      historicalPermissionCodes.slice(identityMutationIndex, identityMutationIndex + 7)
     ).toEqual([
       "identity.users.update",
       "identity.users.delete",
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-65)).toEqual([
+    expect(historicalPermissionCodes.slice(-65)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -217,8 +219,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 51 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(51);
+  it("keeps the protected frontend registry at exactly 52 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(52);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/execution", "/projects/:projectId/execution",

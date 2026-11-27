@@ -1,0 +1,9 @@
+.procurement-alerts { color: var(--color-text, #262a27); }
+.procurement-alerts header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.procurement-alerts--attention { padding-block: 1.25rem; border-block: 1px solid var(--color-border, #d8d5cc); margin-block: 1.25rem; }
+.procurement-alerts__list { list-style: none; padding: 0; margin: 0; }
+.procurement-alerts__list li + li { border-top: 1px solid var(--color-border, #d8d5cc); }
+.procurement-alerts__list button { width: 100%; display: grid; gap: .35rem; text-align: start; padding: 1rem .25rem; background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.procurement-alerts__list button:focus-visible { outline: 2px solid var(--color-primary, #294c3b); outline-offset: -2px; }
+.procurement-alerts__list time { font-size: .8rem; }
+.procurement-alerts nav { display: flex; justify-content: space-between; gap: .5rem; align-items: center; }

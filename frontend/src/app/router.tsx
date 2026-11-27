@@ -1,3 +1,4 @@
+import { ProcurementLifecycleOversightPage } from "../features/admin/ProcurementLifecycleOversightPage";
 import { ProjectManagerEstimationsPage } from "../features/project-manager/ProjectManagerEstimationsPage";
 import { ProjectManagerDashboard, ProjectManagerProjectPage } from "../features/project-manager/ProjectManagerWorkspace";
 import { ProjectManagerLeaderboard, ProjectManagerBonus } from "../features/project-manager/PMPerformancePages";
@@ -429,6 +430,7 @@ export function AppRoutes() {
         <Route path="/admin/procurement/vendors" element={registeredElement("/admin/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/admin/procurement/vendors/:vendorId" element={registeredElement("/admin/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
         <Route path="/admin/purchase-orders" element={registeredElement("/admin/purchase-orders", <SuperAdminPurchaseOrdersPage />)} />
+        <Route path="/admin/procurement/projects/:projectId/lifecycle" element={registeredElement("/admin/procurement/projects/:projectId/lifecycle", <ProcurementLifecycleOversightPage />)} />
         <Route path="/admin/project-completion" element={registeredElement("/admin/project-completion", <ProjectCompletionPage />)} />
         <Route path="/project-manager/leaderboard" element={registeredElement("/project-manager/leaderboard", <ProjectManagerLeaderboard />)} />
         <Route path="/project-manager/bonus" element={registeredElement("/project-manager/bonus", <ProjectManagerBonus />)} />

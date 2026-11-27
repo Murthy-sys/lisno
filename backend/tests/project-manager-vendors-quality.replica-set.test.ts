@@ -112,7 +112,9 @@ describe("PM vendor and quality persistence", () => {
     await expect(vendors.actCertification(other, "project-a", record.id, decision)).rejects.toMatchObject({ status: 404 });
     const reviewed = await vendors.actCertification(site, "project-a", record.id, decision); expect(reviewed.status).toBe("partially_certified");
     const complete = await vendors.actCertification(designer, "project-a", record.id, { ...decision, expectedVersion: reviewed.version, idempotencyKey: key() });
-    expect(complete.status).toBe("certified"); expect(complete.facts.find(row => row.label === "Payment")?.value).toBe("Not available from payment records");
+    expect(complete.status).toBe("certified"); expect(complete.facts.find(row => row.label === "Payment")?.value).toBe("Managed by Finance");
+    const buyerPanel = await vendors.vendors(procurement, "project-a");
+    expect(buyerPanel.items.find(row => row.id === record.id)?.facts.find(row => row.label === "Payment")?.value).toBe("Payment history needs reconciliation");
     expect(await FinanceLedgerEntryModel.countDocuments()).toBe(1);
   });
   it("requires reconciliation after a frozen Site Manager reviewer is reassigned", async () => {

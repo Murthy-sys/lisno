@@ -1,4 +1,4 @@
-import { loadPublishedPlanDocuments } from "./estimate-plan-document-publication.js";
+import { legacyReviewManifest, loadPublishedPlanDocuments } from "./estimate-plan-document-publication.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -332,7 +332,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         documents.push(artifact.manifest);
       }
     } else {
-      documents.push(...(await loadEstimatePlanDocumentManifest(estimateId, { session, revisionIds: round.submittedRevisionIds.map(String) })).documents);
+      documents.push(...(await loadEstimatePlanDocumentManifest(estimateId, { session, revisionIds: round.submittedRevisionIds.map(String) })).documents.map(legacyReviewManifest));
     }
     const page = documents.flatMap((document) => document.pages).find((candidate) => candidate.sourcePageId === pageId);
     if (!page || page.patches.length !== rows.length || page.patches.some((patch) => {
@@ -594,7 +594,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
           currentImageUrl: `/client/estimate-plan-pages/${encodeURIComponent(dtoId(page._id))}/current-image${roundQuery}`,
           ...(published ? { reviewRoundId: String(published.round._id) } : {}),
           ...(document?.documentId ? { document: {
-            sourceUploadId: document.manifest.sourceUploadId, originalFilename: document.manifest.originalFilename,
+            layoutType: document.manifest.layoutType ?? null, sourceUploadId: document.manifest.sourceUploadId, originalFilename: document.manifest.originalFilename,
             documentId: document.documentId, manifestHash: document.manifestHash, status: "ready",
             pageCount: document.pageCount, failureCode: null, failureMessage: null,
             pdfUrl: `/client/estimates/${encodeURIComponent(estimateId)}/design-plan-documents/${encodeURIComponent(document.documentId)}/pdf${roundQuery}`
@@ -606,6 +606,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         uploads: uploads.map((upload) => {
           const uploadPages = pages.filter((page) => page.uploadId === dtoId(upload._id));
           return {
+            layoutType: published?.documents.find(document => document.manifest.sourceUploadId === dtoId(upload._id))?.manifest.layoutType ?? null,
             id: dtoId(upload._id), originalFilename: String(upload.originalFilename), mimeType: String(upload.mimeType),
             pageCount: uploadPages.length, pages: uploadPages
           };

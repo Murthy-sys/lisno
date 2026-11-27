@@ -80,6 +80,7 @@ export function RouteFocusManager({
   const initialKey = useRef(location.key);
   const hasNavigated = useRef(false);
   const savedFocus = useRef(new Map<string, HTMLElement>());
+  const previousPath = useRef(location.pathname);
 
   useEffect(() => {
     const locationKey = location.key;
@@ -95,8 +96,11 @@ export function RouteFocusManager({
     const locationKey = location.key;
     const isInitialReplay =
       locationKey === initialKey.current && !hasNavigated.current;
+    const samePath = previousPath.current === location.pathname;
+    previousPath.current = location.pathname;
     if (locationKey !== initialKey.current) hasNavigated.current = true;
     if (isInitialReplay) return;
+    if (samePath && navigationType === "PUSH" && (location.state as { preserveFocus?: boolean } | null)?.preserveFocus) return;
 
     let observer: MutationObserver | null = null;
     let observerDisconnected = false;

@@ -182,7 +182,7 @@ describe("vendor execution across issuance, evidence and completion", () => {
     await expect(command(vendor, "submit", { note: "Old photo is not current evidence", imageIds: [currentImage] })).rejects.toMatchObject({ code: "EXECUTION_EVIDENCE_INVALID" });
   });
 
-  it("requires fresh per-line verification after project Client rejection and retains exact evidence through final closure", async () => {
+  it("requires fresh per-line verification after Client rejection and retains evidence while awaiting Procurement signoff", async () => {
     await issue(); await schedule(); const firstImage = await photo(); await reportComplete();
     const firstVerified = await verify([firstImage]);
     const saved = await completion.progress(site, "project-a", { expectedVersion: 0, idempotencyKey: "site-save-first", progress: 100, note: "Inspect installed work" });
@@ -205,9 +205,11 @@ describe("vendor execution across issuance, evidence and completion", () => {
       executionRound: 2, executionSubmissionVersion: currentVerified.submission!.version });
     expect((await SiteCompletionReviewModel.findById(sent.review!.id).lean())?.sections[0]).toMatchObject({ imageIds: [firstImage], executionVerificationId: firstVerified.verification!.id });
     await completion.decide(client, "project-a", { expectedVersion: second.review!.version, idempotencyKey: "client-project-approve", decision: "approve", reason: null });
-    const ready = await closure.summary(admin, "project-a"); expect(ready.readyForCompletion).toBe(true);
-    const closed = await closure.complete(admin, "project-a", { expectedAuthorityVersion: ready.completionAuthorityVersion, idempotencyKey: "complete-verified-project" });
-    expect(await ProjectCompletionDecisionModel.findById(closed.id).lean()).toMatchObject({ siteCompletionReviewId: second.review!.id, approvedRevisionIds: ["revision-a"] });
+    const ready = await closure.summary(admin, "project-a"); expect(ready.readyForCompletion).toBe(false);
+    expect(ready.blockers).toEqual([expect.objectContaining({ code: "PROCUREMENT_READINESS_PENDING" })]);
+    await expect(closure.complete(admin, "project-a", { expectedAuthorityVersion: ready.completionAuthorityVersion, idempotencyKey: "complete-verified-project" })).rejects.toMatchObject({ code: "PROJECT_COMPLETION_BLOCKED" });
+    expect(await ProjectCompletionDecisionModel.countDocuments({ projectId: "project-a" })).toBe(0);
+    expect(await SiteCompletionReviewModel.findById(second.review!.id).lean()).toMatchObject({ status: "approved", approvedRevisionIds: ["revision-a"] });
     expect(await VendorExecutionReviewModel.countDocuments({ assignmentId: workId, "decision.outcome": "verified" })).toBe(2);
   });
 

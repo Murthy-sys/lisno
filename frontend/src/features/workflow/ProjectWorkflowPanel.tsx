@@ -13,6 +13,7 @@ import { ProjectWorkflowProgress } from "./ProjectWorkflowProgress";
 import { WorkflowStageActions } from "./WorkflowStageActions";
 import { currentProjectWorkflowStage } from "./projectWorkflowSelectors";
 import { DesignerHandoff } from "./DesignerHandoff";
+import { ProjectExecutionChoice } from "./ProjectExecutionChoice";
 
 interface ProjectWorkflowPanelProps {
   projectId: string;
@@ -71,6 +72,10 @@ function WorkflowPanelContent({ projectId, onOpenTask, timelineContainer, presen
         <>
           {workflow.isError ? <p role="alert">The latest workflow refresh failed. Saved information is shown; your open form has been kept. <Button variant="secondary" size="compact" onClick={() => void workflow.refetch()}>Retry refresh</Button></p> : null}
           {data ? <DesignerHandoff workflow={data} presentation={presentation} refreshing={workflow.isFetching} refreshError={workflow.isError} showTimer={showAppointmentTimer} /> : null}
+          {data ? <ProjectExecutionChoice workflow={data} refreshing={workflow.isFetching} refreshError={workflow.isError} onRefresh={async () => {
+            const result = await workflow.refetch();
+            return result.isSuccess ? result.data ?? null : null;
+          }} /> : null}
           {showInitialPayment && presentation === "full" && data?.initialPayment ? <ProjectInitialPaymentStatus key={`payment-${projectId}`} workflow={data} /> : null}
           {presentation === "full" && data?.notices?.length ? <section className="workflow-live-notices" aria-label="Project notifications"><h3>Project updates</h3><ul>{data.notices.map((notice) => <li key={notice.id}>{notice.message}</li>)}</ul></section> : null}
           {presentation === "full" && data?.projectStages?.some((stage) => stage.operational?.reminders?.length) ? <section className="workflow-live-notices" aria-label="Stage SLA reminders"><h3>Stage SLA reminders</h3><ul>{data.projectStages.flatMap((stage) => stage.operational?.reminders?.map((reminder) => <li key={reminder.id}><strong>{stage.name}</strong><span>{reminder.label}</span><time dateTime={reminder.dueAt}>{new Date(reminder.dueAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></li>) ?? [])}</ul><p>Due reminders refresh while this project is open.</p></section> : null}
@@ -82,7 +87,7 @@ function WorkflowPanelContent({ projectId, onOpenTask, timelineContainer, presen
         </>
       )}
       {showDesignRequirements && canRead && data && !projectReadDenied(workflow.error) ? <ProjectDesignRequirementsPanel key={`requirements-${user?.id}-${projectId}`} projectId={projectId} identity={`${user?.id}:${user?.role}`} /> : null}
-      {canRead && !projectReadDenied(workflow.error) ? <ProjectClientActions key={`${user?.id}-${projectId}`} projectId={projectId} hideWhenEmpty={presentation !== "full"} /> : null}
+      {canRead && data && !projectReadDenied(workflow.error) ? <ProjectClientActions key={`${user?.id}-${projectId}`} projectId={projectId} hideWhenEmpty={presentation !== "full"} /> : null}
     </div>
   );
 }

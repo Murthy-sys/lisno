@@ -152,6 +152,7 @@ const planRequestSchema = z.object({
 
 const planUploadSchema = z.object({
   id,
+  layoutType: z.enum(["layout_2d", "layout_3d"]).nullable().optional(),
   originalFilename: z.string().min(1),
   mimeType: z.string().min(1),
   pageCount: z.number().int().nonnegative(),

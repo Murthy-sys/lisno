@@ -1,3 +1,4 @@
+import { ProcurementAttention } from "../notifications/ProcurementNotificationInbox";
 import { useRef, useState } from "react";
 
 import type { ProcurementProject } from "../../api/types";
@@ -84,6 +85,7 @@ export function ProcurementWorkspace() {
         ) : null}
       </header>
 
+      {canRead ? <ProcurementAttention /> : null}
       {!canRead ? (
         <PageState state="error" message="You do not have permission to view the procurement workspace." />
       ) : query.isPending ? (

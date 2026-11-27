@@ -46,6 +46,55 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it.each([[undefined, "No"], [true, "Yes"], [false, "No"], ["true", "No"], [1, "No"], [null, "No"]] as const)("shows selection-needed value %s as %s without changing the saved payload", (selectionNeeded, expected) => {
+    const props = renderPanel({ presentation: "configuration",
+      overviewPayload: selectionNeeded === undefined ? overviewPayload : { ...overviewPayload, selectionNeeded } });
+    const selection = screen.getByRole("radiogroup", { name: "Selection needed?" });
+    expect(within(selection).getByRole("radio", { name: expected })).toBeChecked();
+    expect(selection).toHaveAccessibleDescription("Record whether this Main Line needs a selection.");
+    expect(selection.previousElementSibling).toHaveTextContent("Show this Main Line by default?");
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it("changes only selection needed by keyboard and keeps other radio settings independent", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration" });
+    const selection = screen.getByRole("radiogroup", { name: "Selection needed?" });
+    within(selection).getByRole("radio", { name: "No" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("selectionNeeded");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, selectionNeeded: true });
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toHaveFocus();
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, selectionNeeded: true }} /></main>);
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toBeChecked();
+    expect(within(screen.getByRole("radiogroup", { name: "Show this Main Line by default?" })).getByRole("radio", { name: "No" })).toBeChecked();
+    await user.keyboard("{ArrowRight}");
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("selectionNeeded");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, selectionNeeded: false });
+    expect(props.onOverviewDirty).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ editable: false }, { saving: true }])("locks the saved selection-needed value during %j", async state => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", overviewPayload: { ...overviewPayload, selectionNeeded: true }, ...state });
+    const selection = screen.getByRole("radiogroup", { name: "Selection needed?" });
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toBeChecked();
+    within(selection).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    await user.click(within(selection).getByRole("radio", { name: "No" }));
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["default", "procurement-basket"] as const)("preserves selection needed during unrelated edits in the %s presentation without exposing its control", async presentation => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation, overviewPayload: { ...overviewPayload, selectionNeeded: true } });
+    expect(screen.queryByRole("radiogroup", { name: "Selection needed?" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, selectionNeeded: true, uomId: squareMetre.id });
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("uomId");
+  });
+
   it.each([{ editable: false }, { saving: true }])("locks the room picker and displays saved choices during %j", state => {
     const props = renderPanel({ presentation: "configuration", overviewPayload: { applicableRoomCategories: ["tv_unit", "kitchen"] }, ...state });
     const picker = screen.getByRole("button", { name: "Applicable rooms / places" });

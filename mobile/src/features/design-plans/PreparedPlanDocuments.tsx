@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DESIGN_LAYOUT_LABELS } from "../../../../shared/projects/designLayoutRequirements";
 import { useEffect, useRef, useState } from "react";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { canPerformOperation } from "../../core/session/operationCapabilities";
@@ -34,6 +35,7 @@ export function PreparedPlanDocuments({ estimateId, session, revisionKey, enable
     <KnowledgeText>Review the updated full PDF before submission. Revised drawings fit their original areas without stretching.</KnowledgeText>
     {query.isFetching || query.isPending || command.busy ? <KnowledgeText>Preparing or checking updated full plans…</KnowledgeText> : null}
     {query.isError ? <KnowledgeText error>The current full plans could not be loaded.</KnowledgeText> : query.data?.documents.map(document => <KnowledgeCard key={document.sourceUploadId} title={document.originalFilename}>
+      <KnowledgeText>{document.layoutType ? DESIGN_LAYOUT_LABELS[document.layoutType] : "Layout type not set"}</KnowledgeText>
       <KnowledgeText>{document.status === "ready" ? `${document.pageCount} pages · Updated PDF ready` : document.failureMessage ?? document.status.replaceAll("_", " ")}</KnowledgeText>
       {document.status === "ready" && document.documentId && canPerformOperation(session, "GET /estimates/:estimateId/design-plan-documents/:documentId/pdf") ? <Button label={`Open full PDF: ${document.originalFilename}`} variant="quiet" onPress={() => setPreview({ path: `/estimates/${encodeURIComponent(estimateId)}/design-plan-documents/${encodeURIComponent(document.documentId!)}/pdf`, fileName: document.originalFilename, mimeType: "application/pdf", kind: "design-file" })} /> : null}
     </KnowledgeCard>)}

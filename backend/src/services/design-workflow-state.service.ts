@@ -1,4 +1,6 @@
 import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import { executionChoiceDataSchema, executionChoiceIntegrityIssue, projectExecutionChoice } from "../domain/project-execution-choice.js";
+import { executionChoiceOption } from "../contracts/project-execution-choice.js";
 import { assertDesignRequirementsSubmissionAllowed } from "./design-requirements.service.js";
 import { furnitureUomCreateSchema, type FurnitureUomCreateInput } from "../domain/workflow-uoms.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
@@ -32,14 +34,14 @@ export const workflowActionSchema = z.object({
     try { return JSON.parse(value); } catch { return value; }
   }, z.record(z.unknown()).default({}))
 }).strict().superRefine((value, context) => {
-  if (value.action !== "key_collection_schedule") return;
-  const parsed = keyCollectionScheduleSchema.safeParse(value.data);
+  if (value.action !== "key_collection_schedule" && value.action !== "execution_path_select") return;
+  const parsed = (value.action === "execution_path_select" ? executionChoiceDataSchema : keyCollectionScheduleSchema).safeParse(value.data);
   if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: ["data", ...issue.path] });
 });
 export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
 export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; secondaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
 export interface WorkflowAvailableAction { id: DesignWorkflowAction; label: string; actor: "designer" | "client" | "sales" | "finance"; requiresProof: boolean; disabledReason?: string }
-const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, { type: DesignStageType; label: string; actor: WorkflowAvailableAction["actor"]; file?: boolean }> = {
+const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment" | "execution_path_select">, { type: DesignStageType; label: string; actor: WorkflowAvailableAction["actor"]; file?: boolean }> = {
   internal_kickoff_complete: { type: "internal_kickoff", label: "Complete Internal Kick off and save", actor: "designer", file: true },
   sales_calendar_accept: { type: "internal_kickoff", label: "Accept calendar meeting", actor: "sales" },
   client_kickoff_request: { type: "client_kickoff", label: "Request Client kickoff", actor: "designer" },
@@ -191,7 +193,7 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
   }
   return designRequirementsReadiness;
 }
-function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowAction, "confirm_initial_payment">, at: number, actorId?: string): boolean {
+function allowed(state: DesignWorkflowState, action: keyof typeof ACTIONS, at: number, actorId?: string): boolean {
   // Scheduling has its own initial-approval/assignment gate and dedicated Client UI.
   if (action === "key_collection_schedule") return false;
   if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) return false;
@@ -539,7 +541,12 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           if ((input.action as string) === "client_kickoff_not_required") throw new ApiError(400, "WORKFLOW_ACTION_RETIRED", "Client Kick off is mandatory. Complete it after reviewing the Internal Kick off document.");
           if (!project.designWorkflowStages?.length) blocked(["This project does not have the configured design workflow."]);
           let state = await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
-          if (input.action !== "key_collection_schedule") state = await hydrateDesignWorkflowState(tx, projectId, state, true);
+          if (input.action !== "key_collection_schedule" && input.action !== "execution_path_select") state = await hydrateDesignWorkflowState(tx, projectId, state, true);
+          if (input.action === "execution_path_select") {
+            if (actor.role !== "client" || actor.id !== project.clientId || capabilities.representative) throw new ApiError(403, "FORBIDDEN", "Only the project Client can save an execution choice.");
+            const integrityIssue = executionChoiceIntegrityIssue(state);
+            if (integrityIssue) throw new ApiError(409, "EXECUTION_CHOICE_UNAVAILABLE", integrityIssue);
+          }
           if (input.action === "key_collection_schedule" && (actor.role !== "client" || actor.id !== project.clientId || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can confirm the key collection appointment.");
           if (input.action === "space_planning_complete" && (actor.role !== "client" || project.clientId !== actor.id || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can complete this stage.");
           const repeated = state.history.find((event) => event.idempotencyKey === input.idempotencyKey);
@@ -558,7 +565,20 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           let recordedData = structuredClone(input.data);
           let auditDetails: Record<string, unknown> = {};
           const eventId = `workflow-event-${randomUUID()}`;
-          if (input.action === "key_collection_schedule") {
+          if (input.action === "execution_path_select") {
+            const parsed = executionChoiceDataSchema.safeParse(input.data);
+            if (!parsed.success) throw new ApiError(400, "INVALID_WORKFLOW_ACTION", "Choose a supported execution option and acknowledge that it is permanent.");
+            if (proof || mediaFiles.length) throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Execution choice does not accept evidence uploads.");
+            const view = projectExecutionChoice(project, state, actor, at);
+            if (view.status === "locked") throw new ApiError(409, "EXECUTION_PATH_ALREADY_SELECTED", "The execution choice is already saved permanently and cannot be changed or revoked.");
+            if (!view.keyCollectionStageId || input.stageId !== view.keyCollectionStageId) missing();
+            if (!view.canSelect) blocked([view.blockingReason ?? "Complete key collection before choosing an execution path."]);
+            const option = executionChoiceOption(parsed.data.optionId);
+            state.executionChoice = { optionId: option.id, definitionVersion: option.definitionVersion, phaseIds: option.phases.map(phase => phase.id),
+              selectedAt: timestamp, selectedById: actor.id, historyEventId: eventId, keyCollectionStageId: view.keyCollectionStageId };
+            recordedData = { ...state.executionChoice, acknowledgedIrreversible: true };
+            auditDetails = recordedData;
+          } else if (input.action === "key_collection_schedule") {
             if (!project.designWorkflowStages.some(stage => stage.type === "key_collection" && stage.id === input.stageId)) missing();
             if (proof || mediaFiles.length) throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Key collection scheduling does not accept evidence uploads.");
             const parsed = keyCollectionScheduleSchema.safeParse(input.data);
@@ -835,7 +855,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
               auditDetails = { ...auditDetails, timingBasis: "sequential" };
             }
           }
-          if (state.estimationWorkflowVersion === 3) {
+          if (state.estimationWorkflowVersion === 3 && input.action !== "execution_path_select") {
             const furniture = state.stages.existing_furniture_dimensions;
             if (furniture?.acceptedAt && furniture.clientFurnitureRequest?.hasFurniture !== null &&
               furniture.rooms?.every(room => workflowFurnitureRoomReady(furniture, room)) &&
@@ -843,8 +863,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           }
           state.history.push({ id: eventId, idempotencyKey: input.idempotencyKey, requestHash: hash, action: input.action, stageId: input.stageId ?? null, actorId: actor.id, actorName: recordedActorName, actorRole: actor.role, onBehalfOfClient, at: timestamp, note: input.note, data: recordedData, proof, ...(mediaFiles.length ? { mediaFiles } : {}) });
           attemptedWrite = true;
-          const saved = await tx.saveDesignWorkflowState(projectId, state.version, state);
-          if (input.action === "confirm_initial_payment" && (project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3)) await tx.activateCollaborativeExecution(projectId, actor.id, timestamp);
+          const saved = await tx.saveDesignWorkflowState(projectId, state.version, state, input.action === "execution_path_select" ? { purpose: "execution_choice" } : undefined);
           await audit.append({ actorId: actor.id, action: "design_workflow_action_recorded", entityType: "design_workflow", entityId: projectId, occurredAt: timestamp, newValues: { action: input.action, stageId: input.stageId ?? null, eventId, onBehalfOfClient, proofAvailable: Boolean(proof), ...(mediaFiles.length ? { mediaCount: mediaFiles.length } : {}), version: saved.version, ...auditDetails }, reason: input.note || null }, tx);
           return { version: saved.version, replayed: false };
         });

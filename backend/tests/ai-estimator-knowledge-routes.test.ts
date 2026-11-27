@@ -151,19 +151,19 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
-  it("validates the default-display Overview flag and preserves Configuration write authorization", async () => {
+  it.each(["showByDefault", "selectionNeeded"])("validates the %s Overview flag and preserves Configuration write authorization", async (field) => {
     const testServices = services();
     const server = appFor(testServices);
     const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/overview";
     const headers = { Authorization: "Bearer super-admin-token" };
-    const input = (showByDefault: unknown) => ({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { showByDefault } });
+    const input = (value: unknown) => ({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { [field]: value } });
     for (const flag of [true, false]) {
       await request(server).put(path).set(headers).send(input(flag)).expect(200);
       expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "overview", input(flag));
     }
     for (const value of [null, "true", "false", 0, 1, [], {}]) {
       const result = await request(server).put(path).set(headers).send(input(value)).expect(400);
-      expect(result.body.error.fields).toMatchObject({ "payload.showByDefault": expect.any(String) });
+      expect(result.body.error.fields).toMatchObject({ [`payload.${field}`]: expect.any(String) });
     }
     await request(server).put(path.replace("/overview", "/advanced")).set(headers).send(input(true)).expect(400);
     for (const role of ["estimator_sales", "procurement", "client"] as const) {

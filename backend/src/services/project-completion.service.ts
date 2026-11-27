@@ -30,6 +30,8 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { procurementItemSourceSnapshot } from "./procurement.service.js";
 import { readVendorWorkCompletion, type VendorWorkCompletionSnapshot } from "./vendor-work.service.js";
+import { readProcurementReadiness } from "./procurement-readiness.service.js";
+import { ProcurementLifecycleStateModel } from "../models/ProcurementLifecycleState.js";
 
 type Row = Record<string, any>;
 type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
@@ -61,6 +63,7 @@ interface CompletionLineage {
   assignmentIds: string[];
   exceptionIds: string[];
   siteReviewId: string | null;
+  requiresProcurement: boolean;
 }
 export interface ProjectScopeExceptionDto {
   id: string; projectId: string; sourceLineItemKey: string; kind: "not_applicable" | "externally_fulfilled";
@@ -85,7 +88,7 @@ export function createProjectCompletionService(input: { audit: AuditService; now
   async function summaryInSession(projectId: string, session: ClientSession, source?: Source): Promise<CompletionLineage> {
     const project = await requireVendorManagedProject(projectId, session);
     const approvedSource = source ?? await procurementItemSourceSnapshot(projectId, session);
-    return buildLineage(project, approvedSource, session);
+    return buildLineage(project, approvedSource, session, now());
   }
   return {
     summary(actor, projectId) { return tx(actor, async session => (await summaryInSession(projectId, session)).summary); },
@@ -156,9 +159,12 @@ export function createProjectCompletionService(input: { audit: AuditService; now
           const project = await requireVendorManagedProject(projectId, session);
           if (project.status !== "active" || project.completionAuthorityVersion !== fields.expectedAuthorityVersion || project.completionDecisionId) versionConflict();
           const source = await procurementItemSourceSnapshot(projectId, session, true);
-          const lineage = await buildLineage(project, source, session);
-          if (!lineage.summary.readyForCompletion) throw new ApiError(409, "PROJECT_COMPLETION_BLOCKED", "Resolve all purchase orders, vendor work, client reviews, and estimate scope before completing this project.");
           const at = now();
+          const lineage = await buildLineage(project, source, session, at);
+          // Explicit Admin scope exceptions may leave no vendor procurement to close.
+          const procurementReadiness = lineage.requiresProcurement ? await readProcurementReadiness(projectId, session, at, true) : null;
+          if (!lineage.summary.readyForCompletion) throw new ApiError(409, "PROJECT_COMPLETION_BLOCKED", "Resolve all purchase orders, vendor work, client reviews, and estimate scope before completing this project.");
+          if (procurementReadiness && !procurementReadiness.ready) throw new ApiError(409, "PROJECT_COMPLETION_BLOCKED", "Resolve Procurement readiness before completing this project.");
           const id = `project-completion-${randomUUID()}`;
           const resultingAuthorityVersion = fields.expectedAuthorityVersion + 1;
           await ProjectCompletionDecisionModel.create([{ _id: id, projectId, estimateId: source.estimateId,
@@ -166,6 +172,9 @@ export function createProjectCompletionService(input: { audit: AuditService; now
             expectedAuthorityVersion: fields.expectedAuthorityVersion, resultingAuthorityVersion,
             approvedRevisionIds: lineage.revisionIds, acceptedAssignmentIds: lineage.assignmentIds,
             siteCompletionReviewId: lineage.siteReviewId,
+            procurementReadinessDeclarationId: procurementReadiness?.declarationId ?? null,
+            procurementReadinessDigest: procurementReadiness?.sourceDigest ?? null,
+            procurementReadinessReferences: procurementReadiness?.references ?? null,
             exceptionIds: lineage.exceptionIds, sourceLineItemKeys: source.lineItems.map(line => line.key),
             actorId: actor.id, decidedAt: at, idempotencyKey: fields.idempotencyKey, requestDigest }], { session });
           const changed = await ProjectModel.updateOne({ _id: projectId, status: "active", completionAuthority: "vendor_client",
@@ -191,7 +200,7 @@ export function createProjectCompletionService(input: { audit: AuditService; now
   };
 }
 
-async function buildLineage(project: Row, source: Source, session: ClientSession): Promise<CompletionLineage> {
+async function buildLineage(project: Row, source: Source, session: ClientSession, at = new Date()): Promise<CompletionLineage> {
   const projectId = String(project._id);
   const sourceByKey = new Map(source.lineItems.map(line => [line.key, line]));
   if (sourceByKey.size !== source.lineItems.length) lineageConflict("Approved estimate has duplicate source keys.");
@@ -327,13 +336,18 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
       : "Site Manager must submit 100% project completion for Client acceptance."
   });
   if (project.status !== "active" && project.status !== "completed") blockers.push({ code: "PROJECT_NOT_ACTIVE", message: "The project must be active before final completion." });
+  const requiresProcurement = orders.some(order => Boolean(order.approvedRevisionId)) || scope.some(line => line.status === "uncovered") || Boolean(await ProcurementLifecycleStateModel.exists({ _id: projectId }).session(session));
+  if (project.status === "active" && requiresProcurement) {
+    const readiness = await readProcurementReadiness(projectId, session, at);
+    for (const blocker of readiness.blockers) blockers.push({ code: "PROCUREMENT_READINESS_PENDING", message: blocker.message, procurementTab: blocker.tab, ...(blocker.entityId ? { entityId: blocker.entityId } : {}) });
+  }
   const readyForCompletion = project.status === "active" && blockers.length === 0;
   const pendingOwner = project.status === "completed" ? "none" : blockers.some(item => item.code === "ORDER_PENDING")
     ? activeRequest?.status === "pending_approval" || orders.some(order => order.status === "pending_approval") ? "super_admin" : "procurement"
     : blockers.some(item => item.code === "SCOPE_UNCOVERED" || item.code === "NO_APPROVED_ORDER") ? "procurement"
     : blockers.some(item => item.code === "SNAGS_PENDING") ? "site_manager"
     : blockers.some(item => item.code === "CLIENT_REVIEW_PENDING") || siteState?.status === "pending_client" ? "client"
-    : siteState?.status === "client_approved" ? "super_admin" : "site_manager";
+    : siteState?.status === "client_approved" ? blockers.some(item => item.code === "PROCUREMENT_READINESS_PENDING") ? "procurement" : "super_admin" : "site_manager";
   return { summary: { projectId, projectName: String(project.name), projectStatus: String(project.status), completionAuthority: "vendor_client",
     completionAuthorityVersion: Number(project.completionAuthorityVersion),
     estimateSource: { estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId },
@@ -343,7 +357,7 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
       round: Number(siteState.currentRound), reviewId: siteReview ? String(siteReview._id) : null } : null,
     blockers, pendingOwner,
     readyForCompletion, completedAt: project.actualEndAt ? new Date(project.actualEndAt).toISOString() : null,
-    completionDecisionId: project.completionDecisionId ?? null }, revisionIds, assignmentIds,
+    completionDecisionId: project.completionDecisionId ?? null }, revisionIds, assignmentIds, requiresProcurement,
     siteReviewId: siteReview?.status === "approved" ? String(siteReview._id) : null,
     exceptionIds: exceptions.filter(row => !coverageCounts.has(String(row.sourceLineItemKey))).map(row => String(row._id)) };
 }

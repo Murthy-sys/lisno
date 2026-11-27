@@ -90,6 +90,7 @@ export function KnowledgeOverviewPanel({
   const choicesClassName = `ui-radio-group${configuration ? " knowledge-overview__choices" : ""}`;
   const clientVisible = overviewPayload.clientVisible !== false;
   const showByDefault = overviewPayload.showByDefault === true;
+  const selectionNeeded = overviewPayload.selectionNeeded === true;
   const applicableTiers = applicableKnowledgeTiers(overviewPayload);
   const tiersEnabled = applicableTiers.length > 0;
   const surfaceIds = Array.isArray(overviewPayload.surfaceIds)
@@ -204,6 +205,21 @@ export function KnowledgeOverviewPanel({
                   if (!editable || saving) return;
                   onOverviewDirty("showByDefault");
                   onOverviewPayloadChange({ ...overviewPayload, showByDefault: value });
+                }} />
+              {value ? "Yes" : "No"}
+            </label>)}
+          </div>
+        </fieldset> : null}
+        {configuration ? <fieldset className={settingClassName} role="radiogroup" disabled={!editable || saving} aria-describedby={`${visibilityId}-selection-help`}>
+          <legend>Selection needed?</legend>
+          <p id={`${visibilityId}-selection-help`} className="knowledge-overview__description">Record whether this Main Line needs a selection.</p>
+          <div className={choicesClassName}>
+            {([true, false] as const).map(value => <label className="knowledge-overview__visibility-option" key={String(value)}>
+              <Radio name={`${visibilityId}-selection-needed`} value={String(value)} checked={selectionNeeded === value}
+                onChange={() => {
+                  if (!editable || saving) return;
+                  onOverviewDirty("selectionNeeded");
+                  onOverviewPayloadChange({ ...overviewPayload, selectionNeeded: value });
                 }} />
               {value ? "Yes" : "No"}
             </label>)}

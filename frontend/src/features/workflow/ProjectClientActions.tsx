@@ -43,7 +43,7 @@ function ProjectClientActionsContent({ projectId, hideWhenEmpty }: { projectId: 
             <details className="project-client-actions__task">
               <summary><span><strong>Design plan v{task.designPlanVersion}</strong><span>{task.attachmentNames.length} plan attachment{task.attachmentNames.length === 1 ? "" : "s"} · Awaiting Client response</span></span><span className="project-client-actions__open">Open Client Task</span></summary>
               <div className="project-client-actions__detail">
-                {user?.role === "client" ? <Link className="ui-button ui-button--primary" to={`/client?estimate=${encodeURIComponent(task.estimateId)}`}>Review design in Client portal</Link> : null}
+                {user?.role === "client" ? <Link className="ui-button ui-button--primary" to={`/client/projects/${encodeURIComponent(projectId)}#design-review`}>Review design in Client portal</Link> : null}
                 <DesignReviewCard task={task} />
               </div>
             </details>

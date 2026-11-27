@@ -1,3 +1,5 @@
+import { PROCUREMENT_LIFECYCLE_SCHEMAS, PROCUREMENT_LIFECYCLE_REQUESTS, PROCUREMENT_LIFECYCLE_RESPONSES, PROCUREMENT_LIFECYCLE_QUERIES } from "./openapi/procurement-lifecycle.js";
+import { EXECUTION_CHOICE_SCHEMAS } from "./openapi/project-execution-choice.js";
 import { WORKFLOW_TIMELINE_SCHEMAS } from "./openapi/workflow-timelines.js";
 import { USER_LOCATION_MAX_LENGTH } from "./domain/user-location.js";
 import { DESIGNER_ASSIGNMENT_SCHEMAS, DESIGNER_ASSIGNMENT_REQUESTS, DESIGNER_ASSIGNMENT_RESPONSES, DESIGNER_ASSIGNMENT_QUERIES } from "./openapi/designer-assignment.js";
@@ -171,6 +173,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...PROJECT_MANAGER_REQUESTS,
   ...VENDOR_ACCESS_REQUESTS,
   ...PROJECT_COMPLETION_REQUESTS,
+  ...PROCUREMENT_LIFECYCLE_REQUESTS,
   ...SITE_COMPLETION_REQUESTS,
   ...VENDOR_SUGGESTION_REQUESTS,
   ...VENDOR_KPI_REQUESTS,
@@ -206,9 +209,8 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ),
   "PUT /leads/:leadId/estimate": jsonRequest("EstimateInput"),
   "PUT /auth/me/profile-photo": multipartRequest("ProfilePhotoUploadRequest"),
-  "POST /estimates/:estimateId/design-uploads": multipartRequest(
-    "FileUploadRequest"
-  ),
+  "POST /estimates/:estimateId/design-uploads": multipartRequest("DesignLayoutUploadRequest"),
+  "PATCH /estimate-design-uploads/:uploadId/layout-type": jsonRequest("DesignLayoutClassificationRequest"),
   "POST /tasks/:taskId/design-versions": multipartRequest(
     "FileUploadRequest"
   ),
@@ -293,6 +295,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...PROJECT_MANAGER_RESPONSES,
   ...VENDOR_ACCESS_RESPONSES,
   ...PROJECT_COMPLETION_RESPONSES,
+  ...PROCUREMENT_LIFECYCLE_RESPONSES,
   ...SITE_COMPLETION_RESPONSES,
   ...VENDOR_SUGGESTION_RESPONSES,
   ...VENDOR_KPI_RESPONSES,
@@ -310,6 +313,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "DELETE /auth/me/profile-photo": "ProfilePhotoUserResult",
   "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
   "POST /estimates/:estimateId/design-uploads": "EstimateDesignUpload",
+  "PATCH /estimate-design-uploads/:uploadId/layout-type": "EstimateDesignUpload",
   "POST /estimate-plan-change-requests/:requestId/replacement-upload": "EstimateDesignUpload",
   "POST /estimate-design-uploads/:uploadId/retry": "EstimateDesignUpload",
   "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
@@ -786,6 +790,7 @@ const queryParametersByOperation: Readonly<
   "GET /admin/purchase-orders/pending": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
   "GET /admin/purchase-order-requests/pending": PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS,
   "GET /admin/project-completion-tasks": PROJECT_COMPLETION_QUERY_PARAMETERS,
+  ...PROCUREMENT_LIFECYCLE_QUERIES,
   "GET /vendor/work": VENDOR_WORK_QUERY_PARAMETERS,
   "GET /clients/projects/:projectId/vendor-work-reviews": VENDOR_WORK_QUERY_PARAMETERS,
   "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
@@ -1388,7 +1393,7 @@ function requestBodyFor(
 }
 
 function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, OpenApiResponse>> {
-  if (key === "GET /projects/:projectId/pm/evidence/:evidenceId") {
+  if (key === "GET /projects/:projectId/pm/evidence/:evidenceId" || key === "GET /projects/:projectId/pm/snags/:snagId/procurement-evidence/:evidenceId") {
     return binaryResponses(["application/octet-stream", "application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/tiff", "video/mp4", "video/quicktime", "video/webm"], "Validated project-record evidence with its original media type. Current authorized project/record access is required; opaque references only, private no-store, nosniff and attachment disposition.");
   }
   if (key === "POST /projects/:projectId/pm/evidence/:entityId") {
@@ -1772,6 +1777,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   ...PROJECT_MANAGER_SCHEMAS,
   ...VENDOR_ACCESS_SCHEMAS,
     ...PROJECT_COMPLETION_SCHEMAS,
+    ...PROCUREMENT_LIFECYCLE_SCHEMAS,
     ...SITE_COMPLETION_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,
     DashboardRatio: {
@@ -3094,15 +3100,29 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false, required: ["id", "deleted"],
       properties: { id, deleted: { type: "boolean", enum: [true] } }
     },
+    DesignLayoutUploadRequest: { type: "object", additionalProperties: false, required: ["file"], properties: {
+      file: { type: "string", format: "binary" }, layoutType: { type: "string", enum: ["layout_2d", "layout_3d"], description: "Required after commercial approval; must match the Client's permanent execution choice. Pre-approval uploads retain existing behavior." }
+    } },
+    DesignLayoutClassificationRequest: { type: "object", additionalProperties: false, required: ["layoutType", "expectedDesignPlanVersion", "idempotencyKey"], properties: {
+      layoutType: { type: "string", enum: ["layout_2d", "layout_3d"] }, expectedDesignPlanVersion: { type: "integer", minimum: 0 }, idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+    }, description: "Assigned active Designer may label an eligible original draft once. Same authorized command replays; reassignment conflicts. Approved, frozen, deleted and currently submitted content is protected." },
+    DesignLayoutRequirements: { type: "object", additionalProperties: false, required: ["status", "choice", "designPlanVersion", "allowedTypes", "requiredTypes", "coverage", "unclassifiedUploadIds", "missingTypes", "coverageComplete", "blockingReasons", "revisionKey"], properties: {
+      status: { type: "string", enum: ["not_applicable", "waiting_for_choice", "unavailable", "selected"] }, choice: { type: "object", nullable: true, additionalProperties: true }, designPlanVersion: { type: "integer", minimum: 0 },
+      allowedTypes: { type: "array", items: { type: "string", enum: ["layout_2d", "layout_3d"] } }, requiredTypes: { type: "array", items: { type: "string", enum: ["layout_2d", "layout_3d"] } },
+      coverage: { type: "array", items: { type: "object", additionalProperties: false, required: ["layoutType", "uploadIds", "qualifyingUploadIds", "state"], properties: {
+        layoutType: { type: "string", enum: ["layout_2d", "layout_3d"] }, uploadIds: { type: "array", items: id }, qualifyingUploadIds: { type: "array", items: id }, state: { type: "string", enum: ["missing", "processing", "review_pending", "ready"] }
+      } } }, unclassifiedUploadIds: { type: "array", items: id }, missingTypes: { type: "array", items: { type: "string", enum: ["layout_2d", "layout_3d"] } }, coverageComplete: { type: "boolean", description: "Layout coverage only; drawing verification, mapping and prepared-PDF gates still apply." }, blockingReasons: { type: "array", items: { type: "string" } }, revisionKey: { type: "string" }
+    } },
     EstimateDesignUpload: {
       type: "object",
-      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "purpose", "requestReplacement", "failureCode", "failureMessage", "canRetry", "canDelete"],
+      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "purpose", "requestReplacement", "failureCode", "failureMessage", "canRetry", "canDelete", "layoutType", "canClassifyLayoutType", "classificationBlockedReason"],
       properties: {
         id, estimateId: id, leadId: id, uploaderId: id,
         originalFilename: { type: "string" }, mimeType: { type: "string" },
         sizeBytes: { type: "integer", minimum: 0 }, uploadedAt: dateTime,
         extractionStatus: { type: "string" },
         purpose: { type: "string", enum: ["ordinary", "drawing_replacement", "plan_request_replacement"] },
+        layoutType: { type: "string", enum: ["layout_2d", "layout_3d"], nullable: true }, canClassifyLayoutType: { type: "boolean" }, classificationBlockedReason: { type: "string", nullable: true },
         requestReplacement: {
           type: "object",
           nullable: true,
@@ -3143,14 +3163,15 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     PlanDocumentWorkspace: { type: "object", additionalProperties: false, required: ["manifestHash", "readyForSubmission", "documents", "reviewRoundId"], properties: {
       manifestHash: { type: "string" }, readyForSubmission: { type: "boolean" }, reviewRoundId: { type: "string", nullable: true },
       documents: { type: "array", items: { type: "object", required: ["sourceUploadId", "originalFilename", "documentId", "manifestHash", "status", "pageCount", "pdfUrl", "failureCode", "failureMessage"], properties: {
-        sourceUploadId: id, originalFilename: { type: "string" }, documentId: { type: "string", nullable: true }, manifestHash: { type: "string" },
+        layoutType: { type: "string", enum: ["layout_2d", "layout_3d"], nullable: true }, sourceUploadId: id, originalFilename: { type: "string" }, documentId: { type: "string", nullable: true }, manifestHash: { type: "string" },
         status: { type: "string", enum: ["not_prepared", "preparing", "ready", "failed", "blocked"] }, pageCount: { type: "integer", minimum: 0 },
         pdfUrl: { type: "string", nullable: true }, failureCode: { type: "string", nullable: true }, failureMessage: { type: "string", nullable: true }
       } } }
     } },
     EstimateDesignWorkspace: {
-      type: "object", required: ["uploads", "pages", "drawings", "revisions"],
+      type: "object", required: ["uploads", "pages", "drawings", "revisions", "layoutRequirements"],
       properties: {
+        layoutRequirements: { $ref: "#/components/schemas/DesignLayoutRequirements" },
         uploads: { type: "array", items: { $ref: "#/components/schemas/EstimateDesignUpload" } },
         pages: { type: "array", items: { type: "object", additionalProperties: true } },
         drawings: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -3158,9 +3179,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       }
     },
     ...DESIGN_REQUIREMENTS_SCHEMAS,
+    ...EXECUTION_CHOICE_SCHEMAS,
     DesignWorkflowActionRequest: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
-      description: "key_collection_schedule is personal to the linked Client; data must match KeyCollectionScheduleData. Confirmation creates an immutable project appointment; actual keys actions still require both kickoffs. For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. Client Kick off is mandatory. client_kickoff_not_required is retired and rejected for new requests, including retries of historical exemptions. Historical exemption records remain readable; normal document-bound completion clears the active exemption without resetting established deadlines. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
+      description: "execution_path_select is personal to the active linked Client only, without representative or Super Admin override. It requires the saved key-collection stageId, both key confirmations and completed stage, expectedVersion, idempotencyKey, and exact ExecutionChoiceData. Choice/history/audit commit atomically; same-command retries replay, new saves after selection conflict, and unrelated workflow writes preserve the choice. Evidence uploads are rejected. It does not advance stages, synchronize design tasks, activate Production, or change deadlines. key_collection_schedule is personal to the linked Client; data must match KeyCollectionScheduleData. Confirmation creates an immutable project appointment; actual keys actions still require both kickoffs. For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. Client Kick off is mandatory. client_kickoff_not_required is retired and rejected for new requests, including retries of historical exemptions. Historical exemption records remain readable; normal document-bound completion clears the active exemption without resetting established deadlines. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
       properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { description: "furniture_scope accepts rooms: [{id, required}], optional notApplicable, and dimensions: [{roomId, items: [{estimateItemId, length, width, uomId}]}]. For both furniture_scope and furniture_upload, an approved estimate item with measurementType count instead requires {estimateItemId, measurementType: count, quantity, uomId}: quantity is a positive safe integer, without length/width/height. Dimensional rows may include measurementType: dimensions. The server derives the required mode solely from the frozen estimate unit (pt/pts/point/points after normalization), not the selected Configuration UOM or item name. Mixed-mode fields are rejected. Legacy pending points with dimensions must be sent back and corrected before approval; completed history remains unchanged. Combined scope submissions require every required room and its selected items plus a supporting proof; they create pending dimensions without approval. Their safe projection exposes requirementsSubmissionEventId. Combined furniture_accept and furniture_scope_return require {submissionEventId} matching that current token; Client approval atomically accepts scope and approves all its dimensions, while return retains values with a mandatory reason. Scope edits replace the token and preserve history; combined required-room submissions cannot be replaced by scope-only input. Legacy scope-only flows remain supported. furniture_upload requires rooms: [{roomId, items: [{estimateItemId, length, width, uomId}]}] and a proof file; positive finite dimensions require an active Configuration UOM ID. A Designer may instead resolve accepted, returned, zero-value-only legacy rooms with {resolveReturnedZeroValueRoomIds: [roomId]} and no file; the server validates the pinned approved source and original returned submission, retains its evidence, marks only those rooms optional, and audits the change. Its code/name are snapshotted in the submission; quantity decimalScale does not round measurements. Existing submitted unit snapshots remain valid after catalog changes. Every positive-value approved-estimate item in each submitted room is required; exact zero-value items are excluded from new submissions, while historical pending reviews retain their original item set. Names and saved IDs are canonicalized by the server. Upload creates pending revisions, never approval. Pending legacy rows without estimateItemId must be returned and resubmitted before approval. furniture_dimensions_approve and furniture_dimensions_return require submissions: [{roomId, submissionEventId}] matching current pending revisions. Legacy scope-only furniture_accept and furniture_scope_return take empty data. Both return actions require a note. Assigned Designers and Clients may upload; only Client-capable actors may review, with proof for representatives. furniture_proceed is retired and rejected. Draft design preparation is unchanged; final submissions require approved current dimensions, except valid already-completed legacy stages.", oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, dimensions evidence or Client representation proof, depending on the action. The measurement sketch is optional." }, mediaFiles: { type: "array", items: { type: "string", format: "binary" }, description: "Repeated multipart parts; one or more site photos/videos required for measurement_complete, with no application media count or size cap. The optional sketch retains the configured document upload limit (25 MiB by default). New measurement data is an empty object; folder URLs are not accepted." } }
     },
     FurnitureUomOption: { type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"], properties: { id, code: { type: "string", minLength: 1, maxLength: 64 }, name: { type: "string", minLength: 1, maxLength: 240 }, decimalScale: { type: "integer", minimum: 0, maximum: 3, description: "Estimate quantity precision; does not round furniture measurements." } } },
@@ -3199,6 +3221,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       "description": "Visibility status from the project-linked approved Estimate source. A source issue must not reveal the design workflow."
     },
     "designerHandoff": { "$ref": "#/components/schemas/DesignerHandoffView" },
+    "executionChoice": { "$ref": "#/components/schemas/ExecutionChoiceView" },
     "floors": {
       "type": "array",
       "items": {
@@ -3822,7 +3845,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object",
       required: ["id", "projectId", "projectName", "estimateId", "kind", "title", "description", "assigneeRole", "assignedWorker", "sourceSectionId", "roomName", "status", "progress", "version", "openedAt", "updatedAt"],
       properties: {
-        preparationOnly: { type: "boolean", default: false, description: "Site assignment preparation; excluded from execution timing until final approval and payment." },
+        preparationOnly: { type: "boolean", default: false, description: "Site assignment preparation; excluded from execution timing until current quotation and design approval activate execution." },
         id,
         projectId: id,
         projectName: { type: "string" },

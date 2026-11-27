@@ -31,9 +31,11 @@ export interface ProjectScopeCoverage {
 }
 
 export interface ProjectCompletionBlocker {
-  code: "ORDER_PENDING" | "NO_APPROVED_ORDER" | "SCOPE_UNCOVERED" | "VENDOR_WORK_PENDING" | "CLIENT_REVIEW_PENDING" | "SITE_COMPLETION_PENDING" | "EXECUTION_VERIFICATION_PENDING" | "PROJECT_NOT_ACTIVE" | "SNAGS_PENDING";
+  code: "ORDER_PENDING" | "NO_APPROVED_ORDER" | "SCOPE_UNCOVERED" | "VENDOR_WORK_PENDING" | "CLIENT_REVIEW_PENDING" | "SITE_COMPLETION_PENDING" | "EXECUTION_VERIFICATION_PENDING" | "PROJECT_NOT_ACTIVE" | "SNAGS_PENDING" | "PROCUREMENT_READINESS_PENDING";
   message: string;
   sourceLineItemKey?: string;
+  procurementTab?: "vendors" | "payments" | "progress" | "handover" | "signoff";
+  entityId?: string;
 }
 
 export interface ProjectCompletionSummary {

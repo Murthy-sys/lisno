@@ -9,7 +9,7 @@ import { server } from "../../test/server";
 import { PMClientPanel } from "./PMClientPanel";
 import type { PMPanel } from "./projectManagerTypes";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-one", role: "site_manager" }, authorization: { role: "site_manager", permissions: ["pm.workspace.read", "pm.snags.manage"] } }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "pm-one", role: "site_manager" }, authorization: { role: "site_manager", permissions: ["pm.workspace.read", "pm.snags.manage", "pm.evidence.read"] } }) }));
 const panel = (overrides: Partial<PMPanel> = {}): PMPanel => ({ tab: "snagging", availability: "available", calculatedAt: "2026-10-27T09:00:00Z", items: [], total: 0, issues: [], sources: [], people: [{ id: "site-one", name: "Site owner", role: "site_manager" }], actions: [{ id: "create_snag", label: "Log snag" }],
   snagFilters: { rooms: [{ id: "room-one", label: "Bedroom" }, { id: "room-two", label: "Bedroom" }], trades: [{ id: "trade-one", label: "Carpentry" }], vendors: [{ id: "vendor-one", label: "Joinery partner" }] }, ...overrides });
 function mount(path = "/projects/project-one/execution?tab=snagging", tab: "client" | "snagging" = "snagging") {
@@ -77,5 +77,16 @@ describe("Project Manager snag sources and ownership", () => {
     server.use(http.get("/api/v1/projects/project-one/pm/client", () => HttpResponse.json({ data: panel({ tab: "client", actions: [{ id: "whatsapp", label: "WhatsApp", href }] }) })));
     mount("/projects/project-one/execution?tab=client", "client");
     expect(await screen.findByRole("link", { name: /Compose a WhatsApp update/ })).toHaveAttribute("href", href);
+  });
+  it("offers separate Procurement origin evidence through the exact snag-scoped endpoint and reports revoked access", async () => {
+    const downloads: string[] = [];
+    server.use(http.get("/api/v1/projects/project-one/pm/snagging", () => HttpResponse.json({ data: panel({ total: 1, items: [{ id: "procurement-snag-one", kind: "snag", title: "Damaged bracket", status: "open", severity: "warning", version: 1, sourceToken: null, facts: [], actions: [], evidenceIds: [], procurementOrigin: { findingId: "finding-one", kind: "inspection", evidence: [{ id: "inspection-file", name: "Bracket photo.jpg", kind: "image", mimeType: "image/jpeg" }] } }] }) })),
+      http.get("/api/v1/projects/project-one/pm/snags/procurement-snag-one/procurement-evidence/inspection-file", ({ request }) => { downloads.push(new URL(request.url).pathname); return HttpResponse.json({ error: { code: "PROCUREMENT_LIFECYCLE_NOT_FOUND", message: "This evidence is no longer available to your assignment." } }, { status: 404 }); }));
+    const user = userEvent.setup(); mount();
+    expect(await screen.findByText("Reported through Procurement inspection")).toBeVisible();
+    const download = screen.getByRole("button", { name: "Download Bracket photo.jpg" }); download.focus(); await user.keyboard("{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("This evidence is no longer available to your assignment.");
+    expect(downloads).toEqual(["/api/v1/projects/project-one/pm/snags/procurement-snag-one/procurement-evidence/inspection-file"]);
+    expect(download).toBeEnabled();
   });
 });

@@ -619,7 +619,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(51);
+    expect(ROUTE_REGISTRY).toHaveLength(52);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -792,7 +792,7 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 30);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 31);
     expect(additions).toEqual([
       "/execution", "/projects/:projectId/estimations", "/projects/:projectId/execution",
       "/project-messages", "/project-manager/leaderboard", "/project-manager/bonus", "/projects/:projectId/messages",
@@ -800,7 +800,7 @@ describe("registered permission routes", () => {
       "/projects/:projectId/quotation",
       "/vendor",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/procurement/projects/:projectId/lifecycle", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -816,7 +816,7 @@ describe("registered permission routes", () => {
         "/projects/:projectId/quotation",
         "/vendor",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/procurement/projects/:projectId/lifecycle", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,

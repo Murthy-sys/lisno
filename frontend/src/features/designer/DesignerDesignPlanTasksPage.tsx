@@ -100,7 +100,7 @@ function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | 
 
 export function DesignerDesignPlanTasksPage() {
   const { user, reviewSession } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const tasks = useQuery({
     queryKey: [...projectWorkflowKeys.designerPlans, user?.id ?? null, user?.role ?? null, reviewSession?.id],
@@ -108,7 +108,7 @@ export function DesignerDesignPlanTasksPage() {
     refetchOnMount: "always"
   });
   const requestedEstimateId = searchParams.get("estimate");
-  const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId) ?? tasks.data?.[0];
+  const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId);
   // This observer shares the panel's query; its polling updates upload eligibility and next action together.
   const { query: workflow, data: savedWorkflow } = useDesignWorkflowQuery(task?.projectId ?? "");
   const openPlanRequests = useQuery({
@@ -146,8 +146,8 @@ export function DesignerDesignPlanTasksPage() {
     !["waiting", "paused"].includes(uploadOperational.timing.state) &&
     !workflow.isError && !workflow.isFetching && !tasks.isFetching);
   const canEditDesign = Boolean(canWorkOnUploadStage && task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
-  const workflowNextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
-    workflow.isFetching || tasks.isFetching ? "Checking the latest project workflow…" : stageAction(savedWorkflow, currentStage, task!.status, task!.estimateId);
+  const workflowNextAction = !task ? "" : workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
+    workflow.isFetching || tasks.isFetching ? "Checking the latest project workflow…" : stageAction(savedWorkflow, currentStage, task.status, task.estimateId);
   const nextAction = task?.estimationWorkflowVersion !== 3 || currentQuotationApproved
     ? workflowNextAction
     : quotationApprovalState === "revision_draft"
@@ -177,55 +177,19 @@ export function DesignerDesignPlanTasksPage() {
 
       {!task ? (
         <PageState
-          state="empty"
-          message="No approved estimates are assigned to you for design planning."
+          state={requestedEstimateId !== null ? "error" : "empty"}
+          message={requestedEstimateId !== null
+            ? "This project is unavailable. Return to your dashboard to choose an assigned project."
+            : tasks.data.length
+              ? "Select a project from your dashboard"
+              : "No approved estimates are assigned to you for design planning."}
         />
       ) : (
         <div className="designer-plan-layout">
           <div className="designer-plan-progress" ref={setTimelineContainer} />
-          <Surface
-            as="section"
-            padding="compact"
-            className="designer-plan-queue"
-            aria-labelledby="designer-plan-queue-title"
-          >
-            <div className="designer-plan-queue__heading">
-              <div>
-                <p className="eyebrow">Project queue</p>
-                <h2 id="designer-plan-queue-title">Assigned projects</h2>
-              </div>
-              <span>{tasks.data.length}</span>
-            </div>
-            <ol className="designer-plan-queue__list">
-              {tasks.data.map((item) => {
-                const selected = item.id === task.id;
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className={`designer-plan-task${selected ? " designer-plan-task--selected" : ""}`}
-                      aria-pressed={selected}
-                      onClick={() => {
-                        setSearchParams({ estimate: item.estimateId }, { replace: true });
-                      }}
-                    >
-                      <span className="designer-plan-task__topline">
-                        <strong>{item.projectName}</strong>
-                        <StatusBadge
-                          tone={statusTones[item.status]}
-                          label={statusLabels[item.status]}
-                        />
-                      </span>
-                      <ProjectId projectNumber={item.projectNumber} />
-                      <span>{item.clientName}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          </Surface>
 
           <section
+            key={`${user?.id}:${reviewSession?.id ?? ""}:${task.projectId}:${task.estimateId}`}
             className="designer-plan-workspace"
             id="designer-plan-workspace"
             aria-label="Selected project workspace"

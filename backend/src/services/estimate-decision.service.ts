@@ -27,7 +27,7 @@ import type { EstimateClientReviewService } from "./estimate-client-review.servi
 import type { EstimateDesignService } from "./estimate-design.service.js";
 import type { EnsurePendingFinanceBucketInput } from "./project-finance.service.js";
 import { syncCollaborativeFinanceBaseline } from "./project-finance.service.js";
-import { ensureCollaborativePreparationTask, ensureQuotationDesignTask, recordQuotationDesignHandoff } from "./project-workflow.service.js";
+import { activateCollaborativeProjectWorkflow, ensureCollaborativePreparationTask, ensureQuotationDesignTask, recordQuotationDesignHandoff } from "./project-workflow.service.js";
 import { resolveApprovalProject } from "./estimate-project-handoff.js";
 import { presentClientEstimate } from "./estimate-client-presentation.js";
 
@@ -267,6 +267,9 @@ export function createEstimateDecisionService(input: {
           await ensureQuotationDesignTask(estimateResult, occurredAt, session);
           if (estimateResult.estimation?.designApproval?.designScopeRevision === estimateResult.estimation.designScopeRevision)
             await recordQuotationDesignHandoff(estimateResult, context.actor.id, occurredAt, session);
+        }
+        if (decision === "approve" && estimate.estimation?.workflowVersion === 2 && estimate.estimation.phase === "post") {
+          await activateCollaborativeProjectWorkflow(String(estimateResult.projectId), context.actor.id, occurredAt, session);
         }
         if (context.source === "admin_proof") {
           await appendSourceAudit({

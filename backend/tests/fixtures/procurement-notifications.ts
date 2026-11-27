@@ -1,0 +1,56 @@
+import { lifecycleActor, seedLifecycleFixture } from "./procurement-lifecycle.js";
+import { createMemoryRepository } from "../../src/repositories/memory.js";
+import { createAuditService } from "../../src/services/audit.service.js";
+import { createProcurementLifecycleService } from "../../src/services/procurement-lifecycle.service.js";
+import { createProcurementPaymentsService } from "../../src/services/procurement-payments.service.js";
+import { lcTransaction } from "../../src/services/procurement-lifecycle/transaction.js";
+import { readPaymentCertificationSource } from "../../src/services/project-manager/vendors.js";
+import { ProjectPurchaseOrderModel } from "../../src/models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../../src/models/ProjectPurchaseOrderRevision.js";
+import { ProcurementBasketAwardModel, ProcurementBasketAwardRevisionModel } from "../../src/models/ProcurementBasketTender.js";
+import { ProcurementBasketInvoiceAssessmentModel, ProcurementBasketInvoiceAssessmentRevisionModel } from "../../src/models/ProcurementBasketInvoiceAssessment.js";
+import { ProjectPaymentCertificationModel } from "../../src/models/ProjectPaymentCertification.js";
+import { UserModel } from "../../src/models/User.js";
+import { ProcurementLifecycleNotificationModel } from "../../src/models/ProcurementLifecycleNotification.js";
+import { ProcurementLifecycleSchedulerLeaseModel } from "../../src/models/ProcurementLifecycleSchedulerLease.js";
+import { ProcurementLifecycleStateModel } from "../../src/models/ProcurementLifecycleState.js";
+import { ProcurementLifecycleCommandModel } from "../../src/models/ProcurementLifecycleCommand.js";
+import { ProcurementLifecycleEvidenceModel } from "../../src/models/ProcurementLifecycleEvidence.js";
+import { ProcurementReviewRoundModel } from "../../src/models/ProcurementReviewRound.js";
+import { ProcurementPaymentAccountModel } from "../../src/models/ProcurementPaymentAccount.js";
+import { ProcurementPaymentAuthorizationModel } from "../../src/models/ProcurementPaymentAuthorization.js";
+import { ProcurementPaymentObligationModel } from "../../src/models/ProcurementPaymentObligation.js";
+import { ProcurementPaymentTransactionModel } from "../../src/models/ProcurementPaymentTransaction.js";
+import { ProcurementPaymentCorrectionModel } from "../../src/models/ProcurementPaymentCorrection.js";
+import { ProcurementPaymentRetentionModel } from "../../src/models/ProcurementPaymentRetention.js";
+import { AuditEventModel } from "../../src/models/AuditEvent.js";
+export const alertModels = [ProcurementLifecycleNotificationModel, ProcurementLifecycleSchedulerLeaseModel, ProcurementLifecycleStateModel, ProcurementLifecycleCommandModel, ProcurementLifecycleEvidenceModel, ProcurementReviewRoundModel, ProcurementPaymentAccountModel, ProcurementPaymentAuthorizationModel, ProcurementPaymentObligationModel, ProcurementPaymentTransactionModel, ProcurementPaymentCorrectionModel, ProcurementPaymentRetentionModel, AuditEventModel];
+export async function seedNotificationFixture(now: () => Date, suffix = "a", dueDate = "2026-12-01") {
+  const f = await seedLifecycleFixture(suffix); const deps = { audit: createAuditService(createMemoryRepository()), now };
+  const admin = lifecycleActor("notification-admin", "super_admin");
+  await UserModel.collection.updateOne({ _id: admin.id }, { $setOnInsert: { ...admin, active: true } }, { upsert: true });
+  const awardId = `${f.orderId}-award`, proposalId = `${awardId}-proposal`, assessmentId = `${f.orderId}-assessment`, assessmentRevisionId = `${assessmentId}-revision`;
+  await ProjectPurchaseOrderModel.collection.updateOne({ _id: f.orderId }, { $set: { tenderAwardId: awardId, version: 1 } });
+  await ProjectPurchaseOrderRevisionModel.collection.updateOne({ _id: f.revisionId }, { $set: { tenderAwardId: awardId, totalPaise: 60000 } });
+  await ProcurementBasketAwardModel.collection.insertOne({ _id: awardId, projectId: f.projectId, status: "issued", issuedPurchaseOrderId: f.orderId, currentProposalRevisionId: proposalId } as any);
+  await ProcurementBasketAwardRevisionModel.collection.insertOne({ _id: proposalId, awardId, projectId: f.projectId, vendorId: f.vendorId, milestones: [{ id: "advance", name: "Advance", amountPaise: 60000, reviewerSlots: ["procurement"] }] } as any);
+  await ProcurementBasketInvoiceAssessmentModel.collection.insertOne({ _id: assessmentId, projectId: f.projectId, orderId: f.orderId, currentRevisionId: assessmentRevisionId } as any);
+  await ProcurementBasketInvoiceAssessmentRevisionModel.collection.insertOne({ _id: assessmentRevisionId, assessmentId, projectId: f.projectId, orderId: f.orderId, awardId, invoiceTotalPaise: 60000, tdsPaise: 6000, netPayablePaise: 54000 } as any);
+  const certification = await lcTransaction(session => readPaymentCertificationSource(f.projectId, f.orderId, "advance", session));
+  await ProjectPaymentCertificationModel.collection.insertOne({ _id: `${f.orderId}-cert`, projectId: f.projectId, orderId: f.orderId, orderRevisionId: f.revisionId, proposalRevisionId: proposalId, milestoneId: "advance", amountPaise: 60000, sourceToken: certification.token, status: "certified" } as any);
+  const lifecycle = createProcurementLifecycleService(deps); const payments = createProcurementPaymentsService(deps);
+  const summary = await lifecycle.get(f.buyer, f.projectId);
+  let serial = 0; const key = () => `notification-fixture-${suffix}-${++serial}`;
+  await lifecycle.setup(f.buyer, f.projectId, { expectedVersion: 0, sourceDigest: summary.sourceDigest, idempotencyKey: key(), policy: { timezone: "Asia/Kolkata", reviewIntervalDays: 7, inspectionCount: 2 }, reason: "Begin lifecycle alert coverage" });
+  const paymentCommand = async (value: Record<string, unknown>, actor = f.finance) => {
+    const order = (await payments.list(actor, f.projectId)).items[0]!;
+    return payments.command(actor, f.projectId, { orderId: f.orderId, expectedVersion: order.version, sourceDigest: order.sourceDigest, idempotencyKey: key(), ...value });
+  };
+  await paymentCommand({ action: "confirm_dates", dates: [{ milestoneId: "advance", dueDate }], reason: "Vendor due date confirmed" });
+  await paymentCommand({ action: "authorize", basis: "invoice", assessmentRevisionId, allocations: [{ milestoneId: "advance", grossPaise: 60000, withholdingPaise: 6000, netPaise: 54000 }], reason: "Authorize assessed vendor payment" });
+  const pay = async (transactionId = `transfer-${suffix}`, amountPaise = 54000) => {
+    await ProcurementLifecycleEvidenceModel.collection.insertOne({ _id: `${transactionId}-proof`, projectId: f.projectId, entityId: transactionId, purpose: "payment", uploaderId: f.buyer.id, referenceEpoch: 0 } as any);
+    return paymentCommand({ action: "record", transactionId, amountPaise, allocations: [{ milestoneId: "advance", amountPaise }], paidAt: now().toISOString(), method: "bank_transfer", reference: `Synthetic ${transactionId}`, evidenceIds: [`${transactionId}-proof`] }, f.buyer);
+  };
+  return { ...f, admin, deps, lifecycle, payments, paymentCommand, pay, dueDate };
+}

@@ -49,7 +49,8 @@ export const PROJECT_MANAGER_SCHEMAS = {
   PMItem: object({ id: sourceId, kind: text, title: text, status: text, severity, version: integer, sourceToken: nullableText,
     sourceId, assignmentId: id, vendorId: id, orderId: id, basketId: id, week: date, milestoneId: id, roomId: { ...id, nullable: true }, roomName: nullableText,
     tradeId: { ...id, nullable: true }, tradeName: nullableText, vendorName: nullableText, ownerId: { ...id, nullable: true }, ownerName: nullableText, description: nullableText, dueAt: { ...text, nullable: true, description: "Source deadline as a date or timestamp; null when unavailable." },
-    amountPaise: paise, progress: percentage, facts: array("PMFact"), actions: array("PMAction"), history: array("PMHistory"), checks: array("PMCheck"), children: array("PMItem"), evidenceIds: ids, href: text, sourceAvailable: bool
+    amountPaise: paise, progress: percentage, facts: array("PMFact"), actions: array("PMAction"), history: array("PMHistory"), checks: array("PMCheck"), children: array("PMItem"), evidenceIds: ids, href: text, sourceAvailable: bool,
+    procurementOrigin: object({ findingId: id, kind: { ...text, enum: ["inspection", "handover", "urgent"] }, evidence: array("PMEvidenceFile") }, ["findingId", "kind", "evidence"])
   }, ["id", "kind", "title", "status", "severity", "version", "sourceToken", "facts", "actions"]),
   PMSnagFilterOptions: object({ rooms: { type: "array", items: object({ id, label: text }) }, trades: { type: "array", items: object({ id, label: text }) }, vendors: { type: "array", items: object({ id, label: text }) } }),
   PMPanel: { ...object({ snagFilters: ref("PMSnagFilterOptions"), tab, availability, calculatedAt: dateTime, items: array("PMItem"), total: integer, issues: { type: "array", items: text }, sources: array("PMSource"), people: array("PMPerson"), actions: array("PMAction") }, ["tab", "availability", "calculatedAt", "items", "total", "issues", "sources", "people", "actions"]),
@@ -151,6 +152,7 @@ export const PROJECT_MANAGER_SUMMARIES = {
   "POST /project-manager/notifications/:notificationId/read": "Mark an authorized notification read for the current actor",
   [`POST ${project}/evidence/:entityId`]: "Upload authenticated evidence bound to a project record",
   [`GET ${project}/evidence/:evidenceId`]: "Download an authorized opaque evidence file",
+  [`GET ${project}/snags/:snagId/procurement-evidence/:evidenceId`]: "Assigned Site Manager downloads evidence linked to the Procurement-origin snag",
   [`POST ${project}/vendor-notices`]: "Issue a vendor notice and atomically hold selected work when required",
   [`POST ${project}/certifications`]: "Request certification for an issued payment milestone",
   [`POST ${project}/certifications/:certificationId/actions`]: "Record the configured reviewer's milestone decision",

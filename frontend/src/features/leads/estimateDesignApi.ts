@@ -1,4 +1,5 @@
 import { apiClient } from "../../api/client";
+import type { ClassifyDesignLayoutCommand, DesignLayoutType } from "../../../../shared/projects/designLayoutRequirements";
 import type {
   AnnotationDocumentV1,
   CropRect,
@@ -58,10 +59,12 @@ export const getEstimateDesignWorkspace = (estimateId: string) =>
 export function uploadEstimateDesign(
   estimateId: string,
   file: File,
-  onProgress: (percent: number) => void = () => {}
+  onProgress: (percent: number) => void = () => {},
+  layoutType?: DesignLayoutType
 ): Promise<EstimateDesignUpload> {
   const body = new FormData();
   body.append("file", file);
+  if (layoutType) body.append("layoutType", layoutType);
   return apiClient.postMultipartWithProgress<EstimateDesignUpload>(
     `/estimates/${encodeURIComponent(estimateId)}/design-uploads`,
     body,
@@ -69,6 +72,11 @@ export function uploadEstimateDesign(
     { showGlobalLoader: false }
   );
 }
+
+export const classifyEstimateDesignUpload = (uploadId: string, input: ClassifyDesignLayoutCommand) =>
+  apiClient.patch<EstimateDesignUpload>(
+    `/estimate-design-uploads/${encodeURIComponent(uploadId)}/layout-type`, input, { showGlobalLoader: false }
+  );
 
 export const editEstimateDrawing = (
   drawingId: string,

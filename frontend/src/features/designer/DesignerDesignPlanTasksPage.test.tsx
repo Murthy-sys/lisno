@@ -2,12 +2,13 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesignPlanTask, EstimateDesignWorkspace } from "../../api/types";
 import { apiClient } from "../../api/client";
 import { renderWithQuery } from "../../test/render";
+import { layoutRequirementsFixture } from "../../test/fixtures/designLayoutRequirements";
 import { server } from "../../test/server";
 import { authorizationFor } from "../../test/authFixtures";
 import { projectWorkflowKeys, type DesignWorkflowView } from "../workflow/projectWorkflowApi";
@@ -76,19 +77,20 @@ beforeEach(() => {
 });
 
 function emptyWorkspace(): EstimateDesignWorkspace {
-  return { uploads: [], pages: [], drawings: [], revisions: [] };
+  return { uploads: [], pages: [], drawings: [], revisions: [], layoutRequirements: layoutRequirementsFixture() };
 }
 
-function renderPage(initialEntry = "/designer/design-plans") {
+function renderPage(initialEntry = "/designer/design-plans?estimate=estimate-1") {
   let queryClient!: QueryClient;
-  function CaptureQueryClient() { queryClient = useQueryClient(); return null; }
+  let navigate!: NavigateFunction;
+  function CaptureQueryClient() { queryClient = useQueryClient(); navigate = useNavigate(); return null; }
   const view = renderWithQuery(
     <MemoryRouter initialEntries={[initialEntry]}>
       <CaptureQueryClient />
       <DesignerDesignPlanTasksPage />
     </MemoryRouter>
   );
-  return { ...view, queryClient };
+  return { ...view, queryClient, navigate };
 }
 
 function kickoffWorkflow(): DesignWorkflowView {
@@ -160,6 +162,7 @@ function serveKickoffWorkspace(getWorkflow: () => DesignWorkflowView) {
 function extractedWorkspace(estimateId: string, title = "Living Room Electrical Plan"):
 EstimateDesignWorkspace {
   return {
+    layoutRequirements: layoutRequirementsFixture(),
     uploads: [{
       id: `upload-${estimateId}`,
       estimateId,
@@ -375,11 +378,9 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(within(screen.getByRole("region", { name: "Internal Kick off details" })).queryByRole("timer")).not.toBeInTheDocument();
     const progress = screen.getByRole("region", { name: "Stage actions" });
     const stageBar = screen.getByRole("list", { name: "Project workflow stages" });
-    const queue = screen.getByRole("region", { name: "Assigned projects" });
     const selectedProject = screen.getByRole("region", { name: "Selected project workspace" });
-    expect(within(queue).getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Assigned projects" })).not.toBeInTheDocument();
     expect(within(selectedProject).getByText("Project ID: Lisno000031")).toBeVisible();
-    expect(stageBar.compareDocumentPosition(queue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stageBar.compareDocumentPosition(selectedProject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectedProject).toContainElement(progress);
     expect(selectedProject).toContainElement(screen.getByRole("form", { name: "Complete Internal Kick off" }));
@@ -387,8 +388,8 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument();
     expect(within(selectedProject).getByText("Complete Internal Kick off", { selector: "dd" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByText(/Design (?:plan v|version)/i)).not.toBeInTheDocument();
     expect(screen.getAllByRole("form", { name: "Complete Internal Kick off" })).toHaveLength(1);
     expect(screen.queryByRole("region", { name: "Recorded stage details" })).not.toBeInTheDocument();
@@ -457,15 +458,15 @@ describe("DesignerDesignPlanTasksPage", () => {
       })
     );
     const user = userEvent.setup();
-    renderPage();
+    const { navigate } = renderPage();
     await user.click(await screen.findByRole("checkbox", { name: acknowledgementLabel }));
     await user.type(screen.getByRole("textbox", { name: "Note" }), "Aurora draft only");
     await user.upload(screen.getByLabelText(/Signed kick-off checklist/), new File(["Aurora receipt"], "aurora-receipt.pdf", { type: "application/pdf" }));
-    await user.click(screen.getByRole("button", { name: /Coastal Apartment.*Extraction in progress/i }));
+    await act(async () => navigate("/designer/design-plans?estimate=estimate-2"));
     expect(screen.getByText("Loading project stages and deadlines…")).toBeVisible();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("Aurora draft only")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
     releaseWorkflow();
     await screen.findByRole("checkbox", { name: acknowledgementLabel });
@@ -534,12 +535,12 @@ describe("DesignerDesignPlanTasksPage", () => {
     clientKickoff.operational!.availableActions = [{ id: "client_kickoff_request", label: "Request Client Kick off", actor: "designer", requiresProof: false }];
     await act(async () => { await queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-1") }); });
     expect(await within(selected).findByText("Request Client Kick off", { selector: "dd" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
     expect(uploadReads).toEqual([]);
 
     workflow = uploadWorkflow();
     await act(async () => { await queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-1") }); });
-    expect(await screen.findByLabelText("Design plan file")).toBeVisible();
+    expect(await screen.findByLabelText("3D layout file")).toBeVisible();
     expect(within(selected).getByText("Upload the design plan", { selector: "dd" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Designer Uploading Space planning with Tentative look and Feel — In progress" })).toHaveAttribute("aria-current", "step");
     await waitFor(() => expect(uploadReads).toEqual(["estimate-1"]));
@@ -575,11 +576,11 @@ describe("DesignerDesignPlanTasksPage", () => {
     const requirements = screen.getByRole("group", { name: "Client completion requirements" });
     expect(within(requirements).getByText("Upload and submit the design plan for Client review.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve and complete stage" })).not.toBeInTheDocument();
-    const fileInput = screen.getByLabelText<HTMLInputElement>("Design plan file");
+    const fileInput = screen.getByLabelText<HTMLInputElement>("3D layout file");
     fileInput.focus();
     expect(fileInput).toHaveFocus();
     await user.upload(fileInput, new File(["plan"], "aurora-plan.pdf", { type: "application/pdf" }));
-    const uploadButton = screen.getByRole("button", { name: "Upload design" });
+    const uploadButton = screen.getByRole("button", { name: "Upload 3D layout" });
     uploadButton.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(uploads).toEqual(["received"]));
@@ -601,12 +602,12 @@ describe("DesignerDesignPlanTasksPage", () => {
     renderPage();
     try {
       expect(await screen.findByText("Loading project workflow…")).toBeVisible();
-      expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
       expect(screen.queryByText(/Design version/)).not.toBeInTheDocument();
       expect(reads.mock.calls.some(([path]) => path.includes("/design-uploads"))).toBe(false);
     } finally { release(); }
-    expect(await screen.findByRole("button", { name: "Upload design" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Upload 3D layout" })).toBeVisible();
   });
 
   it("requires a workflow reload after an initial error and fails closed without querying design files", async () => {
@@ -619,7 +620,7 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(await screen.findByText("Refresh the project workflow")).toBeVisible();
     expect(screen.getByRole("button", { name: "Reload workflow" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: /Upload design/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(reads.mock.calls.some(([path]) => path.includes("/design-uploads"))).toBe(false);
   });
 
@@ -643,8 +644,8 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(await screen.findByRole("article", { name: "Living Room Electrical Plan drawing" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Design review" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit drawings to client" })).not.toBeInTheDocument();
     if (state === "blocked") expect(screen.getByText("Site access must be restored before preparing drawings.", { selector: "dd" })).toBeVisible();
     if (state === "foreign_source") expect(screen.getByText("Project design source is unavailable for this estimate", { selector: "dd" })).toBeVisible();
@@ -662,14 +663,14 @@ describe("DesignerDesignPlanTasksPage", () => {
     );
     const { queryClient } = renderPage();
     await screen.findByRole("article", { name: "Living Room Electrical Plan drawing" });
-    expect(screen.getByLabelText("Design plan file")).toBeVisible();
+    expect(screen.getByLabelText("3D layout file")).toBeVisible();
     unavailable = true;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-1") }); });
     expect(await screen.findByText("Refresh the project workflow")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Design review" })).toBeVisible();
     expect(screen.getByRole("article", { name: "Living Room Electrical Plan drawing" })).toBeVisible();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
   });
 
   it("clears the selected design file when switching from eligible Space planning to an earlier project stage", async () => {
@@ -689,22 +690,22 @@ describe("DesignerDesignPlanTasksPage", () => {
       http.get("/api/v1/estimates/:estimateId/design-uploads", ({ params }) => { uploadReads.push(String(params.estimateId)); return HttpResponse.json({ data: emptyWorkspace() }); })
     );
     const user = userEvent.setup();
-    renderPage();
-    await user.upload(await screen.findByLabelText("Design plan file"), new File(["Aurora design"], "aurora-only.pdf", { type: "application/pdf" }));
-    expect(screen.getByRole("button", { name: "Upload design" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /Coastal Apartment.*Extraction in progress/i }));
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    const { navigate } = renderPage();
+    await user.upload(await screen.findByLabelText("3D layout file"), new File(["Aurora design"], "aurora-only.pdf", { type: "application/pdf" }));
+    expect(screen.getByRole("button", { name: "Upload 3D layout" })).toBeEnabled();
+    await act(async () => navigate("/designer/design-plans?estimate=estimate-2"));
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     expect(screen.queryByText(/Design version/)).not.toBeInTheDocument();
     release();
     await screen.findByRole("checkbox", { name: acknowledgementLabel });
     expect(screen.getByRole("timer")).toHaveAttribute("dateTime", "2026-09-12T09:00:00.000Z");
-    expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload 3D layout" })).not.toBeInTheDocument();
     expect(uploadReads).toEqual(["estimate-1"]);
-    await user.click(screen.getByRole("button", { name: /Aurora Villa.*Assigned/i }));
-    const file = await screen.findByLabelText<HTMLInputElement>("Design plan file");
+    await act(async () => navigate(-1));
+    const file = await screen.findByLabelText<HTMLInputElement>("3D layout file");
     expect(file.files).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Upload design" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upload 3D layout" })).toBeDisabled();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
   });
 
@@ -731,12 +732,10 @@ describe("DesignerDesignPlanTasksPage", () => {
       "/designer"
     );
     // The upload action lives on the workspace panel alone, never in the header.
-    expect(await screen.findAllByRole("button", { name: "Upload design" })).toHaveLength(1);
+    expect(await screen.findAllByRole("button", { name: "Upload 3D layout" })).toHaveLength(1);
     expect(screen.queryByRole("link", { name: "Upload design" }))
       .not.toBeInTheDocument();
-    const queue = screen.getByRole("region", { name: "Assigned projects" });
-    expect(within(queue).getByRole("button", { name: /Aurora Villa.*Assigned/i }))
-      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("region", { name: "Assigned projects" })).not.toBeInTheDocument();
     const workspace = screen.getByRole("region", {
       name: "Selected project workspace"
     });
@@ -744,15 +743,14 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(
       within(workspace).getByRole("heading", { name: "Upload design" })
     ).toBeVisible();
-    expect(screen.getByLabelText("Design plan file")).toHaveAttribute(
+    expect(screen.getByLabelText("3D layout file")).toHaveAttribute(
       "accept",
       expect.stringContaining("application/pdf")
     );
-    expect(screen.getByRole("button", { name: "Upload design" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upload 3D layout" })).toBeDisabled();
     const designSection = screen.getByRole("region", { name: "Upload design" });
     expect(within(designSection).getByText(/Design version/)).toBeVisible();
     expect(screen.getAllByText(/Design version/)).toHaveLength(1);
-    expect(within(queue).queryByText(/Design (?:plan v|version)/)).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Aurora Villa" })).queryByText(/Design version/)).not.toBeInTheDocument();
     expect(screen.queryByText(/ready for action/)).not.toBeInTheDocument();
     expect(requests).toEqual([
@@ -786,7 +784,7 @@ describe("DesignerDesignPlanTasksPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Plan change requests" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add a new design page" })).toBeVisible();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("New design page file")).not.toBeInTheDocument();
     expect(screen.getByText(/Use the plan change request above to replace the marked page/)).toBeVisible();
   });
@@ -909,12 +907,17 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(screen.queryByRole("option", { name: /line-carcass/ })).not.toBeInTheDocument();
   });
 
-  it("opens the exact estimate selected from the dashboard project list", async () => {
+  it("shows only the exact estimate selected from the dashboard project list", async () => {
     const workspaceRequests: string[] = [];
+    const workflowRequests: string[] = [];
     server.use(
       http.get("/api/v1/designer/design-plan-tasks", () =>
         HttpResponse.json({ data: [assignedTask, secondTask] })
       ),
+      http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => {
+        workflowRequests.push(String(params.projectId));
+        return HttpResponse.json({ data: uploadWorkflow(String(params.projectId)) });
+      }),
       http.get("/api/v1/estimates/:estimateId/design-uploads", ({ request }) => {
         workspaceRequests.push(new URL(request.url).pathname);
         return HttpResponse.json({ data: emptyWorkspace() });
@@ -929,6 +932,66 @@ describe("DesignerDesignPlanTasksPage", () => {
     await waitFor(() => expect(workspaceRequests).toEqual([
       "/api/v1/estimates/estimate-2/design-uploads"
     ]));
+    expect(workflowRequests).toEqual(["project-2"]);
+    expect(screen.getByText("Rhea Kapoor")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000084")).toBeVisible();
+    expect(screen.queryByText("Aurora Villa")).not.toBeInTheDocument();
+    expect(screen.queryByText("Priya Shah")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000031")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Assigned projects" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Project queue")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["/designer/design-plans", "Select a project from your dashboard"],
+    ["/designer/design-plans?estimate=unknown-estimate", "This project is unavailable. Return to your dashboard to choose an assigned project."],
+    ["/designer/design-plans?estimate=", "This project is unavailable. Return to your dashboard to choose an assigned project."]
+  ])("does not open or request a project without a matching selection at %s", async (route, message) => {
+    server.use(http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [assignedTask, secondTask] })));
+    const reads = vi.spyOn(apiClient, "get");
+
+    renderPage(route);
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to dashboard" })).toHaveAttribute("href", "/designer");
+    expect(screen.queryByRole("region", { name: "Selected project workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Assigned projects" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Aurora Villa")).not.toBeInTheDocument();
+    expect(screen.queryByText("Coastal Apartment")).not.toBeInTheDocument();
+    expect(reads.mock.calls.map(([path]) => path)).toEqual(["/designer/design-plan-tasks"]);
+  });
+
+  it("removes an unavailable selected project after assignment refresh without opening the remaining assignment", async () => {
+    let assignments = [assignedTask, secondTask];
+    const workflowRequests: string[] = [];
+    const workspaceRequests: string[] = [];
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: assignments })),
+      http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => {
+        workflowRequests.push(String(params.projectId));
+        return HttpResponse.json({ data: uploadWorkflow(String(params.projectId)) });
+      }),
+      http.get("/api/v1/estimates/:estimateId/design-uploads", ({ params }) => {
+        workspaceRequests.push(String(params.estimateId));
+        return HttpResponse.json({ data: emptyWorkspace() });
+      })
+    );
+    const { queryClient } = renderPage("/designer/design-plans?estimate=estimate-2");
+    await screen.findByLabelText("3D layout file");
+    expect(screen.getByRole("heading", { name: "Coastal Apartment" })).toBeVisible();
+
+    assignments = [assignedTask];
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designerPlans }); });
+
+    expect(await screen.findByText("This project is unavailable. Return to your dashboard to choose an assigned project.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to dashboard" })).toHaveAttribute("href", "/designer");
+    expect(screen.queryByRole("region", { name: "Selected project workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Coastal Apartment")).not.toBeInTheDocument();
+    expect(screen.queryByText("Aurora Villa")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Project workflow stages" })).not.toBeInTheDocument();
+    expect(workflowRequests).toEqual(["project-2"]);
+    expect(workspaceRequests).toEqual(["estimate-2"]);
   });
 
   it("switches the active project and its header owner without mounting every extraction workspace", async () => {
@@ -969,21 +1032,16 @@ describe("DesignerDesignPlanTasksPage", () => {
         })
       )
     );
-    const user = userEvent.setup();
-
-    renderPage();
-    const queue = await screen.findByRole("region", { name: "Assigned projects" });
+    const { navigate } = renderPage();
     await screen.findByRole("heading", { name: "Upload design" });
     await waitFor(() => expect(workspaceRequests).toEqual(["/api/v1/estimates/estimate-1/design-uploads"]));
     const chip = await screen.findByRole("button", { name: "Project status for Aurora Villa" });
     expect(chip).toHaveTextContent("Aurora Designer");
     expect(chip.closest(".designer-plan-project__heading")).toContainElement(screen.getByRole("heading", { name: "Aurora Villa" }));
-    expect(within(queue).queryByRole("button", { name: /Project status/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Project status for/ })).toHaveLength(1);
     expect(statusRequests).toEqual(["project-1"]);
 
-    await user.click(
-      within(queue).getByRole("button", { name: /Coastal Apartment.*Extraction in progress/i })
-    );
+    await act(async () => navigate("/designer/design-plans?estimate=estimate-2"));
 
     await waitFor(() => expect(workspaceRequests).toEqual([
       "/api/v1/estimates/estimate-1/design-uploads",
@@ -1016,7 +1074,7 @@ describe("DesignerDesignPlanTasksPage", () => {
         return HttpResponse.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 });
       })
     );
-    renderPage();
+    renderPage(state === "empty" ? "/designer/design-plans" : undefined);
     if (state === "empty") await screen.findByText("No approved estimates are assigned to you for design planning.");
     else if (state === "tasks_denied") await screen.findByText("We couldn't load your design-plan tasks.");
     else await screen.findByRole("heading", { name: "Aurora Villa" });
@@ -1054,7 +1112,7 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(screen.getByRole("link", { name: "Back to dashboard" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "View extracted images" }))
       .not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit drawings to client" }))
       .not.toBeInTheDocument();
     expect(screen.getByText(/submitted design and extracted images are read-only/)).toBeVisible();
@@ -1079,15 +1137,15 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(within(gallery).getByText(/Design version/)).toHaveTextContent("v7");
     expect(screen.getAllByText(/Design version/)).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit drawings to client" })).not.toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("button", { name: /More actions/ }));
     expect(screen.queryByRole("menuitem", { name: "Change estimate item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /Replace|Edit|Verify|Correct/ })).not.toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Assigned projects" })).queryByText(/v7/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Aurora Villa" })).queryByText(/v7/)).not.toBeInTheDocument();
   });
 
-  it("deletes a pending upload and refreshes the workspace and project queue for another upload", async () => {
+  it("deletes a pending upload and refreshes the workspace and selected-project status for another upload", async () => {
     let deleted = false;
     const deleteRequests: string[] = [];
     let workspaceReads = 0;
@@ -1120,18 +1178,17 @@ describe("DesignerDesignPlanTasksPage", () => {
     renderPage();
 
     expect(await screen.findByText(/You can delete your unapproved uploads/)).toBeVisible();
-    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("3D layout file")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Delete upload client-design.pdf" }));
     const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
     await user.click(within(dialog).getByRole("button", { name: "Delete upload" }));
 
-    expect(await screen.findByLabelText("Design plan file")).toBeInTheDocument();
+    expect(await screen.findByLabelText("3D layout file")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("client-design.pdf")).not.toBeInTheDocument());
     expect(screen.queryByRole("heading", { name: "Extracted images" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByText("Design upload deleted.")).toBeVisible();
-    const queue = screen.getByRole("region", { name: "Assigned projects" });
-    expect(within(queue).getByRole("button", { name: /Aurora Villa.*Assigned/ })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Aurora Villa" })).getByText("Assigned")).toBeVisible();
     expect(taskReads).toBeGreaterThanOrEqual(2);
     expect(workspaceReads).toBeGreaterThanOrEqual(2);
     expect(deleteRequests).toEqual(["upload-estimate-1"]);

@@ -47,6 +47,26 @@ it("supports existing receipt attestation without hiding the confirmation behind
   await fireEvent.press(screen.getByText("Confirm existing receipt")); await fireEvent.changeText(screen.getByLabelText("Payment receipt reference"), "Verified bank receipt"); await fireEvent.press(screen.getByText("Confirm existing receipt"));
   await waitFor(() => expect(post).toHaveBeenCalledWith("/projects/project-a/design-workflow/actions", expect.objectContaining({ expectedVersion: 6, action: "confirm_initial_payment", note: "Verified bank receipt" })));
 });
+it.each([2, 3])("shows a missing v%s receipt as optional and retains server recording permissions", async workflowVersion => {
+  const { client, post } = setup();
+  await render(<QueryClientProvider client={client}><InitialPaymentAction projectId="project-a" payment={{ workflowVersion, version: 6, canConfirm: false }} refresh={jest.fn()} /></QueryClientProvider>);
+  expect(screen.getByText("Initial payment not recorded.")).toBeTruthy();
+  expect(screen.getByText(/Recording an initial payment is optional for work-order release/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Confirm initial payment" })).toBeNull();
+  expect(screen.queryByText(/Initial payment confirmed/)).toBeNull();
+  expect(post).not.toHaveBeenCalled();
+});
+it("keeps the older v3 receipt history while explaining optional attestation against the current quotation", async () => {
+  const { client, post } = setup();
+  const existingReceiptAt = "2026-10-01T00:00:00Z";
+  await render(<QueryClientProvider client={client}><InitialPaymentAction projectId="project-a" payment={{ workflowVersion: 3, version: 6, canConfirm: true, requiresAttestation: true, existingReceiptAt }} refresh={jest.fn()} /></QueryClientProvider>);
+  await fireEvent.press(screen.getByRole("button", { name: "Confirm existing receipt" }));
+  expect(screen.getByText(/Confirm the existing receipt against the current approved quotation/)).toHaveTextContent(
+    `Confirm the existing receipt against the current approved quotation. This does not record another payment. Receipt recorded ${new Date(existingReceiptAt).toLocaleString()}.`
+  );
+  expect(screen.getByText(/Recording an initial payment is optional for work-order release/)).toBeTruthy();
+  expect(post).not.toHaveBeenCalled();
+});
 it("rejects fractional count items, stale item identities and unconfigured units", () => {
   const source = [{ id: "room-a", name: "Kitchen", estimateItems: [{ id: "point-a", name: "Sockets", catalogueId: "main-a", specification: "Sockets", quantity: 2, uom: "No", measurementType: "count" as const }] }];
   const draft = createFurnitureDimensionsDraft([{ id: "room-a" }], source);

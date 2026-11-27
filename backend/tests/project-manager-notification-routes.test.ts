@@ -14,7 +14,7 @@ function setup() {
   const auth = { authenticate: vi.fn(async (role: PublicUser["role"]) => ({ id: `user-${role}`, role, name: role, email: `${role}@example.test` })) } as unknown as AuthService;
   const app = express();
   app.use(express.json());
-  app.use("/api/v1", createProjectManagerRouter(auth, service as never, {} as never, 100_000));
+  app.use("/api/v1", createProjectManagerRouter(auth, service as never, {} as never, 100_000, {} as never));
   app.use(errorHandler);
   return { app, service };
 }

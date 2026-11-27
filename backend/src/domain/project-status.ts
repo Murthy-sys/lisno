@@ -186,7 +186,6 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
       workflow.initialPaymentEstimateVersion !== undefined && workflow.initialPaymentEstimateVersion !== commercial.estimateVersion))) return unavailable("initial_payment");
   if (lifecycle) {
     if (!lifecycle.preApproval || !recordedDate(workflowDesignStartAt(workflow))) return unavailable("internal_kickoff");
-    if (workflow.initialPaymentAt && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
     const final = lifecycle.finalApproval;
     const effectiveApproval = quotation ? quotationApproval?.currentQuotationApproval : final;
     const designApproval = quotation ? quotation.designApproval : final;
@@ -194,14 +193,6 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     if (designApproval && (quotation && quotation.designApproval?.estimateReviewRoundId !== effectiveApproval?.reviewRoundId ||
         invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== designReviewRoundId ||
         input.design.designPlanVersion !== designApproval.designPlanVersion)) return unavailable("space_planning_tentative_look_feel");
-    const receiptCurrent = effectiveApproval && workflow.initialPaymentAt && workflow.initialPaymentEstimateId === estimate.id &&
-      workflow.initialPaymentEstimateVersion === effectiveApproval.estimateVersion && workflow.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
-      workflow.initialPaymentDesignReviewRoundId === designReviewRoundId;
-    if (effectiveApproval && designApproval && !receiptCurrent) {
-      add("initial_payment", "initial-payment", workflow.initialPaymentAt ? "Confirm the recorded initial payment against the current approved quotation." : "Record confirmation that the initial payment was received.",
-        "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
-      return finish();
-    }
   }
   if (!lifecycle && workflowEnabled && !workflow.initialPaymentAt) {
     const financeHeads = input.participants.filter(person => person.role === "finance_head");

@@ -1,4 +1,5 @@
 import { apiClient } from "../../api/client";
+import type { ExecutionChoiceCommand, ExecutionChoiceView } from "../../../../shared/projects/executionChoice";
 import type { DesignerHandoffView } from "../../api/types";
 import type {
   DesignPlanReviewTask,
@@ -115,7 +116,7 @@ export interface DesignStageInstructions {
 export type DesignWorkflowActionId =
   | "confirm_initial_payment" | "internal_kickoff_complete" | "sales_calendar_accept"
   | "client_kickoff_request" | "client_kickoff_schedule" | "client_kickoff_complete"
-  | "key_collection_schedule" | "keys_handed_over" | "keys_received"
+  | "key_collection_schedule" | "keys_handed_over" | "keys_received" | "execution_path_select"
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
   | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
@@ -296,6 +297,7 @@ export interface DesignWorkflowView {
   projectName: string;
   serverNow: string;
   designerHandoff?: DesignerHandoffView;
+  executionChoice?: ExecutionChoiceView;
   /** Canonical project-linked Client Estimate approval; older responses may omit this field. */
   estimateApprovalStatus?: "approved" | "awaiting_approval" | "source_issue";
   /** Client receipt time preserves the server clock when cached data remounts. */
@@ -367,6 +369,9 @@ export async function performDesignWorkflowAction(input: {
   for (const mediaFile of mediaFiles) body.append("mediaFiles", mediaFile);
   return apiClient.postMultipartWithProgress<{ version: number }>(path, body, onProgress ?? (() => {}), { showGlobalLoader: false });
 }
+
+export const saveProjectExecutionChoice = (projectId: string, command: ExecutionChoiceCommand) =>
+  performDesignWorkflowAction({ projectId, ...command, data: { ...command.data } });
 
 const downloadWorkflowFile = (path: string, signal?: AbortSignal) => signal
   ? apiClient.getBlob(path, { signal, showGlobalLoader: false })

@@ -1,3 +1,15 @@
+import { createProcurementLifecycleRouter } from "./routes/procurement-lifecycle.js";
+import { createProcurementLifecycleService } from "./services/procurement-lifecycle.service.js";
+import { createProcurementPaymentsService } from "./services/procurement-payments.service.js";
+import { createProcurementProgressService } from "./services/procurement-progress.service.js";
+import { createProcurementInspectionsService } from "./services/procurement-inspections.service.js";
+import { createProcurementHandoverService } from "./services/procurement-handover.service.js";
+import { createProcurementFindingsService } from "./services/procurement-findings.service.js";
+import { createProcurementReadinessService } from "./services/procurement-readiness.service.js";
+import { createLifecycleEvidenceService } from "./services/procurement-lifecycle/evidence.js";
+import { createLifecycleFindingBridge, createProcurementFindingEvidenceService } from "./services/procurement-lifecycle/findings-bridge.js";
+import { createProcurementLifecycleScheduler } from "./services/procurement-lifecycle-scheduler.service.js";
+import { createProcurementLifecycleNotificationsService } from "./services/procurement-lifecycle-notifications.service.js";
 import { createPMEstimateReadService } from "./services/project-manager/estimates.js";
 import { createPMVendorSuggestionCommandService } from "./services/project-manager/vendor-suggestion-commands.js";
 import { createProcurementMainLineSuggestionService } from "./services/procurement-main-line-suggestions.service.js";
@@ -554,6 +566,21 @@ export function createApp(dependencies: AppDependencies) {
   const projectPurchaseOrderInvoiceAssessmentService = createProjectPurchaseOrderInvoiceAssessmentService({ audit: auditService, now: clock });
   const projectPurchaseOrderBasketMonitorService = createProjectPurchaseOrderBasketMonitorService({ audit: auditService,
     vendorPortalUrl: dependencies.vendorPortalUrl ?? "http://localhost:5173/vendor", now: clock });
+  const lifecycleDeps = { audit: auditService, now: clock };
+  const findingDeps = { ...lifecycleDeps, createFindingInSession: createLifecycleFindingBridge(lifecycleDeps) };
+  const lifecycleEvidence = createLifecycleEvidenceService(storage);
+  const lifecycleScheduler = createProcurementLifecycleScheduler({ ...lifecycleDeps, cleanupEvidence: () => lifecycleEvidence.cleanupBatch() });
+  const lifecycleServices = {
+    lifecycle: createProcurementLifecycleService(lifecycleDeps),
+    payments: createProcurementPaymentsService(lifecycleDeps),
+    progress: createProcurementProgressService(lifecycleDeps),
+    inspections: createProcurementInspectionsService(findingDeps),
+    handover: createProcurementHandoverService(findingDeps),
+    findings: createProcurementFindingsService(findingDeps),
+    readiness: createProcurementReadinessService(lifecycleDeps),
+    evidence: lifecycleEvidence,
+    notifications: createProcurementLifecycleNotificationsService({ now: clock, readHealth: lifecycleScheduler.health })
+  };
   const projectCompletionService = createProjectCompletionService({ audit: auditService, now: clock });
   const siteCompletionService = createSiteCompletionService({ audit: auditService, now: clock, readExecutionPolicy: executionDelivery.policyForProject });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
@@ -780,10 +807,11 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProcurementProjectIdentityRouter(authService, procurementProjectIdentityService));
   app.use("/api/v1", createProjectPurchaseOrderInvoiceAssessmentRouter(authService, projectPurchaseOrderInvoiceAssessmentService));
   app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
+  app.use("/api/v1", createProcurementLifecycleRouter(authService, lifecycleServices, maxUploadBytes));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
   app.use("/api/v1", createProjectManagerEstimatesRouter(authService, pmEstimateReads, pmSuggestionCommands, procurementMainLineSuggestions));
-  app.use("/api/v1", createProjectManagerRouter(authService, pmWorkspace, pmEvidence, maxUploadBytes));
+  app.use("/api/v1", createProjectManagerRouter(authService, pmWorkspace, pmEvidence, maxUploadBytes, createProcurementFindingEvidenceService(storage)));
   app.use("/api/v1", createProjectManagerRequestsRouter(authService, pmRequests));
   app.use("/api/v1", createProjectManagerClientRouter(authService, pmClient));
   app.use("/api/v1", createProjectManagerVendorsRouter(authService, pmVendors, pmQuality));
@@ -873,9 +901,13 @@ export function createApp(dependencies: AppDependencies) {
     startExecutionDelivery: () => {
       vendorOnboarding.start();
       executionDelivery.start();
+      lifecycleScheduler.start();
     },
-    closeExecutionDelivery: async () => { await Promise.all([vendorOnboarding.stop(), executionDelivery.stop()]); },
+    closeExecutionDelivery: async () => { await Promise.all([vendorOnboarding.stop(), executionDelivery.stop(), lifecycleScheduler.stop()]); },
     executionDeliveryHealth: () => executionDelivery.health(),
+    procurementLifecycleHealth: () => lifecycleScheduler.health(),
+    runProcurementLifecycleOnce: () => lifecycleScheduler.runOnce(),
+    cleanupProcurementLifecycleEvidence: () => lifecycleEvidence.cleanupBatch(),
     startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); projectChatAssistant.runtime.start(); keyCollectionScheduler.start(); },
     closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatAssistant.runtime.stop(), projectChatStream.close(), notificationStream.close(), notificationEmail.stop(), keyCollectionScheduler.stop()]); },
     keyCollectionReminderHealth: () => keyCollectionScheduler.health(),

@@ -3,6 +3,28 @@ import type { KnowledgeSectionEnvelope, KnowledgeSectionMutationEnvelope } from 
 
 const section = (version: number, payload: KnowledgeSectionEnvelope["payload"]) => ({ version, payload, applicability: "configured" } as KnowledgeSectionEnvelope);
 
+it.each([undefined, true, false])("preserves selection-needed metadata %s during an unrelated native Overview save", async selectionNeeded => {
+  const payload = { uomId: "old-unit", ...(selectionNeeded === undefined ? {} : { selectionNeeded }) };
+  const updateKnowledgeSection = jest.fn().mockResolvedValue({ aggregateVersion: 3 });
+  await saveKnowledgeDrafts({ api: { updateKnowledgeSection }, mainLineId: "line-a", revisionId: "rev-a", aggregateVersion: 2,
+    drafts: { overview: { base: section(1, payload), payload: { ...payload, uomId: "new-unit" } } }, onSaved: jest.fn() });
+  const savedPayload = updateKnowledgeSection.mock.calls[0][3].payload;
+  expect(savedPayload).toEqual({ ...payload, uomId: "new-unit" });
+  expect(Object.hasOwn(savedPayload, "selectionNeeded")).toBe(selectionNeeded !== undefined);
+});
+
+it.each([true, false])("keeps the latest selection-needed value %s when rebasing a native UOM edit", async selectionNeeded => {
+  const base = section(1, { uomId: "old-unit", selectionNeeded: !selectionNeeded });
+  const remote = section(2, { uomId: "old-unit", selectionNeeded });
+  const rebased = rebaseKnowledgeDraft({ base, payload: { ...base.payload, uomId: "new-unit" } }, remote);
+  const updateKnowledgeSection = jest.fn().mockResolvedValue({ aggregateVersion: 4 });
+  await saveKnowledgeDrafts({ api: { updateKnowledgeSection }, mainLineId: "line-a", revisionId: "rev-a", aggregateVersion: 3,
+    drafts: { overview: rebased }, onSaved: jest.fn() });
+  expect(updateKnowledgeSection).toHaveBeenCalledWith("line-a", "rev-a", "overview", expect.objectContaining({
+    expectedVersion: 2, expectedAggregateVersion: 3, payload: { uomId: "new-unit", selectionNeeded }
+  }));
+});
+
 it("preserves saved In-house policy and subset during an unrelated native Mode edit", async () => {
   const base = section(1, { inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], modeDescription: "Before" });
   const updateKnowledgeSection = jest.fn().mockResolvedValue({ aggregateVersion: 3 });

@@ -1,4 +1,5 @@
 import type { EstimatePmcPaymentSplit, EstimatePmcPaymentSummary } from "../../../shared/estimation/estimatePmcPaymentSplit";
+import type { DesignLayoutRequirements, DesignLayoutType } from "../../../shared/projects/designLayoutRequirements";
 import type { ProjectInitiationMetadata, ProjectLanguage } from "../../../shared/projects/projectInitiation";
 import type { EstimateProposalMetadata } from "../../../shared/estimation/estimateProposal";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
@@ -1613,6 +1614,9 @@ export interface EstimateDesignUpload {
   deleteBlockedReason?: string;
   purpose: "ordinary" | "drawing_replacement" | "plan_request_replacement";
   requestReplacement: EstimateDesignRequestReplacementSummary | null;
+  layoutType?: DesignLayoutType | null;
+  canClassifyLayoutType?: boolean;
+  classificationBlockedReason?: string | null;
 }
 
 export interface EstimateDesignRequestReplacementSummary {
@@ -1711,6 +1715,7 @@ export interface EstimateDesignWorkspace {
   pages: EstimateDesignSourcePage[];
   drawings: EstimateDesignDrawing[];
   revisions: EstimateDesignRevision[];
+  layoutRequirements?: DesignLayoutRequirements;
 }
 
 export interface EstimateDesignClientWorkspace
@@ -1753,6 +1758,7 @@ export interface PlanDocument {
   pdfUrl: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  layoutType?: DesignLayoutType | null;
 }
 
 export interface PlanDocumentWorkspace {
@@ -1780,6 +1786,7 @@ export interface EstimatePlanClientWorkspace {
     mimeType: string;
     pageCount: number;
     pages: EstimatePlanPage[];
+    layoutType?: DesignLayoutType | null;
   }>;
   pages: EstimatePlanPage[];
   openRequests: EstimatePlanChangeRequest[];

@@ -189,7 +189,7 @@ export function SuperAdminProjectRequestReview() {
 
   return <section className="purchase-orders__project-queue" aria-labelledby="project-purchase-order-queue-title">
     <header><div><p className="eyebrow">Project approval queue</p><h2 id="project-purchase-order-queue-title" ref={queueHeadingRef} tabIndex={-1}>Project purchase order requests</h2>
-      <p>Review the entire project package. Collaborative projects require final client approval, initial payment and explicit issue after internal approval.</p></div>
+      <p>Review the entire project package. Collaborative projects require current Client and design approvals, release checks and explicit issue after internal approval. Initial payment confirmation is optional for release.</p></div>
       {requests.isFetching && !requests.isPending ? <span className="purchase-orders__hint" role="status">Refreshing…</span> : null}</header>
     {notice ? <p role="status" className="purchase-orders__notice">{notice}</p> : null}
     {requests.isPending ? <PageState state="loading" message="Loading project purchase order requests…" />

@@ -44,7 +44,7 @@ export function StaffEstimateLifecycle({ estimate, session, disabled, execute }:
         return estimateCommand(context.runtime, estimate.id, action, { expectedVersion: estimate.version, reviewRoundId: review.id, reviewRoundVersion: review.version, reason: reason.trim() });
       }
       return estimateCommand(context.runtime, estimate.id, action, { expectedVersion: estimate.version });
-    }, action === "retry" ? "Email delivery updated." : action === "release" ? "Saved version released for procurement preparation. Work orders still require final approval and payment confirmation." : action === "withdraw-review" ? "Review withdrawn. Its immutable history remains available." : "Estimate workflow updated.");
+    }, action === "retry" ? "Email delivery updated." : action === "release" ? "Saved version released for procurement preparation. Work orders require final Client approval, current design approval and procurement release checks. Initial payment confirmation is optional for release." : action === "withdraw-review" ? "Review withdrawn. Its immutable history remains available." : "Estimate workflow updated.");
     // Recovery controls live in the workspace/queue. Close after either result so a blocked action cannot trap the modal.
     setDialog(null);
   }
@@ -52,7 +52,7 @@ export function StaffEstimateLifecycle({ estimate, session, disabled, execute }:
   return <EstimateSection title="Estimate workflow">
     <EstimateText>{lifecycle?.phase === "post" ? "Post-estimation" : lifecycle ? "Pre-estimation" : "Estimate"} · {status.replaceAll("_", " ")} · Version {estimate.version ?? "unavailable"}</EstimateText>
     <EstimateText>Saved total including GST: {estimatePaise(estimate.totalPaise ?? Math.round(estimate.total * 100))}</EstimateText>
-    {lifecycle?.finalApproval || lifecycle?.editClosedAt ? <EstimateText>Design and final estimate approval are recorded. Estimate editing is closed. Initial payment confirmation is required before work orders.</EstimateText> : null}
+    {lifecycle?.finalApproval || lifecycle?.editClosedAt ? <EstimateText>Design and final estimate approval are recorded. Estimate editing is closed. Work orders can be issued after procurement release checks. Initial payment confirmation is optional for release.</EstimateText> : null}
     {lifecycle?.phase === "post" && !lifecycle.finalApproval && (estimate.designPlanStatus !== "approved" || lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision) ? <EstimateText>Final submission is waiting for approved Design matching the current estimate scope.</EstimateText> : null}
     {estimate.clientFeedback ? <EstimateText>Client feedback: {estimate.clientFeedback.note}</EstimateText> : null}
     {review ? <><EstimateText>Client review: {review.status.replaceAll("_", " ")} · Email {review.deliveryStatus}</EstimateText>{["failed", "disabled"].includes(review.deliveryStatus) ? <EstimateText>The submitted estimate remains in the Client portal. Retry delivery of the same submission when email is available.</EstimateText> : null}</> : null}

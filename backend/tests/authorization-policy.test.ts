@@ -250,6 +250,7 @@ describe("authorization policy", () => {
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
           !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
+          !permission.startsWith("procurement.lifecycle.") && !permission.startsWith("procurement.payments.") && permission !== "finance.procurement_payments.manage" &&
           !permission.startsWith("pm.") &&
           !permission.startsWith("estimation.quotation.") && !permission.startsWith("projects.design_team.") &&
           !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
@@ -285,8 +286,8 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(233);
-    expect(new Set(PERMISSION_CODES).size).toBe(233);
+    expect(PERMISSION_CODES).toHaveLength(248);
+    expect(new Set(PERMISSION_CODES).size).toBe(248);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 

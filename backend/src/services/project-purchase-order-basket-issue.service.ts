@@ -1,6 +1,7 @@
 import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
+import { activateCollaborativeProjectWorkflow } from "./project-workflow.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
@@ -115,9 +116,6 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
         const candidate = await assertBasketVendorEligible(String(award.vendorId), projectId, basketId, session);
         if (candidate.kpiScoreBps === null || candidate.kpiScoreBps !== proposal.officialKpiScoreBps)
           conflict("The selected vendor KPI changed after this award proposal. Refresh the comparison and approvals.");
-        const fence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
-          { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean() as Row | null;
-        if (!fence) conflict("This project is no longer active.");
         await assertProposalFresh(award, proposal, session);
         const termsByBoqLineId = new Map((resolveProcurementBasketAwardLineTerms(proposal.lineTerms,
           boq.lines as ProcurementBasketBoqLine[], true) ?? []).map(line => [line.boqLineId, line]));
@@ -220,6 +218,10 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
         if (totals.netPaise !== bid.totals.netPaise || totals.gstPaise !== bid.totals.gstPaise || totals.totalPaise !== gross)
           conflict("The awarded quote no longer reconciles to the work order.");
         await assertPurchaseOrderAllocations({ projectId, lines: approvedLines }, session);
+        await activateCollaborativeProjectWorkflow(projectId, actor.id, timestamp, session);
+        const fence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+          { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean() as Row | null;
+        if (!fence) conflict("This project is no longer active.");
         await cutOverProjectAuthority(projectId, actor.id, timestamp, input.audit, session);
         const generatedKey = digest({ awardId, proposalRevisionId: proposal._id, orderId });
         const orderRevision = new ProjectPurchaseOrderRevisionModel({ _id: revisionId, orderId, projectId,

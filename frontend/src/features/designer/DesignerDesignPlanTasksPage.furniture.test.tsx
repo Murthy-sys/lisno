@@ -83,7 +83,7 @@ function serve(getWorkflow: () => DesignWorkflowView) {
 function renderPage() {
   let client!: QueryClient;
   function Capture() { client = useQueryClient(); return null; }
-  const view = renderWithQuery(<MemoryRouter><Capture /><DesignerDesignPlanTasksPage /></MemoryRouter>);
+  const view = renderWithQuery(<MemoryRouter initialEntries={["/designer/design-plans?estimate=estimate-1"]}><Capture /><DesignerDesignPlanTasksPage /></MemoryRouter>);
   return { ...view, client };
 }
 

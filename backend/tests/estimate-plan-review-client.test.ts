@@ -415,6 +415,7 @@ describe("client estimate plan review service", () => {
     const workspace = await service().listClient(client, "estimate-1");
     expect(workspace.uploads).toEqual([{
       id: "upload-1",
+      layoutType: null,
       originalFilename: "plan.pdf",
       mimeType: "application/pdf",
       pageCount: 6,

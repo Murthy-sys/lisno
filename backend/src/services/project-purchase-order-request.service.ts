@@ -30,6 +30,7 @@ import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-p
 import { projectCurrentProcurementSnapshots } from "./procurement-in-house-visibility.service.js";
 import { projectProcurementModeResolution } from "../domain/procurement-in-house-visibility.js";
 import { cutOverProjectAuthority, assertPreparedOrderIssueEligible, orderIssueReadiness, reconcilePurchaseOrderItems, type PurchaseOrderApprovalHook } from "./project-purchase-order.service.js";
+import { activateCollaborativeProjectWorkflow } from "./project-workflow.service.js";
 import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tender-overlap.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
@@ -177,6 +178,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
     await assertPurchaseOrderAllocations({ projectId: String(request.projectId), lines }, session);
     for (const vendor of revision.vendorTotals as PurchaseOrderRequestVendorTotal[]) await requireActiveVendor(vendor.vendorId, session);
     if (collaborative && !issue) return { collaborative, approvedOrderIds };
+    await activateCollaborativeProjectWorkflow(String(request.projectId), actor.id, timestamp, session);
     await cutOverProjectAuthority(String(request.projectId), actor.id, timestamp, input.audit, session);
     for (const vendor of revision.vendorTotals as PurchaseOrderRequestVendorTotal[]) {
       await requireActiveVendor(vendor.vendorId, session);

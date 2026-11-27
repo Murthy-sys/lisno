@@ -3,8 +3,9 @@ import type { DesignStageType } from "./design-workflow.js";
 import type { StoredEstimateClientResponseProof } from "./estimate-client-review.js";
 import type { KeyCollectionAppointmentMode, KeyCollectionAppointmentView } from "../contracts/designer-assignment.js";
 import { keyCollectionTiming } from "./key-collection-timing.js";
+import type { ExecutionChoiceRecord } from "../contracts/project-execution-choice.js";
 
-export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "key_collection_schedule", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
+export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "key_collection_schedule", "keys_handed_over", "keys_received", "execution_path_select", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
 export type DesignWorkflowHistoricalAction = DesignWorkflowAction | "client_kickoff_not_required";
 interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
@@ -107,6 +108,7 @@ export interface DesignWorkflowHistoryEvent {
 }
 export interface DesignWorkflowState {
   projectId: string;
+  executionChoice?: ExecutionChoiceRecord;
   version: number;
   initialPaymentAt: string | null;
   estimationWorkflowVersion?: 2 | 3;

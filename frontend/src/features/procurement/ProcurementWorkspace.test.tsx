@@ -191,6 +191,10 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
         ]
       }
     })),
+    http.get("/api/v1/procurement/projects/:projectId/lifecycle", ({ params }) => HttpResponse.json({ data: {
+      projectId: params.projectId, projectName: projects.find(project => project.projectId === params.projectId)?.projectName ?? assigned?.find(project => project.id === params.projectId)?.name ?? "Project", projectStatus: "active", serverNow: "2026-11-27T10:00:00Z", version: 0, sourceDigest: "a".repeat(64), availability: "source_unavailable", state: null,
+      source: { digest: "a".repeat(64), available: false, estimateId: null, estimateVersion: null, items: [], orders: [], blockers: [] }, blockers: [], allowedActions: [], findingOwners: [], attention: { overduePayments: null, progressActions: null, handoverActions: null, signoffBlockers: null }
+    } })),
     http.get("/api/v1/procurement/projects", () => HttpResponse.json({ data: projects })),
     http.get("/api/v1/projects", () => HttpResponse.json({ data: { items: assigned ?? [], pagination: { limit: 100, offset: 0, total: assigned?.length ?? 0, hasMore: false } } })),
     http.get("/api/v1/projects/:projectId", ({ params }) => {
@@ -343,6 +347,10 @@ describe("ProcurementProjectPage", () => {
     installProcurementSession([], [assignedProject]);
     renderApp(["/procurement/projects/project-unestimated"]);
     expect(await screen.findByRole("heading", { level: 1, name: "Cedar planning" })).toBeVisible();
+    expect(screen.getByRole("tablist", { name: "Project procurement lifecycle" })).toBeVisible();
+    const disclosure = screen.getByText("Project details & workflow");
+    expect(disclosure.closest("details")).not.toHaveAttribute("open");
+    await userEvent.click(disclosure);
     const details = screen.getByRole("region", { name: "Project details" });
     expect(within(details).getByText("Cedar client")).toBeVisible();
     expect(within(details).getByText("Chennai")).toBeVisible();

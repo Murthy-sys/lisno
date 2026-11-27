@@ -40,6 +40,13 @@ function workspace() {
 }
 
 describe("client plan review model", () => {
+  it("retains only supplied historical layout labels without guessing legacy types", () => {
+    const data = workspace();
+    data.uploads[0]!.layoutType = "layout_2d";
+    const groups = orderedPlanUploads(data);
+    expect(groups[0]!.layoutType).toBe("layout_2d");
+    expect(groups[1]!.layoutType).toBeUndefined();
+  });
   it("groups uploads by stable ID and orders pages numerically within each original filename", () => {
     const groups = orderedPlanUploads(workspace());
     expect(groups.map((group) => [group.id, group.originalFilename, group.pages.map((page) => page.id)])).toEqual([

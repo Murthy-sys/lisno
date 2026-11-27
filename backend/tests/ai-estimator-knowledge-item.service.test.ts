@@ -69,69 +69,79 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
-  it.each(["main_line", "temporary"] as const)("persists default display on a %s with Overview CAS and unrelated-field preservation", async (itemType) => {
+  it.each(["showByDefault", "selectionNeeded"].flatMap(field =>
+    (["main_line", "temporary"] as const).map(itemType => ({ field, itemType }))
+  ))("persists $field on a $itemType with Overview CAS and unrelated-field preservation", async ({ field, itemType }) => {
     const { service, appendAudit } = createService();
-    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Default ${itemType}`, itemType });
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Overview ${field} ${itemType}`, itemType });
     const revisionId = item.draftRevisionId!;
     const initial = await service.getSection(ACTOR, item.id, revisionId, "overview");
-    expect(initial.payload).not.toHaveProperty("showByDefault");
-    expect(await AiEstimatorKnowledgeSectionModel.findById(initial.id).lean()).not.toHaveProperty("payload.showByDefault");
-    const selected = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+    expect(initial.payload).not.toHaveProperty(field);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(initial.id).lean()).not.toHaveProperty(`payload.${field}`);
+    const untouched = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: initial.version, expectedAggregateVersion: item.version,
-      payload: { ...initial.payload, showByDefault: true, uomId: "uom-sqft", clientVisible: false }
+      payload: { ...initial.payload, description: "Legacy description" }
+    });
+    expect(untouched.payload).not.toHaveProperty(field);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(initial.id).lean()).not.toHaveProperty(`payload.${field}`);
+    const selected = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
+      expectedVersion: untouched.version, expectedAggregateVersion: untouched.aggregateVersion,
+      payload: { ...untouched.payload, [field]: true, uomId: "uom-sqft", clientVisible: false }
     });
     expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload)
-      .toMatchObject({ showByDefault: true, uomId: "uom-sqft", clientVisible: false });
+      .toMatchObject({ [field]: true, uomId: "uom-sqft", clientVisible: false });
     expect(appendAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "ai_estimator_knowledge_section_updated" }), expect.anything());
     const unrelated = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: selected.version, expectedAggregateVersion: selected.aggregateVersion,
       payload: { ...selected.payload, description: "Updated description" }
     });
-    expect(unrelated.payload).toMatchObject({ showByDefault: true, clientVisible: false, description: "Updated description" });
+    expect(unrelated.payload).toMatchObject({ [field]: true, clientVisible: false, description: "Updated description" });
     await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: selected.version, expectedAggregateVersion: unrelated.aggregateVersion,
-      payload: { ...unrelated.payload, showByDefault: false }
+      payload: { ...unrelated.payload, [field]: false }
     })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
     await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: unrelated.version, expectedAggregateVersion: selected.aggregateVersion,
-      payload: { ...unrelated.payload, showByDefault: false }
+      payload: { ...unrelated.payload, [field]: false }
     })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
     const deselected = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: unrelated.version, expectedAggregateVersion: unrelated.aggregateVersion,
-      payload: { ...unrelated.payload, showByDefault: false }
+      payload: { ...unrelated.payload, [field]: false }
     });
     expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload).toEqual(deselected.payload);
-    expect(deselected.payload).toMatchObject({ showByDefault: false, uomId: "uom-sqft", clientVisible: false, description: "Updated description" });
+    expect(deselected.payload).toMatchObject({ [field]: false, uomId: "uom-sqft", clientVisible: false, description: "Updated description" });
   });
 
-  it.each([true, false])("preserves default display %s through duplication and a new draft without changing active history", async (showByDefault) => {
+  it.each(["showByDefault", "selectionNeeded"].flatMap(field =>
+    [true, false].map(value => ({ field, value }))
+  ))("preserves $field=$value through duplication and a new draft without changing active history", async ({ field, value }) => {
     const { service } = createService();
-    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Copy default ${showByDefault}` });
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Copy ${field} ${value}` });
     const revisionId = item.draftRevisionId!;
     const initial = await service.getSection(ACTOR, item.id, revisionId, "overview");
     const saved = await service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: initial.version, expectedAggregateVersion: item.version,
-      payload: { ...initial.payload, uomId: "uom-sqft", showByDefault }
+      payload: { ...initial.payload, uomId: "uom-sqft", [field]: value }
     });
-    const duplicate = await service.duplicate(ACTOR, item.id, { expectedVersion: saved.aggregateVersion, name: `Copied default ${showByDefault}` });
+    const duplicate = await service.duplicate(ACTOR, item.id, { expectedVersion: saved.aggregateVersion, name: `Copied ${field} ${value}` });
     expect(duplicate.id).not.toBe(item.id);
-    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload.showByDefault).toBe(showByDefault);
+    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload[field]).toBe(value);
     // Establish an isolated historical fixture without configuring unrelated activation requirements.
     await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: revisionId }, { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } });
     await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: item.id }, { $set: { status: "active", activeRevisionId: revisionId, draftRevisionId: null } });
     await expect(service.updateSection(ACTOR, item.id, revisionId, "overview", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
-      payload: { ...saved.payload, showByDefault: !showByDefault }
+      payload: { ...saved.payload, [field]: !value }
     })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
     const copied = await service.createRevision(ACTOR, item.id, { expectedVersion: saved.aggregateVersion });
     const draft = await service.getSection(ACTOR, item.id, copied.draftRevisionId!, "overview");
-    expect(draft.payload.showByDefault).toBe(showByDefault);
+    expect(draft.payload[field]).toBe(value);
     await service.updateSection(ACTOR, item.id, copied.draftRevisionId!, "overview", {
       expectedVersion: draft.version, expectedAggregateVersion: copied.version,
-      payload: { ...draft.payload, showByDefault: !showByDefault }
+      payload: { ...draft.payload, [field]: !value }
     });
     expect((await service.getSection(ACTOR, item.id, revisionId, "overview")).payload).toEqual(saved.payload);
-    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload.showByDefault).toBe(showByDefault);
+    expect((await service.getSection(ACTOR, duplicate.id, duplicate.draftRevisionId!, "overview")).payload[field]).toBe(value);
   });
 
   it("saves and clears room applicability with section concurrency protection", async () => {

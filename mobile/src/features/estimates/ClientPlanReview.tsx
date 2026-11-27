@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { DESIGN_LAYOUT_LABELS } from "../../../../shared/projects/designLayoutRequirements";
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -70,6 +71,7 @@ export function ClientPlanReview({ estimate, session }: { readonly estimate: Cli
           {uploads.map((upload) => <View key={upload.id} style={styles.upload}>
             <View style={styles.uploadHeading}>
               <Text accessibilityRole="header" style={styles.uploadName}>{upload.originalFilename}</Text>
+              <Text style={styles.meta}>{upload.layoutType ? DESIGN_LAYOUT_LABELS[upload.layoutType] : "Layout type not set"}</Text>
               <Text style={styles.meta}>{upload.pages.length} {upload.pages.length === 1 ? "page" : "pages"}</Text>
             </View>
             {upload.pages.length === 0 ? <Text style={styles.empty}>This upload has no pages available to view.</Text> : upload.pages.map((page) => {

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { EstimatePlanClientWorkspace, EstimatePlanPage } from "../../api/types";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
+import { designLayoutLabel } from "../leads/DesignLayoutRequirements";
 
 function fileTypeLabel(mimeType: string) {
   if (mimeType === "application/pdf") return "PDF";
@@ -35,7 +36,7 @@ export function ClientFullPlanNav({
             key={upload.id}
           >
             <LazyPlanThumbnail source={firstPage.thumbnailUrl} />
-            <span className="client-plan-nav__page-meta"><strong>{upload.originalFilename}</strong><small><FileText aria-hidden="true" /> <span>{fileTypeLabel(upload.mimeType)}</span> · {upload.pageCount} {upload.pageCount === 1 ? "page" : "pages"}</small></span>
+            <span className="client-plan-nav__page-meta"><strong>{upload.originalFilename}</strong><span className="design-layout-label">{designLayoutLabel(upload.layoutType)}</span><small><FileText aria-hidden="true" /> <span>{fileTypeLabel(upload.mimeType)}</span> · {upload.pageCount} {upload.pageCount === 1 ? "page" : "pages"}</small></span>
           </button>
         );})}
     </div>

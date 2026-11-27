@@ -1,3 +1,4 @@
+import { layoutChoiceFixture, LAYOUT_AT } from "./fixtures/design-layout.js";
 import { DesignerAssignmentRequestModel } from "../src/models/DesignerAssignmentRequest.js";
 import { createDesignerAssignmentService } from "../src/services/designer-assignment.service.js";
 import { defaultProjectManagerId, insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
@@ -41,7 +42,17 @@ import { createEstimateDecisionService } from "../src/services/estimate-decision
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { createEstimatePlanDocumentService } from "../src/services/estimate-plan-document.service.js";
 import { activateCollaborativeProjectWorkflow, createProjectWorkflowService, DesignDecisionProofRetentionError, ensureCollaborativePreparationTask } from "../src/services/project-workflow.service.js";
+import { ensurePendingProjectFinanceBucket } from "../src/services/project-finance.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+
+async function selected3dLayoutFixture(projectId: string, estimateId: string) {
+  const choice = layoutChoiceFixture(projectId, "option_2");
+  await DesignWorkflowStateModel.create({ _id: projectId, ...choice.state });
+  // Fixture setup represents layouts declared before the review history being tested.
+  await EstimateDesignUploadModel.updateMany({ estimateId }, { $set: { layoutType: "layout_3d", layoutClassification: {
+    classifiedAt: LAYOUT_AT, classifiedById: "fixture-designer", choiceHistoryEventId: choice.record.historyEventId, choiceDefinitionVersion: 1
+  } } });
+}
 
 const NOW = new Date("2026-08-25T10:00:00.000Z");
 const ESTIMATE_ID = "workflow-commercial-estimate";
@@ -985,6 +996,7 @@ describe("Designer assignment and task access", () => {
       role: "designer"
     } as const;
 
+    await selected3dLayoutFixture(String((await EstimateModel.findById(estimateId).lean())!.projectId), estimateId);
     const submitted = await estimateDesigns.submitDrawings(designer, estimateId);
 
     expect(submitted).toMatchObject({
@@ -1131,6 +1143,7 @@ describe("Designer resubmission readiness", () => {
         })
       ]);
     }
+    await selected3dLayoutFixture("readiness-project", estimateId);
     await DesignPlanReviewRoundModel.create({
       _id: "readiness-old-round", estimateId, projectId: "readiness-project", leadId: "readiness-lead", designPlanVersion: 1,
       recipientEmail: "client@example.test", clientName: "Client", projectName: "Test residence",
@@ -1520,6 +1533,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
       role: "super_admin"
     } as const;
 
+    await selected3dLayoutFixture(projectId, estimateId);
     const preparedDocuments = await planDocuments.prepareForSubmission(designer, estimateId);
     expect(preparedDocuments.documents).toHaveLength(1);
     const fullPlan = preparedDocuments.documents[0]!;
@@ -3540,11 +3554,12 @@ describe("collaborative Design approval boundary", () => {
     await f.workflow.overrideWorkerAssignment({ actor: preparationAdminActor, projectId: "evidence-project", taskId: String(site!._id), expectedVersion: 1, workerId: preparationSiteActor.id });
     return ProjectWorkflowTaskModel.findById(site!._id).lean();
   }
-  async function recordFinalApprovalAndPayment() {
+  async function recordFinalApprovalWithoutPayment() {
     const finalApproval = { reviewRoundId: "collaborative-final-round", estimateVersion: 7, approvedAt: executionAt.toISOString(), requirementsVersion: 0, designReviewRoundId: "evidence-round", designPlanVersion: 3, designScopeRevision: 1 };
     await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { designPlanStatus: "approved", designPlanVersion: 3, "estimation.finalApproval": finalApproval, "estimation.approvedDesignScopeRevision": 1, "estimation.editClosedAt": executionAt.toISOString() } });
-    await EstimateClientReviewRoundModel.collection.insertOne({ _id: finalApproval.reviewRoundId, dedupeKey: "collaborative-final-round", sendGeneration: 2, estimateId: "evidence-estimate", projectId: "evidence-project", estimateVersion: 7, status: "approved", decision: "approve", decidedAt: executionAt, estimateSnapshot: { lineItems: [] } } as never);
-    await DesignWorkflowStateModel.create({ _id: "evidence-project", projectId: "evidence-project", version: 1, estimationWorkflowVersion: 2, initialPaymentAt: executionAt.toISOString(), initialPaymentReviewRoundId: finalApproval.reviewRoundId, initialPaymentDesignReviewRoundId: finalApproval.designReviewRoundId, stages: {}, pauses: [], history: [] });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: finalApproval.reviewRoundId, dedupeKey: "collaborative-final-round", sendGeneration: 2, estimateId: "evidence-estimate", projectId: "evidence-project", estimateVersion: 7, phase: "post", status: "approved", decision: "approve", decidedById: "evidence-client", decisionSource: "client_portal", decidedAt: executionAt, estimateSnapshot: { lineItems: [], subtotal: 0, gst: 0, total: 0, subtotalPaise: 0, gstPaise: 0, totalPaise: 0 } } as never);
+    await DesignPlanReviewRoundModel.collection.updateOne({ _id: "evidence-round" }, { $set: { designPlanVersion: 3, status: "approved", decision: "approve" } });
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket({ workflowVersion: 2, projectId: "evidence-project", estimateId: "evidence-estimate", estimateVersion: 7, estimateReviewRoundId: finalApproval.reviewRoundId, approvedSubtotalRupees: 0, approvedGstRupees: 0, approvedContractTotalRupees: 0, createdById: "evidence-client", occurredAt: executionAt }, session));
   }
   it("keeps early Site assignments outside execution queues and KPI after ten days", async () => {
     const f = await fixture(0);
@@ -3556,10 +3571,10 @@ describe("collaborative Design approval boundary", () => {
     const kpiTasks = await createMongoRepository().listWorkflowKpiTasksForPeriod([preparationSiteActor.id], NOW.toISOString(), executionAt.toISOString());
     expect(kpiTasks).toEqual([]);
   });
-  it("activates the same Site task once at payment with final design and stable replay dates", async () => {
+  it("activates the same Site task without payment with final design and stable replay dates", async () => {
     const f = await fixture(0);
     const before = await assignPreparationSite(f);
-    await recordFinalApprovalAndPayment();
+    await recordFinalApprovalWithoutPayment();
     await Promise.all(["first", "retry"].map(() => mongoose.connection.transaction(session => activateCollaborativeProjectWorkflow("evidence-project", "super-admin", executionAt, session))));
     const activated = await ProjectWorkflowTaskModel.findById(before!._id).lean();
     expect(activated).toMatchObject({ preparationOnly: false, designPlanVersion: 3, openedAt: executionAt, dueAt: new Date(executionAt.getTime() + 7 * 86_400_000), plannedEffort: 12, assigneeUserId: preparationSiteActor.id, version: 3, status: "open", progress: 0, createdAt: before!.createdAt });
@@ -3576,7 +3591,7 @@ describe("collaborative Design approval boundary", () => {
   it("rejects malformed preparation timing without partially activating execution", async () => {
     const f = await fixture(0);
     const site = await assignPreparationSite(f);
-    await recordFinalApprovalAndPayment();
+    await recordFinalApprovalWithoutPayment();
     await ProjectWorkflowTaskModel.updateOne({ _id: site!._id }, { $set: { plannedEffort: 1 } });
     await expect(mongoose.connection.transaction(session => activateCollaborativeProjectWorkflow("evidence-project", "super-admin", executionAt, session))).rejects.toMatchObject({ code: "WORKFLOW_TASK_ACTIVATION_CONFLICT" });
     expect(await ProjectWorkflowTaskModel.findById(site!._id).lean()).toMatchObject({ preparationOnly: true, designPlanVersion: 0, version: 2, assigneeUserId: preparationSiteActor.id });
@@ -3636,7 +3651,8 @@ describe("collaborative Design approval boundary", () => {
       editClosedAt: NOW.toISOString(), finalApproval: { reviewRoundId: "quotation-final", designReviewRoundId: null, designPlanVersion: null },
       designApproval: { reviewRoundId: "evidence-round", estimateReviewRoundId: "quotation-final", designScopeRevision: 1 } } });
     expect(await QuotationDesignHandoffModel.countDocuments({ estimateId: "evidence-estimate" })).toBe(1);
-    expect(await ProjectModel.findById("evidence-project").lean()).toMatchObject({ status: "planning" });
+    expect(await ProjectModel.findById("evidence-project").lean()).toMatchObject({ status: "active", actualStartAt: NOW });
+    expect(await DesignWorkflowStateModel.findById("evidence-project").lean()).toBeNull();
     expect(await ProjectWorkflowTaskModel.countDocuments({ kind: "trade_execution" })).toBe(0);
   });
   it("blocks v3 operational approval before the second quote or after that quote is superseded", async () => {
@@ -3656,7 +3672,7 @@ describe("collaborative Design approval boundary", () => {
     expect(await ProjectModel.findById("evidence-project").lean()).toMatchObject({ status: "planning" });
     expect(await DesignWorkflowStateModel.countDocuments()).toBe(0);
   });
-  it("allows finance preparation while blocking site progress before final approval and payment", async () => {
+  it("allows finance preparation while blocking site progress before final quotation and design approval", async () => {
     const f = await fixture();
     const finance = await ProjectWorkflowTaskModel.findOne({ kind: "finance" }).lean();
     const site = await ProjectWorkflowTaskModel.findOne({ kind: "site_execution" }).lean();

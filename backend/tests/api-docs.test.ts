@@ -266,6 +266,21 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.lineItems.items.properties.showByDefault");
   });
 
+  it("documents selection-needed metadata only as an optional Overview boolean", () => {
+    const schemas = componentSchemas();
+    const payloads = schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[];
+    const overview = payloads.find(entry => (entry.properties as OpenApiObject)?.selectionNeeded !== undefined);
+    expect(overview).toHaveProperty("additionalProperties", false);
+    expect(overview).toHaveProperty("properties.selectionNeeded.type", "boolean");
+    expect(overview?.required ?? []).not.toContain("selectionNeeded");
+    expect(overview).not.toHaveProperty("properties.selectionNeeded.default");
+    expect(overview).not.toHaveProperty("properties.selectionNeeded.nullable");
+    expect(payloads.filter(entry => (entry.properties as OpenApiObject)?.selectionNeeded !== undefined)).toHaveLength(1);
+    expect(schemas.EstimatorCatalogueLine).not.toHaveProperty("properties.selectionNeeded");
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.selectionNeeded");
+    expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.lineItems.items.properties.selectionNeeded");
+  });
+
   it("documents optional current-line margin application and saved source prices without weakening bulk commands", () => {
     const schemas = componentSchemas();
     expect(schemas.KnowledgeSectionUpdateRequest).toHaveProperty("properties.marginEdits.items.$ref", "#/components/schemas/KnowledgeMarginEditField");
@@ -1472,7 +1487,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 542 routes without versioning paths twice", () => {
+  it("contains all 600 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1481,7 +1496,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(544);
+    expect(operationCount).toBe(600);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -2576,10 +2591,28 @@ describe("OpenAPI and Swagger UI", () => {
       required: true,
       content: {
         "multipart/form-data": {
-          schema: { $ref: "#/components/schemas/FileUploadRequest" }
+          schema: { $ref: "#/components/schemas/DesignLayoutUploadRequest" }
         }
       },
       "x-lisno-schema-completeness": "exact"
+    });
+    expect(componentSchemas().DesignLayoutUploadRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["file"],
+      properties: { layoutType: { enum: ["layout_2d", "layout_3d"] } }
+    });
+    expect(openApiDocument.paths["/estimate-design-uploads/{uploadId}/layout-type"]?.patch?.requestBody).toMatchObject({
+      content: { "application/json": { schema: { $ref: "#/components/schemas/DesignLayoutClassificationRequest" } } },
+      "x-lisno-schema-completeness": "exact"
+    });
+    expect(componentSchemas().DesignLayoutClassificationRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["layoutType", "expectedDesignPlanVersion", "idempotencyKey"],
+      properties: {
+        layoutType: { enum: ["layout_2d", "layout_3d"] },
+        expectedDesignPlanVersion: { type: "integer", minimum: 0 },
+        idempotencyKey: { minLength: 8, maxLength: 128 }
+      }
     });
     expect(
       openApiDocument.paths[

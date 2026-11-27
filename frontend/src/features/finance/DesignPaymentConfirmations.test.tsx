@@ -32,13 +32,61 @@ beforeEach(() => {
 });
 
 describe("DesignPaymentConfirmations", () => {
+  it.each([2, 3] as const)("shows an unrecorded v%s receipt as optional without manufacturing a receipt", async (workflowVersion) => {
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion, canConfirm: false } });
+    const region = screen.getByRole("region", { name: "Initial payment status" });
+    expect(within(region).getByText("Initial payment not recorded")).toBeVisible();
+    expect(region).toHaveTextContent("Recording an initial payment is optional for work-order release.");
+    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+    expect(region.querySelector("time")).not.toBeInTheDocument();
+    expect(region).not.toHaveTextContent("Initial payment received");
+    expect((await axe.run(region, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("keeps an older quotation receipt visible without presenting it as current confirmation", () => {
+    asSuperAdmin();
+    const existingReceiptAt = "2026-09-11T09:04:00.000Z";
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3,
+      requiresAttestation: true, existingReceiptAt } });
+    const region = screen.getByRole("region", { name: "Initial payment status" });
+    expect(region).toHaveTextContent("Confirm existing receipt against current approved quotation");
+    expect(region).toHaveTextContent("Recording an initial payment is optional for work-order release.");
+    expect(region).toHaveTextContent("This does not record another payment.");
+    expect(region.querySelector("time")).toHaveAttribute("datetime", existingReceiptAt);
+    expect(region).not.toHaveTextContent("Initial payment received");
+  });
+
+  it("keeps unavailable receipt metadata local to the payment record", () => {
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3,
+      requiresAttestation: true, existingReceiptAt: "invalid-receipt-time", canConfirm: false } });
+    const region = screen.getByRole("region", { name: "Initial payment status" });
+    expect(region).toHaveTextContent("Receipt confirmation time is unavailable.");
+    expect(region).toHaveTextContent("Recording an initial payment is optional for work-order release.");
+    expect(region.querySelector("time")).not.toBeInTheDocument();
+  });
+
+  it("refreshes workflow, readiness, project and Finance consumers after optional receipt recording", async () => {
+    asSuperAdmin();
+    vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
+    const { client } = setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3, version: 4 } });
+    const keys = [["procurement", "project-one"], ["project-finance", "project-one"],
+      ["project-workflow", "project-status", "project-one"], ["assigned-projects", "project-one"]];
+    keys.forEach(key => client.setQueryData(key, { source: "saved-server-record" }));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "Verified receipt reference");
+    await user.click(screen.getByRole("button", { name: "Mark initial payment received" }));
+    await waitFor(() => keys.forEach(key => expect(client.getQueryState(key)?.isInvalidated).toBe(true)));
+    keys.forEach(key => expect(client.getQueryData(key)).toEqual({ source: "saved-server-record" }));
+  });
+
   it("keeps v3 payment unavailable until server-approved quotation and design prerequisites are satisfied", () => {
     asSuperAdmin();
     setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3, status: "awaiting_estimate_approval", canConfirm: false } });
     expect(screen.getByText("Awaiting current quotation and design approval")).toBeVisible();
     expect(screen.getByText(/Design tasks use the current Client-approved quotation/)).toBeVisible();
     expect(screen.getByText(/If the Designer revises it, Client approval is required/)).toBeVisible();
-    expect(screen.getByText(/After the uploaded design is approved, Super Admin confirms/)).toBeVisible();
+    expect(screen.getByText(/Work-order issuance follows current quotation and uploaded-design approval/)).toBeVisible();
+    expect(screen.getByText(/Recording an initial payment is optional for work-order release/)).toBeVisible();
     expect(screen.queryByText(/Design tasks start after the Designer-revised quotation is approved/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();
   });
@@ -54,7 +102,7 @@ describe("DesignPaymentConfirmations", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "Verified quotation receipt");
     await user.click(screen.getByRole("button", { name: "Mark initial payment received" }));
-    expect(await screen.findByText("Initial payment confirmed for the current approved quotation. Work orders can be issued when procurement checks are complete.")).toBeVisible();
+    expect(await screen.findByText("Initial payment recorded for the current approved quotation. Existing execution dates are unchanged.")).toBeVisible();
     expect(post).toHaveBeenCalledOnce();
     expect(screen.queryByText(/countdown has started/)).not.toBeInTheDocument();
   });
@@ -131,7 +179,7 @@ describe("DesignPaymentConfirmations", () => {
     expect(screen.getByRole("button", { name: label })).toBeDisabled();
     await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "  Final estimate bank receipt REF-42.  ");
     await user.click(screen.getByRole("button", { name: label }));
-    expect(await screen.findByText("Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete.")).toBeVisible();
+    expect(await screen.findByText("Initial payment recorded for the final estimate. Existing execution dates are unchanged.")).toBeVisible();
     expect(post).toHaveBeenCalledExactlyOnceWith("/projects/project-one/design-workflow/actions", {
       action: "confirm_initial_payment", expectedVersion: 4,
       note: "Final estimate bank receipt REF-42.", idempotencyKey: expect.any(String)

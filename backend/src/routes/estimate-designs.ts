@@ -1,3 +1,4 @@
+import { classifyDesignLayoutSchema, designLayoutUploadSchema } from "../services/design-layout-requirements.service.js";
 import { pipeline } from "node:stream/promises";
 
 import { Router, type NextFunction, type Request, type Response } from "express";
@@ -96,16 +97,20 @@ export function createEstimateDesignsRouter(
     "/estimates/:estimateId/design-uploads",
     protectedRoute,
     requireOperation("POST /estimates/:estimateId/design-uploads"),
-    uploadSingleFile(maxUploadBytes),
+    uploadSingleFile(maxUploadBytes, { maxFields: 1 }),
+    validateBody(designLayoutUploadSchema),
     async (request, response, next) => {
       try {
-        response.status(201).json({ data: await estimateDesigns.upload(request.authenticatedUser!, request.params.estimateId as string, request.validatedUpload!) });
+        response.status(201).json({ data: await estimateDesigns.upload(request.authenticatedUser!, request.params.estimateId as string, request.validatedUpload!, request.body.layoutType) });
       } catch (error) {
         next(error);
       }
     }
   );
 
+  router.patch("/estimate-design-uploads/:uploadId/layout-type", protectedRoute, requireOperation("PATCH /estimate-design-uploads/:uploadId/layout-type"), validateBody(classifyDesignLayoutSchema), async (request, response, next) => {
+    try { response.json({ data: await estimateDesigns.classifyLayoutType(request.authenticatedUser!, request.params.uploadId as string, request.body) }); } catch (error) { next(error); }
+  });
   router.get("/estimates/:estimateId/design-uploads", protectedRoute, requireOperation("GET /estimates/:estimateId/design-uploads"), async (request, response, next) => {
     try {
       response.json({ data: await estimateDesigns.listEstimator(request.authenticatedUser!, request.params.estimateId as string) });

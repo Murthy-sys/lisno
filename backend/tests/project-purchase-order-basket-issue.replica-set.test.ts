@@ -1,4 +1,11 @@
 import * as designRequirements from "../src/services/design-requirements.service.js";
+import mongoose from "mongoose";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
+import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
+import { ensurePendingProjectFinanceBucket } from "../src/services/project-finance.service.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcurementBasketDetailDto } from "../src/domain/procurement-basket-projection.js";
 import type { ProjectPurchaseOrderPreparationDto } from "../src/domain/project-purchase-order-preparation.js";
@@ -90,7 +97,7 @@ function sourceSnapshot(): ApprovedProcurementSnapshot {
     mainBasketId: "basket-a", mainBasketName: "Painting", subBasketId: "sub-a", subBasketName: "Walls",
     mainLineId: "main-a", mainLineName: "Paint", specification: "Paint", unit: "sq-ft", quantity: 10,
     included: true as const, amountPaise: 10_000_000 };
-  return { estimateId: "estimate-a", estimateVersion: 1, estimateReviewRoundId: "round-a",
+  return { ...basket.estimateSource,
     designPlanVersion: 1, designPlanApprovedAt: at, designPlanApprovedById: "designer",
     subtotalRupees: 100_000, gstRupees: 0, totalRupees: 100_000,
     subtotalPaise: 10_000_000, gstPaise: 0, totalPaise: 10_000_000,
@@ -172,6 +179,7 @@ beforeEach(async () => {
   committed.mockClear(); committedReads.length = 0;
   rawToken = "";
   rawTokens.clear();
+  basket.estimateSource = { estimateId: "estimate-a", estimateVersion: 1, estimateReviewRoundId: "round-a" };
   basket.lines = [firstLine];
   basket.includedLineCount = 1;
   basket.classification = "special";
@@ -384,7 +392,7 @@ describe("approved basket award issuance", () => {
     expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
   });
 
-  it.each(["manual", "automatic"] as const)("blocks %s basket issue until collaborative final approval and payment", async trigger => {
+  it.each(["manual", "automatic"] as const)("blocks %s basket issue until collaborative final quotation and design approval", async trigger => {
     const ready = await approvedAward();
     await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 2 } });
     if (trigger === "manual") {
@@ -402,6 +410,43 @@ describe("approved basket award issuance", () => {
     }
     expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
     expect(await ProcurementBasketAwardModel.findById(ready.awardId).lean()).toMatchObject({ status: "ready_to_issue" });
+  });
+
+  it.each(["manual", "automatic"] as const)("activates an approved planning project on %s basket issue without a receipt", async trigger => {
+    basket.estimateSource = { estimateId: "estimate-a", estimateVersion: 3, estimateReviewRoundId: "round-a" };
+    currentSource = sourceSnapshot(); currentPreparation = preparation();
+    const ready = await approvedAward();
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { status: "planning", actualStartAt: null,
+      estimationWorkflowVersion: 2, estimateRequirementsVersion: 0 } });
+    const finalApproval = { reviewRoundId: "round-a", estimateVersion: 3, approvedAt: at.toISOString(), requirementsVersion: 0,
+      designReviewRoundId: "design-a", designPlanVersion: 1, designScopeRevision: 1 };
+    await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", leadId: "lead-a", version: 4,
+      status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1, estimation: {
+        ...newEstimationLifecycle(), phase: "post", status: "client_approved", editClosedAt: at.toISOString(), approvedDesignScopeRevision: 1,
+        preApproval: { reviewRoundId: "pre-a", estimateVersion: 1, approvedAt: at.toISOString() }, finalApproval } } as never);
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "round-a", projectId: "project-a", estimateId: "estimate-a",
+      estimateVersion: 3, phase: "post", status: "approved", decision: "approve", decidedAt: at, decidedById: "client-a",
+      estimateSnapshot: { lineItems: [] } } as never);
+    await DesignPlanReviewRoundModel.collection.insertOne({ _id: "design-a", projectId: "project-a", estimateId: "estimate-a",
+      designPlanVersion: 1, status: "approved", decision: "approve" } as never);
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket({ workflowVersion: 2, projectId: "project-a",
+      estimateId: "estimate-a", estimateVersion: 3, estimateReviewRoundId: "round-a", approvedSubtotalRupees: 100_000,
+      approvedGstRupees: 0, approvedContractTotalRupees: 100_000, createdById: "client-a", occurredAt: at }, session));
+    if (trigger === "manual") {
+      await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
+        { expectedVersion: ready.awardVersion, idempotencyKey: "issue-without-payment" });
+    } else {
+      const award = (await ProcurementBasketAwardModel.findById(ready.awardId).lean())!;
+      const approval = (await ProcurementBasketAwardApprovalModel.findOne({ awardId: ready.awardId,
+        proposalRevisionId: award.currentProposalRevisionId, actorId: buyer.id }).lean())!;
+      await ProcurementBasketAwardModel.updateOne({ _id: ready.awardId }, { $set: { autoIssueOnApproval: true, submittedById: buyer.id } });
+      await issue.issueAutomatically({ awardId: ready.awardId, proposalRevisionId: String(award.currentProposalRevisionId),
+        expectedVersion: ready.awardVersion, triggeringApprovalId: String(approval._id), triggeringApprovalActorId: buyer.id });
+    }
+    expect(await ProjectModel.findById("project-a").lean()).toMatchObject({ status: "active", actualStartAt: at });
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: "project-a" }).lean()).toMatchObject({ status: "open", openedById: buyer.id });
+    expect(await DesignWorkflowStateModel.findById("project-a").lean()).toBeNull();
+    expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
   });
 
   it("directly issues a nonrecommended ₹141.60 award over budget with Procurement alone", async () => {

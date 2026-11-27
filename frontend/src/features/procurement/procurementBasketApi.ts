@@ -570,7 +570,7 @@ export interface BasketPackageMonitor {
     tdsPaise: number | null;
     netPayablePaise: number | null;
     recordedCostPaise: number | null;
-    paidPaise: null;
+    paidPaise: number | null;
     gstRegistration: { registered: boolean | null; gstin: string | null };
     paymentSchedule: Array<{ id: string; name: string; basisPoints: number; amountPaise: number; reviewerSlots?: BasketMilestoneReviewerSlot[] }>;
   };

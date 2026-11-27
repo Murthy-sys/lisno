@@ -1,3 +1,5 @@
+import type { ExecutionChoiceView } from "../../../../shared/projects/executionChoice";
+
 type TaskStatus = "not_started" | "in_progress" | "in_review" | "blocked" | "completed";
 export type DesignWorkflowActionId =
   | "confirm_initial_payment" | "internal_kickoff_complete" | "sales_calendar_accept"
@@ -6,7 +8,7 @@ export type DesignWorkflowActionId =
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
   | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
-  | "furniture_dimensions_approve" | "furniture_dimensions_return" | "space_planning_complete";
+  | "furniture_dimensions_approve" | "furniture_dimensions_return" | "space_planning_complete" | "execution_path_select";
 
 interface FurnitureMeasurementItemBase {
   id: string;
@@ -142,7 +144,7 @@ export interface FurnitureReviewEvidence {
 
 export type InitialPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
 export interface InitialPaymentDetails {
-  workflowVersion?: 2;
+  workflowVersion?: 2 | 3;
   designStartedAt?: string | null;
   existingReceiptAt?: string | null;
   requiresAttestation?: boolean;
@@ -157,6 +159,7 @@ export interface DesignWorkflowView {
   projectId: string;
   projectName: string;
   serverNow: string;
+  executionChoice?: ExecutionChoiceView;
   /** Canonical project-linked Client Estimate approval; older responses may omit this field. */
   estimateApprovalStatus?: "approved" | "awaiting_approval" | "source_issue";
   /** Client receipt time preserves the server clock when cached data remounts. */

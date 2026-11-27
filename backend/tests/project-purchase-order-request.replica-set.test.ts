@@ -1,6 +1,6 @@
 import * as designRequirements from "../src/services/design-requirements.service.js";
 import { ApiError } from "../src/middleware/errors.js";
-import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
+import { collaborativePurchasePreparation, collaborativePurchaseFinal } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createKnowledgeRevisionDigest } from "../src/domain/ai-estimator-knowledge-completeness.js";
@@ -746,7 +746,7 @@ describe("collaborative project request issuance", () => {
     const ready = await prepare();
     const original = await ProjectPurchaseOrderRequestRevisionModel.findById(ready.submittedRevisionId).lean();
     await collaborativePurchaseFinal("request-project-a", now);
-    await collaborativePurchasePayment("request-project-a", now);
+    // Existing approved planning project has no initial-payment record.
     await expect(service.issue(buyer, "request-project-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "request-issue-stale-source" })).rejects.toMatchObject({ code: "WORK_ORDER_SOURCE_RECONCILIATION_REQUIRED" });
     const reopened = await service.reconcile(buyer, "request-project-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "request-reconcile-final", reason: "Review final scope and vendor quantities", acknowledgeScopeChanges: false });
     expect(reopened.status).toBe("changes_requested");
@@ -761,6 +761,7 @@ describe("collaborative project request issuance", () => {
     const results = await Promise.all([service.issue(buyer, "request-project-a", ready.id, issue), service.issue(buyer, "request-project-a", ready.id, issue)]);
     expect(results[0].approvedOrderIds).toEqual(results[1].approvedOrderIds);
     expect(results[0].approvedOrderIds).toHaveLength(2);
+    expect(await ProjectModel.findById("request-project-a").lean()).toMatchObject({ status: "active", actualStartAt: now });
     expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(2);
     expect(await VendorWorkAssignmentModel.countDocuments()).toBe(2);
     const orders = await ProjectPurchaseOrderModel.find().lean();

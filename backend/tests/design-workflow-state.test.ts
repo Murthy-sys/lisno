@@ -1923,6 +1923,62 @@ describe("collaborative design prerequisite and clock", () => {
     const estimate = seed.estimateSummaries!.find(row => row.projectId === project.id)!;
     estimate.estimation = { ...newEstimationLifecycle(), phase: "post", preApproval: { reviewRoundId: "pre-review", estimateVersion: 3, approvedAt: new Date(BASE).toISOString() } };
   }
+  function approvedExecution(seed: SeedData) {
+    collaborative(seed);
+    const project = seed.projects.find(row => row.id === "project-aurora-villa")!;
+    project.status = "planning"; project.actualStartAt = null; project.estimateRequirementsVersion = 0;
+    const estimate = seed.estimateSummaries!.find(row => row.projectId === project.id)!;
+    const approvedAt = new Date(BASE).toISOString();
+    Object.assign(estimate, { designPlanStatus: "approved", designPlanVersion: 2 });
+    Object.assign(estimate.estimation!, { status: "client_approved", editClosedAt: approvedAt, approvedDesignScopeRevision: 1,
+      finalApproval: { reviewRoundId: "final-review", estimateVersion: 9, approvedAt, requirementsVersion: 0,
+        designReviewRoundId: "final-design", designPlanVersion: 2, designScopeRevision: 1 } });
+    seed.estimateReviewRounds = [{ id: "final-review", projectId: project.id, estimateId: estimate.id, estimateVersion: 9,
+      phase: "post", status: "approved", decision: "approve", decidedAt: approvedAt, decidedById: project.clientId!,
+      decisionSource: "client_portal", lineItems: [] }];
+    seed.designPlanReviewSources = [{ projectId: project.id, estimateId: estimate.id, designPlanStatus: "approved",
+      designPlanVersion: 2, approvedAt, approvedById: project.clientId!, approvalSource: "client_portal", frozenAt: approvedAt,
+      openFeedback: 0, drawings: [], rounds: [{ id: "final-design", projectId: project.id, estimateId: estimate.id,
+        designPlanVersion: 2, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: project.clientId!,
+        decidedByRole: "client", decidedAt: approvedAt, submittedRevisionIds: [] }] }];
+  }
+  it.each(["missing", "older", "malformed"])("activates memory execution with %s optional receipt and preserves its history", async receipt => {
+    const f = setup(false, seed => {
+      approvedExecution(seed);
+      if (receipt !== "missing") seed.designWorkflowStates = [{ ...emptyDesignWorkflowState("project-aurora-villa"), version: 1,
+        initialPaymentAt: receipt === "older" ? new Date(BASE - DAY).toISOString() : "invalid-optional-date",
+        initialPaymentReviewRoundId: "older-approval" }];
+    });
+    const paymentBefore = await f.state();
+    const activationAt = new Date(BASE + DAY).toISOString();
+    await f.repository.runInTransaction(tx => tx.activateCollaborativeExecution(f.project.id, f.users.client!.id, activationAt));
+    expect(await f.repository.findProjectById(f.project.id)).toMatchObject({ status: "active", actualStartAt: activationAt });
+    await f.repository.runInTransaction(tx => tx.activateCollaborativeExecution(f.project.id, f.users.client!.id, new Date(BASE + 2 * DAY).toISOString()));
+    expect(await f.repository.findProjectById(f.project.id)).toMatchObject({ status: "active", actualStartAt: activationAt, updatedAt: activationAt });
+    expect(await f.state()).toEqual(paymentBefore);
+  });
+  it.each(["on_hold", "completed"] as const)("does not reopen a %s project during internal activation", async status => {
+    const f = setup(false, seed => {
+      approvedExecution(seed);
+      const project = seed.projects.find(row => row.id === "project-aurora-villa")!;
+      project.status = status; project.actualStartAt = new Date(BASE - DAY).toISOString();
+    });
+    await f.repository.runInTransaction(tx => tx.activateCollaborativeExecution(f.project.id, f.users.client!.id, new Date(BASE).toISOString()));
+    expect(await f.repository.findProjectById(f.project.id)).toMatchObject({ status, actualStartAt: new Date(BASE - DAY).toISOString() });
+  });
+  it.each(["foreign-quotation", "foreign-design", "requirements", "inactive-actor"])("rejects %s activation without changing project state", async issue => {
+    const f = setup(false, seed => {
+      approvedExecution(seed);
+      if (issue === "foreign-quotation") seed.estimateReviewRounds![0]!.projectId = "other-project";
+      if (issue === "foreign-design") seed.designPlanReviewSources![0]!.rounds[0]!.projectId = "other-project";
+      if (issue === "requirements") seed.projects.find(row => row.id === "project-aurora-villa")!.estimateRequirementsVersion = 1;
+      if (issue === "inactive-actor") seed.users.find(row => row.role === "client")!.active = false;
+    });
+    await expect(f.repository.runInTransaction(tx => tx.activateCollaborativeExecution(f.project.id, f.users.client!.id, new Date(BASE).toISOString())))
+      .rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(await f.repository.findProjectById(f.project.id)).toMatchObject({ status: "planning", actualStartAt: null });
+    expect(await f.state()).toBeNull();
+  });
   it("runs design before payment from an immutable pre-approval anchor", async () => {
     const f = setup(false, collaborative);
     f.advance(2);

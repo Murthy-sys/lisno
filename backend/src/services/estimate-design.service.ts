@@ -1,3 +1,5 @@
+import { isDesignLayoutType, type ClassifyDesignLayoutCommand, type DesignLayoutRequirements, type DesignLayoutType } from "../contracts/design-layout-requirements.js";
+import { assertDesignLayoutSubmission, classifyExistingDesignLayout, layoutClassificationAvailability, loadDesignLayoutState, projectDesignLayoutRequirements, requireReplacementLayout, uploadLayoutType, validateDesignLayoutUpload } from "./design-layout-requirements.service.js";
 import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { requireEstimateClientMembership } from "./estimate-collaboration-policy.service.js";
@@ -102,6 +104,9 @@ export interface EstimateDesignUploadDto {
   uploadedAt: string;
   extractionStatus: EstimateDesignExtractionStatus;
   purpose: EstimateDesignUploadPurpose;
+  layoutType: DesignLayoutType | null;
+  canClassifyLayoutType: boolean;
+  classificationBlockedReason: string | null;
   requestReplacement: null | {
     requestId: string;
     requestVersion: number;
@@ -126,6 +131,7 @@ export interface EstimateDesignUploadDto {
 }
 
 export interface EstimateDesignWorkspaceDto {
+  layoutRequirements: DesignLayoutRequirements;
   uploads: EstimateDesignUploadDto[];
   pages: Array<Record<string, unknown>>;
   drawings: Array<Record<string, unknown>>;
@@ -257,12 +263,13 @@ export interface EstimateDesignApprovalReadiness {
 }
 
 export interface EstimateDesignService {
-  upload(user: AuthenticatedUser, estimateId: string, file: ValidatedUpload): Promise<EstimateDesignUploadDto>;
+  upload(user: AuthenticatedUser, estimateId: string, file: ValidatedUpload, layoutType?: DesignLayoutType): Promise<EstimateDesignUploadDto>;
   uploadPlanRequestReplacement(
     user: AuthenticatedUser,
     requestId: string,
     input: UploadPlanRequestReplacementInput
   ): Promise<EstimateDesignUploadDto>;
+  classifyLayoutType(user: AuthenticatedUser, uploadId: string, command: ClassifyDesignLayoutCommand): Promise<EstimateDesignUploadDto>;
   listEstimator(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto>;
   sourceImage(user: AuthenticatedUser, pageId: string): Promise<NodeJS.ReadableStream>;
   revisionImage(user: AuthenticatedUser, revisionId: string): Promise<NodeJS.ReadableStream>;
@@ -362,12 +369,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
   };
 
   return {
-    async upload(user, estimateId, file) {
+    async upload(user, estimateId, file, layoutType) {
       const estimate = await requireOwnedEditableEstimate(user, estimateId);
       await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" });
       if (file.sizeBytes > input.maxUploadBytes) {
         throw new ApiError(413, "FILE_TOO_LARGE", "The uploaded file exceeds the configured size limit.");
       }
+      const layoutMetadata = await validateDesignLayoutUpload(estimate, user, layoutType, now());
       const lead = await LeadModel.findById(estimate.leadId).lean();
       if (!lead) throw estimateNotFound();
 
@@ -388,7 +396,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           file,
           storedFileReference: stored.reference,
           uploadedAt,
-          audit: input.audit
+          audit: input.audit,
+          layoutType
         });
       } catch (error) {
         try {
@@ -410,6 +419,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploadedAt: uploadedAt.toISOString(),
         extractionStatus: "queued",
         purpose: "ordinary",
+        layoutType: layoutMetadata.layoutType ?? null, canClassifyLayoutType: false, classificationBlockedReason: null,
         requestReplacement: null,
         failureCode: null,
         failureMessage: null,
@@ -436,6 +446,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       }).lean();
       if (!estimate) throw estimateNotFound();
       if (!estimateCanReplaceDrawingForActor(estimate, user)) drawingLocked();
+      await requireReplacementLayout(estimate, (request.targets ?? []).map((target: Record<string, any>) => String(target.drawingId)));
       const replay = await EstimateDesignUploadModel.findOne({
         purpose: "plan_request_replacement",
         "planRequestReplacement.requestId": requestId,
@@ -491,23 +502,31 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       return uploadDto(persisted.upload, false, user.role === "designer");
     },
 
+    async classifyLayoutType(user, uploadId, command) {
+      const saved = await classifyExistingDesignLayout({ user, uploadId, command, audit: input.audit, occurredAt: now(), transaction: withMongoTransaction, guardLifecycle: guardDesignLifecycle });
+      return uploadDto(saved, await canRetryUpload(saved));
+    },
+
     async listEstimator(user, estimateId) {
       const estimate = await requireEstimateWorkspaceReader(user, estimateId);
-      const uploads = await EstimateDesignUploadModel.find({ estimateId, deletedAt: null }).sort({ uploadedAt: -1, _id: -1 }).lean();
-      const uploadIds = uploads.map((upload) => upload._id);
-      const [pages, drawings] = await Promise.all([
-        EstimateDesignSourcePageModel.find({ uploadId: { $in: uploadIds } }).sort({ uploadId: 1, pageNumber: 1 }).lean(),
-        EstimateDesignDrawingModel.find({ estimateId, deletedAt: null }).sort({ _id: 1 }).lean()
-      ]);
-      const drawingIds = drawings.map((drawing) => drawing._id);
-      const revisions = await EstimateDesignRevisionModel.find({ drawingId: { $in: drawingIds } }).sort({ drawingId: 1, revisionNumber: 1 }).lean();
+      // Deleted sources remain part of retained replacement ancestry. Resolve that
+      // complete history once, then filter only the public/current collections.
+      const layoutState = await loadDesignLayoutState(estimate);
+      const uploads = layoutState.lineage.uploads.filter(upload => !upload.deletedAt).sort((left, right) =>
+        new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime() || String(right._id).localeCompare(String(left._id)));
+      const uploadIds = new Set(uploads.map(upload => String(upload._id)));
+      const pages = layoutState.lineage.pages.filter(page => uploadIds.has(String(page.uploadId))).sort((left, right) =>
+        String(left.uploadId).localeCompare(String(right.uploadId)) || Number(left.pageNumber) - Number(right.pageNumber));
+      const drawings = layoutState.lineage.drawings.filter(drawing => !drawing.deletedAt);
+      const drawingIds = new Set(drawings.map(drawing => String(drawing._id)));
+      const revisions = layoutState.lineage.revisions.filter(revision => drawingIds.has(String(revision.drawingId)));
       const revisionRows = revisions.map((revision) => ({ ...revision }));
       if (revisionRows.some((revision) => revision.reviewStatus === "changes_requested" && !revision.annotations)) {
         const requests = await EstimatePlanChangeRequestModel.find({ estimateId, status: "open" }).sort({ createdAt: 1, _id: 1 }).lean();
         const pageById = new Map(pages.map((page) => [String(page._id), page]));
         const drawingById = new Map(drawings.map((drawing) => [String(drawing._id), drawing]));
         const revisionById = new Map(revisionRows.map((revision) => [String(revision._id), revision]));
-        const lineage = { estimateId, uploads, pages, drawings, revisions };
+        const lineage = layoutState.lineage;
         for (const request of requests) {
           const page = pageById.get(String(request.sourcePageId));
           if (!page) continue;
@@ -534,9 +553,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         }
       }
       return {
+        layoutRequirements: layoutState.requirements,
         uploads: await Promise.all(
           uploads.map(async (upload) =>
-            ({ ...uploadDto(upload, await canRetryUpload(upload)), ...uploadDeleteAvailability(user, estimate, upload, pages, drawings, revisions) })
+            ({ ...uploadDto(upload, await canRetryUpload(upload)), layoutType: uploadLayoutType(upload, layoutState.lineage),
+              ...layoutClassificationAvailability(user, estimate, upload, layoutState.lineage, layoutState.context, layoutState.rounds),
+              ...uploadDeleteAvailability(user, estimate, upload, pages, drawings, revisions) })
           )
         ),
         pages: pages.map(sourcePageDto),
@@ -603,8 +625,22 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const uploads = await EstimateDesignUploadModel.find({
         _id: { $in: [...uploadIds] }, deletedAt: null
       }).sort({ uploadedAt: -1, _id: -1 }).lean();
+      const historicalLayoutType = (uploadId: string): DesignLayoutType | null => {
+        if (!publishedRound) return null;
+        const attachment = publishedRound.attachments.find((item: Record<string, any>) => String(item.uploadId) === uploadId);
+        if (isDesignLayoutType(attachment?.layoutType)) return attachment.layoutType;
+        // A visible replacement file is classified by the submitted root's immutable evidence.
+        const sourcePages = new Set([...pages.values()].filter(page => String(page.uploadId) === uploadId).map(page => String(page.id)));
+        const visibleIds = new Set(revisions.filter(revision => sourcePages.has(String(revision.sourcePageId))).map(revision => String(revision.id)));
+        const evidence = (publishedRound.designLayoutSnapshot?.layouts ?? []).filter((layout: Record<string, any>) =>
+          (layout.revisionIds ?? []).some((id: string) => visibleIds.has(id)));
+        const types = new Set(evidence.map((layout: Record<string, any>) => layout.layoutType));
+        const type = [...types][0];
+        return types.size === 1 && isDesignLayoutType(type) ? type : null;
+      };
       return {
-        uploads: uploads.map((upload) => uploadDto(upload)),
+        layoutRequirements: projectDesignLayoutRequirements(estimate, { estimateId, uploads: [], pages: [], drawings: [], revisions: [] }, { status: "not_applicable", choice: null, record: null, reason: null }),
+        uploads: uploads.map((upload) => ({ ...uploadDto(upload), layoutType: historicalLayoutType(String(upload._id)) })),
         pages: [...pages.values()],
         drawings: visibleDrawings,
         revisions,
@@ -854,6 +890,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
       if (!estimateCanReplaceDrawingForActor(estimate, user)) drawingLocked();
       await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" });
+      await requireReplacementLayout(estimate, [drawingId]);
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
         .sort({ revisionNumber: -1 })
         .lean();
@@ -935,6 +972,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             session
           );
           await assertEstimateDesignWorkflowAllowed(currentEstimate, { phase: "upload" }, session);
+          await requireReplacementLayout(currentEstimate, [drawingId], session);
           const current = await EstimateDesignRevisionModel.findOne({ drawingId })
             .sort({ revisionNumber: -1 })
             .session(session)
@@ -2502,6 +2540,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             readyUploadStates.push({ upload, job });
           }
         }
+        await assertDesignLayoutSubmission(estimate, session, preparedDocuments);
         await guardDesignLifecycle(estimate, session);
         const revisionIds = revisionsForSubmission.map((revision) => revision._id);
         const updated = await EstimateDesignRevisionModel.updateMany(
@@ -2938,6 +2977,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     revision: Record<string, any>,
     file: ValidatedUpload
   ) {
+    const layoutMetadata = await requireReplacementLayout(estimate, [String(drawing._id)]);
     let stored: { reference: string };
     try {
       stored = await input.storage.save({ data: file.data, extension: file.extension });
@@ -2984,6 +3024,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploadedAt,
         extractionStatus: "queued",
         purpose: "drawing_replacement",
+        ...layoutMetadata,
         replacementDrawingId: drawing._id,
         replacesRevisionId: revision._id,
         failureCode: null,
@@ -3578,6 +3619,7 @@ async function persistUploadAndJob(input: {
   uploadedAt: Date;
   audit: AuditService;
   replacement?: { drawingId: string; revisionId: string; version: number };
+  layoutType?: DesignLayoutType;
 }) {
   const session = await mongoose.startSession();
   let completed = false;
@@ -3592,6 +3634,7 @@ async function persistUploadAndJob(input: {
         drawingLocked();
       }
       await assertEstimateDesignWorkflowAllowed(currentEstimate, { phase: "upload" }, session);
+      const layoutMetadata = await validateDesignLayoutUpload(currentEstimate, input.user, input.layoutType, input.uploadedAt, session);
       await guardDesignLifecycle(currentEstimate, session);
       await EstimateDesignUploadModel.create(
         [{
@@ -3606,6 +3649,7 @@ async function persistUploadAndJob(input: {
           uploadedAt: input.uploadedAt,
           extractionStatus: "queued",
           purpose: input.replacement ? "drawing_replacement" : "ordinary",
+          ...layoutMetadata,
           replacementDrawingId: input.replacement?.drawingId ?? null,
           replacesRevisionId: input.replacement?.revisionId ?? null,
           replacementVersion: input.replacement?.version ?? null,
@@ -3645,6 +3689,7 @@ async function persistUploadAndJob(input: {
           uploadId: input.uploadId,
           sizeBytes: input.file.sizeBytes,
           mimeType: input.file.mimeType,
+          ...layoutMetadata,
           ...(input.replacement
             ? {
                 drawingId: input.replacement.drawingId,
@@ -3708,6 +3753,7 @@ async function persistReplacementUploadAndJob(input: {
         drawingLocked();
       }
       await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" }, session);
+      const layoutMetadata = await requireReplacementLayout(estimate, [String(drawing._id)], session);
       await guardDesignLifecycle(estimate, session);
       const reserved = await EstimateDesignRevisionModel.updateOne(
         {
@@ -3733,6 +3779,7 @@ async function persistReplacementUploadAndJob(input: {
         uploadedAt: input.uploadedAt,
         extractionStatus: "queued",
         purpose: "drawing_replacement",
+        ...layoutMetadata,
         replacementDrawingId: drawing._id,
         replacesRevisionId: latest._id,
         replacementVersion: latest.revisionNumber,
@@ -3831,6 +3878,7 @@ async function persistPlanRequestReplacementUploadAndJob(input: {
         throw new ApiError(409, "PLAN_REPLACEMENT_REQUEST_STALE", "This plan change request has no open drawing targets.");
       }
       await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" }, session);
+      const layoutMetadata = await requireReplacementLayout(estimate, openTargets.map((target: Record<string, any>) => String(target.drawingId)), session);
       await guardDesignLifecycle(estimate, session);
 
       const snapshots: PlanRequestReplacementTargetSnapshot[] = [];
@@ -3891,6 +3939,7 @@ async function persistPlanRequestReplacementUploadAndJob(input: {
         uploadedAt: input.uploadedAt,
         extractionStatus: "queued",
         purpose: "plan_request_replacement",
+        ...layoutMetadata,
         replacementDrawingId: null,
         replacesRevisionId: null,
         replacementVersion: null,
@@ -4037,6 +4086,8 @@ function uploadDto(
     uploadedAt: new Date(String(upload.uploadedAt)).toISOString(),
     extractionStatus: upload.extractionStatus as EstimateDesignExtractionStatus,
     purpose,
+    layoutType: isDesignLayoutType(upload.layoutType) ? upload.layoutType : null,
+    canClassifyLayoutType: false, classificationBlockedReason: null,
     requestReplacement,
     failureCode: upload.failureCode === null ? null : String(upload.failureCode),
     failureMessage: upload.failureMessage === null ? null : String(upload.failureMessage),

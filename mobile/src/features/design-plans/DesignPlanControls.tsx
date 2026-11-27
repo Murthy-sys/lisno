@@ -31,7 +31,7 @@ export function isDesignUncertain(cause: unknown) { return !((cause instanceof A
 export function useDesignRefresh(session: AuthenticatedSession) {
   const context = useConfiguredRuntime(); const client = useQueryClient(); const invalidate = useInvalidateEvent();
   const scope = { environmentId: context.environment.environment.id, userId: session.user.id };
-  return async () => { await Promise.all([client.invalidateQueries({ queryKey: designPlanKeys.all(scope) }), client.invalidateQueries({ queryKey: privateQueryKey(scope, "workflow") }), client.invalidateQueries({ queryKey: privateQueryKey(scope, "estimates") }), invalidate("design-workflow-changed")]); };
+  return async () => { await Promise.all([client.invalidateQueries({ queryKey: designPlanKeys.all(scope) }), client.invalidateQueries({ queryKey: privateQueryKey(scope, "workflow") }), client.invalidateQueries({ queryKey: privateQueryKey(scope, "estimates") }), client.invalidateQueries({ queryKey: privateQueryKey(scope, "plan-review") }), invalidate("design-workflow-changed")]); };
 }
 /** Retains the original operation closure for an explicitly requested safe retry. */
 export function useDesignCommand(owner: ReturnType<typeof useDesignOwner>, onRefresh: () => Promise<unknown>, onDenied?: () => void) {

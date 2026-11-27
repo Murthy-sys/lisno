@@ -114,6 +114,21 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "procurement.lifecycle.read",
+  "procurement.lifecycle.manage",
+  "procurement.lifecycle.review",
+  "procurement.lifecycle.inspect",
+  "procurement.lifecycle.handover",
+  "procurement.lifecycle.readiness",
+  "procurement.payments.read",
+  "procurement.payments.propose",
+  "procurement.payments.record",
+  "finance.procurement_payments.manage",
+  "procurement.lifecycle.oversight",
+  "procurement.lifecycle.admin_manage",
+  "procurement.lifecycle.evidence.read",
+  "procurement.lifecycle.evidence.manage",
+  "procurement.lifecycle.notifications.read",
   "projects.initiation_defaults.read",
   "projects.initiation_defaults.manage",
   "pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage",
@@ -334,7 +349,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-11-25.designer-handoff.v1" as const;
+  "2026-11-27.procurement-lifecycle.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

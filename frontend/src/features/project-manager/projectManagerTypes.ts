@@ -19,6 +19,7 @@ export interface PMItem {
   description?: string | null; dueAt?: string | null; amountPaise?: number | null; progress?: number | null;
   facts: PMFact[]; actions: PMAction[]; history?: PMHistory[]; checks?: PMCheck[]; children?: PMItem[];
   evidenceIds?: string[]; href?: string; sourceAvailable?: boolean;
+  procurementOrigin?: { findingId: string; kind: "inspection" | "handover" | "urgent"; evidence: Array<{ id: string; name: string; mimeType: string; kind: "image" | "video" | "document" }> };
 }
 export interface PMPanel {
   tab: PMTab; availability: PMAvailability; calculatedAt: string; items: PMItem[]; total: number;

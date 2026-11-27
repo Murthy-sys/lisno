@@ -5,6 +5,7 @@ import type { PlanDocument } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { downloadPlanDocument } from "./estimateDesignApi";
+import { designLayoutLabel } from "./DesignLayoutRequirements";
 
 export function PlanDocumentPreview({ document, published = false }: { document: PlanDocument; published?: boolean }) {
   return <PlanDocumentActions key={`${document.documentId}:${document.manifestHash}:${document.pdfUrl}`} document={document} published={published} />;
@@ -52,12 +53,14 @@ function PlanDocumentActions({ document, published }: { document: PlanDocument; 
   }
   if (!document.pdfUrl || document.status !== "ready") return null;
   return <>
+    {published ? <p className="design-layout-label">{designLayoutLabel(document.layoutType)}</p> : null}
     <div className="plan-documents__actions">
       <Button variant="secondary" size="compact" disabled={busy} onClick={() => void load(false)}>{published ? "Preview submitted PDF" : "Preview updated PDF"}</Button>
       <Button variant="secondary" size="compact" disabled={busy} onClick={() => void load(true)}>{published ? "Download submitted PDF" : "Download updated PDF"}</Button>
     </div>
     {error && !open ? <p role="alert">{error}</p> : null}
     {open ? <ContextPanel title={document.originalFilename} eyebrow={published ? "Submitted full plan" : "Updated full plan"} width="wide" onClose={close}>
+      <p>{designLayoutLabel(document.layoutType)}</p>
       {busy ? <p role="status">Loading full PDF…</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {url ? <iframe className="file-preview__modal-document" src={url} title={`Full plan: ${document.originalFilename}`} /> : null}

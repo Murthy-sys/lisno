@@ -60,7 +60,7 @@ export function SuperAdminPurchaseOrdersPage() {
       reviewOpenerRef.current = null;
       setPendingKey(null); setSelectedId(null); setReason(""); setOverrideReason(""); setError("");
       await refreshProcurementLifecycle(queryClient);
-      setNotice(order.status === "ready_to_issue" ? `${order.orderNumber} internally approved. Procurement must issue after final approval and initial payment.` : `${order.orderNumber} ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
+      setNotice(order.status === "ready_to_issue" ? `${order.orderNumber} internally approved. Procurement can issue when current Client and design approvals and release checks are complete.` : `${order.orderNumber} ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.pending }),
         queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.project(order.projectId) }),

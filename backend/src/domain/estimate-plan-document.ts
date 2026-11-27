@@ -1,3 +1,4 @@
+import { isDesignLayoutType } from "../contracts/design-layout-requirements.js";
 import { createHash } from "node:crypto";
 import type { PlanDocumentManifest, PlanDocumentManifestSet, PlanDocumentPage, PlanDocumentPatch, PlanDocumentRect } from "../contracts/estimate-plan-document.js";
 import { ApiError } from "../middleware/errors.js";
@@ -155,6 +156,7 @@ export function buildEstimatePlanDocumentManifest(input: PlanDocumentLineage, re
   uploads.sort((a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime() || String(a._id).localeCompare(String(b._id)));
   const documents: PlanDocumentManifest[] = uploads.map((upload) => ({
     schemaVersion: 1, rendererVersion: 1, estimateId: input.estimateId, sourceUploadId: String(upload._id),
+    ...(isDesignLayoutType(upload.layoutType) ? { layoutType: upload.layoutType, ...(upload.layoutClassification ? { layoutClassification: { ...upload.layoutClassification } } : {}) } : {}),
     originalFilename: String(upload.originalFilename), originalMimeType: String(upload.mimeType),
     originalFileReference: String(upload.storedFileReference), originalSizeBytes: Number(upload.sizeBytes),
     pages: originalPages.filter((page) => String(page.uploadId) === String(upload._id))

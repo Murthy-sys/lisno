@@ -40,6 +40,7 @@ const actionNames: Record<DesignWorkflowHistoricalActionId, string> = {
   key_collection_schedule: "Key collection time confirmed",
   keys_handed_over: "Keys handed over",
   keys_received: "Keys received",
+  execution_path_select: "Execution choice saved permanently",
   measurement_assign: "Measurement taker assigned",
   measurement_access_block: "Site access unavailable",
   measurement_access_restore: "Site access restored",
@@ -69,7 +70,7 @@ export function WorkflowStageActions(props: WorkflowStageActionsProps) {
 
 function LegacyWorkflowStageActions({ workflow, stage, expandKickoff = false, presentation = "full", refreshError = false, refreshing = false }: WorkflowStageActionsProps) {
   const id = useId();
-  const availableActions = (stage.operational?.availableActions ?? []).filter((action) => !isRetiredDesignWorkflowAction(action.id) && action.id !== "furniture_proceed" && action.id !== "space_planning_complete");
+  const availableActions = (stage.operational?.availableActions ?? []).filter((action) => !isRetiredDesignWorkflowAction(action.id) && action.id !== "furniture_proceed" && action.id !== "space_planning_complete" && action.id !== "execution_path_select");
   const automaticActionId = presentation === "client" && stage.type === "client_kickoff" ? "client_kickoff_complete" : expandKickoff ? "internal_kickoff_complete" : undefined;
   const [selected, setSelected] = useState<DesignWorkflowAction | null>(() => automaticActionId
     ? availableActions.find((action) => action.id === automaticActionId && !action.disabledReason) ?? null : null);

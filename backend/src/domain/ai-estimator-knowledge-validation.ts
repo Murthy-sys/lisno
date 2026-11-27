@@ -396,7 +396,7 @@ export function validateQualityParameter(
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
-  overview: new Set(["description", "uomId", "priorityId", "closurePriority", "applicableRoomCategories", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"]),
+  overview: new Set(["description", "uomId", "priorityId", "closurePriority", "applicableRoomCategories", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "selectionNeeded", "applicableTiers", "dimensionsMandatory"]),
   pricing: new Set(["tierConfigurations", "specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
@@ -938,6 +938,7 @@ function validateOverviewPayload(
     validateClosedEnum(record.closurePriority, ["P1", "P2", "P3"], "payload.closurePriority", issues);
   }
   if ("showByDefault" in record) validateBoolean(record.showByDefault, "payload.showByDefault", issues);
+  if ("selectionNeeded" in record) validateBoolean(record.selectionNeeded, "payload.selectionNeeded", issues);
   if ("clientVisible" in record) {
     validateBoolean(record.clientVisible, "payload.clientVisible", issues);
   }

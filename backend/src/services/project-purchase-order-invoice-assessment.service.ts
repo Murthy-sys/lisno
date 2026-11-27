@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ApiError } from "../middleware/errors.js";
 import { ProcurementBasketInvoiceAssessmentModel, ProcurementBasketInvoiceAssessmentRevisionModel } from "../models/ProcurementBasketInvoiceAssessment.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
+import { ProjectModel } from "../models/Project.js";
 import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -88,6 +89,11 @@ export function createProjectPurchaseOrderInvoiceAssessmentService(input: { audi
         Object.fromEntries(parsed.error.issues.map(issue => [issue.path.join("."), issue.message])));
       const fields = parsed.data;
       return mongoose.connection.transaction(async session => {
+        // Serialize invoice changes with payment allocations and final closeout.
+        const fencedOrder = await ProjectPurchaseOrderModel.findOneAndUpdate({ _id: orderId, status: "approved", cancelledAt: null },
+          { $inc: { accessAuthorityEpoch: 1 } }, { session, returnDocument: "after", timestamps: false }).lean();
+        if (fencedOrder) await ProjectModel.updateOne({ _id: fencedOrder.projectId },
+          { $inc: { siteCompletionFenceEpoch: 1 } }, { session, timestamps: false });
         if (actor.role !== "finance_head" || !await UserModel.exists({ _id: actor.id, role: "finance_head", active: true }).session(session))
           throw new ApiError(403, "FORBIDDEN", "Only an active Finance Manager can review a vendor invoice.");
         const order = await ProjectPurchaseOrderModel.findOne({ _id: orderId, status: "approved", tenderAwardId: { $type: "string" },

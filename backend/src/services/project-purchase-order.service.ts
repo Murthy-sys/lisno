@@ -36,6 +36,7 @@ import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tend
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
 
 import { assertProjectWorkOrderIssueEligible, projectWorkOrderIssueReadiness } from "./project-work-order-eligibility.service.js";
+import { activateCollaborativeProjectWorkflow } from "./project-workflow.service.js";
 
 type Row = Record<string, any>;
 type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
@@ -162,6 +163,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
     if (commitments > BigInt(budgetPaise) && !budgetOverrideReason) throw new ApiError(400, "PURCHASE_ORDER_BUDGET_OVERRIDE_REQUIRED", "This approval exceeds the approved estimate. Enter a Super Admin override reason.", { budgetOverrideReason: "Required above the approved estimate." });
     await assertPurchaseOrderAllocations({ projectId, lines: revision.lines as ApprovedPurchaseOrderLine[], excludeOrderIds: [orderId] }, session);
     if (!collaborative || issue) {
+      await activateCollaborativeProjectWorkflow(projectId, actor.id, now(), session);
       await cutOverProjectAuthority(projectId, actor.id, now(), input.audit, session);
       await input.onApproved({ actorId: actor.id, approvedRevisionId: String(revision._id), occurredAt: now(), orderId, projectId, vendorId: order.vendorId, revision: revision.revision, lines: revision.lines as ApprovedPurchaseOrderLine[] }, session);
       return { collaborative, totals: { approvedRevisionId: revision._id, approvedRevision: revision.revision, approvedNetPaise: revision.netPaise, approvedGstPaise: revision.gstPaise, approvedTotalPaise: revision.totalPaise, approvedAt: now() } };

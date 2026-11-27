@@ -26,6 +26,7 @@ vi.mock("../finance/FinanceProjectWorkflowControl", () => ({ FinanceProjectWorkf
 vi.mock("../finance/FinanceWorkOrderAssessments", () => ({ FinanceWorkOrderAssessments: () => null }));
 vi.mock("../workflow/ProjectWorkflowPanel", () => ({ ProjectWorkflowPanel: () => null }));
 vi.mock("./AssignedProjectOverview", () => ({ AssignedProjectOverview: () => null }));
+vi.mock("../procurement/lifecycle/LifecycleWorkspace", () => ({ LifecycleWorkspace: ({ children }: { children: ReactElement }) => <>{children}</> }));
 vi.mock("../procurement/ProcurementBasketWorkspace", () => ({ ProcurementBasketWorkspace: () => null }));
 vi.mock("../procurement/ProcurementEstimateSource", () => ({ ProcurementEstimateSource: () => null }));
 vi.mock("../execution/VendorAccessPanel", () => ({ VendorAccessPanel: () => null }));

@@ -69,7 +69,7 @@ describe("ProjectClientActions", () => {
     const user = userEvent.setup(); setup("project-aurora", true);
     await openPending(user);
     expect(screen.getByRole("region", { name: "Design reviews" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Review design in Client portal" })).toHaveAttribute("href", "/client?estimate=estimate-aurora");
+    expect(screen.getByRole("link", { name: "Review design in Client portal" })).toHaveAttribute("href", "/client/projects/project-aurora#design-review");
     expect(screen.queryByText("History")).not.toBeInTheDocument();
     expect(screen.queryByText("No design review history yet.")).not.toBeInTheDocument();
   });
@@ -112,7 +112,7 @@ describe("ProjectClientActions", () => {
     await openPending(user);
     expect(screen.queryByRole("button", { name: "Approve with proof" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Client decision proof")).not.toBeInTheDocument();
-    if (role === "client") expect(screen.getByRole("link", { name: "Review design in Client portal" })).toHaveAttribute("href", "/client?estimate=estimate-aurora");
+    if (role === "client") expect(screen.getByRole("link", { name: "Review design in Client portal" })).toHaveAttribute("href", "/client/projects/project-aurora#design-review");
     else expect(screen.queryByRole("link", { name: "Review design in Client portal" })).not.toBeInTheDocument();
   });
 

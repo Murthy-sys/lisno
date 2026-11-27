@@ -6,6 +6,7 @@ import type { PlanDocumentWorkspace } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { getPlanDocuments, planDocumentKeys, preparePlanDocuments } from "./estimateDesignApi";
 import { PlanDocumentPreview } from "./PlanDocumentPreview";
+import { designLayoutLabel } from "./DesignLayoutRequirements";
 
 export function usePlanDocuments(estimateId: string, enabled: boolean, prepareEnabled: boolean, revisionKey: string) {
   const client = useQueryClient();
@@ -69,6 +70,7 @@ export function PlanDocuments({ state }: { state: ReturnType<typeof usePlanDocum
     {failure ? <p role="alert">{failure instanceof ApiError ? failure.message : "The updated PDFs could not be loaded."}</p> : null}
     {!query.isError ? query.data?.documents.map((doc) => <div className="plan-documents__document" key={`${doc.sourceUploadId}:${doc.manifestHash}`}>
       <strong>{doc.originalFilename}</strong>
+      <span className="design-layout-label">{designLayoutLabel(doc.layoutType)}</span>
       {doc.status === "ready" ? <><span>{doc.pageCount} page{doc.pageCount === 1 ? "" : "s"} · Updated PDF ready</span><PlanDocumentPreview document={doc} /></> :
         <p role={doc.status === "failed" || doc.status === "blocked" ? "alert" : "status"}>{doc.failureMessage ?? (doc.status === "preparing" ? "Preparing updated full PDF…" : "The updated PDF will be prepared when drawing extraction is complete.")}</p>}
     </div>) : null}

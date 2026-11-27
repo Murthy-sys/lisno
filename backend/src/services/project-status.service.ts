@@ -254,10 +254,10 @@ export function createProjectStatusService(options: {
             ? selected.quotationApproval?.currentQuotationApproval : final;
           const designReviewRoundId = selected.estimate?.estimation?.workflowVersion === 3
             ? selected.estimate.estimation.designApproval?.reviewRoundId : final?.designReviewRoundId;
-          const executionReleased = !isCollaborativeEstimate(selected.estimate ?? {}) || Boolean(effectiveApproval && input.workflow?.initialPaymentAt &&
-            input.workflow.initialPaymentEstimateId === selected.estimate?.id && input.workflow.initialPaymentEstimateVersion === effectiveApproval.estimateVersion &&
-            input.workflow.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
-            input.workflow.initialPaymentDesignReviewRoundId === designReviewRoundId);
+          const executionReleased = !isCollaborativeEstimate(selected.estimate ?? {}) || Boolean(effectiveApproval &&
+            designReviewRoundId && input.design?.reviewRoundId === designReviewRoundId &&
+            (selected.estimate?.estimation?.workflowVersion !== 3 ||
+              selected.estimate.estimation.designApproval?.estimateReviewRoundId === effectiveApproval.reviewRoundId));
           if (executionReleased && input.commercial.state === "approved" && sources.project.completionAuthority === "vendor_client" &&
               selected.estimate?.designPlanStatus === "approved" && input.design?.readyForCompletion) {
             try {

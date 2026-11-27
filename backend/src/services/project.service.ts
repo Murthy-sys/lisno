@@ -1,4 +1,6 @@
 import { resolveProjectManagerDefault } from "./project-initiation-default-resolution.js";
+import { projectExecutionChoice } from "../domain/project-execution-choice.js";
+import type { ExecutionChoiceView } from "../contracts/project-execution-choice.js";
 import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js";
 import { RepositoryConflictError } from "../repositories/types.js";
@@ -123,6 +125,7 @@ export interface DesignWorkflowStageDto {
 }
 
 export interface DesignWorkflowDto {
+  executionChoice: ExecutionChoiceView;
   designerHandoff: DesignerHandoffView;
   notices?: Array<{ id: string; stageId: string; message: string }>;
   estimateApprovalStatus: "approved" | "awaiting_approval" | "source_issue";
@@ -263,7 +266,9 @@ export function createProjectService(
         };
       };
       const savedStages = hierarchy.designWorkflowStages;
-      let operationalState = savedStages ? await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId) : null;
+      const savedOperationalState = await repository.findDesignWorkflowState(projectId);
+      const executionChoice = projectExecutionChoice(project, savedOperationalState, actor, now);
+      let operationalState = savedStages ? savedOperationalState ?? emptyDesignWorkflowState(projectId) : null;
       let workflowSourceIssue = false;
       if (operationalState) {
         try { operationalState = await hydrateDesignWorkflowState(repository, projectId, operationalState); }
@@ -338,6 +343,7 @@ export function createProjectService(
         projectId: hierarchy.id,
         projectName: hierarchy.name,
         serverNow: now.toISOString(),
+        executionChoice,
         designerHandoff,
         estimateApprovalStatus,
         ...(savedStages === undefined ? {} : {

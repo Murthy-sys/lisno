@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClassifyDesignLayoutCommand, DesignLayoutType } from "../../../../shared/projects/designLayoutRequirements";
 import { ApiProtocolError } from "../../core/http/apiClient";
 import { privateQueryKey } from "../../core/query/queryClient";
 import type { RequestScope } from "../../contracts/http";
@@ -47,7 +48,16 @@ export async function retryDesignUpload(runtime: MobileRuntime, estimateId: stri
 export const submissionSchema = z.object({ submittedCount: z.number().int().nonnegative(), reviewRoundId: z.string().min(1).nullable().optional(), designPlanVersion: z.number().int().nonnegative().nullable().optional(), deliveryStatus: z.enum(["queued", "sending", "sent", "failed", "disabled"]).optional() });
 export async function submitDesignDrawings(runtime: MobileRuntime, estimateId: string) { return parsed(submissionSchema, await runtime.api.authenticated.post(`${estimateDesignPath(estimateId)}/design-drawings/submit`)); }
 export function designUploadRequest(path: string, asset: SelectedAsset, parameters?: Readonly<Record<string, string>>, onProgress?: (fraction: number | null) => void) { return { path, fileUri: asset.uri, fileName: asset.name, mimeType: asset.mimeType, maxBytes: designFilePolicy.maxBytes, parameters, onProgress: (event: { fraction: number | null }) => onProgress?.(event.fraction) }; }
-export async function uploadDesign(runtime: MobileRuntime, estimateId: string, asset: SelectedAsset, onProgress?: (fraction: number | null) => void, signal?: AbortSignal) { return parseUpload(await runtime.transfers.upload<unknown>({ ...designUploadRequest(`${estimateDesignPath(estimateId)}/design-uploads`, asset, undefined, onProgress), signal }).result, estimateId); }
+export async function uploadDesign(runtime: MobileRuntime, estimateId: string, asset: SelectedAsset, onProgress?: (fraction: number | null) => void, signal?: AbortSignal, layoutType?: DesignLayoutType) {
+  const result = parseUpload(await runtime.transfers.upload<unknown>({ ...designUploadRequest(`${estimateDesignPath(estimateId)}/design-uploads`, asset, layoutType ? { layoutType } : undefined, onProgress), signal }).result, estimateId);
+  if (layoutType && result.layoutType !== layoutType) throw new ApiProtocolError();
+  return result;
+}
+export async function classifyDesignLayout(runtime: MobileRuntime, estimateId: string, uploadId: string, input: ClassifyDesignLayoutCommand) {
+  const result = parseUpload(await runtime.api.authenticated.patch(`/estimate-design-uploads/${encodeURIComponent(uploadId)}/layout-type`, input), estimateId);
+  if (result.id !== uploadId || result.layoutType !== input.layoutType || result.canClassifyLayoutType !== false) throw new ApiProtocolError();
+  return result;
+}
 export async function replaceDesignDrawing(runtime: MobileRuntime, estimateId: string, drawingId: string, version: number, asset: SelectedAsset, onProgress?: (fraction: number | null) => void, signal?: AbortSignal) {
   const result = parsed(replacementSchema, await runtime.transfers.upload<unknown>({ ...designUploadRequest(`${drawingPath(drawingId)}/replacement`, asset, { version: String(version) }, onProgress), signal }).result);
   if ("queued" in result ? result.upload.estimateId !== estimateId : result.estimateId !== estimateId || result.id !== drawingId || result.revision.drawingId !== drawingId || result.revision.revisionNumber <= version) throw new ApiProtocolError(); return result;

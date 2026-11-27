@@ -1,4 +1,5 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "procurement_lifecycle_action_recorded",
   "workflow_timelines_updated",
   "project_initiation_defaults_updated",
   "project_number_assigned",
@@ -67,6 +68,7 @@ export const EXISTING_AUDIT_ACTIONS = [
   "estimate_design_replacement_created",
   "estimate_design_replacement_queued",
   "estimate_design_upload_deleted",
+  "estimate_design_layout_classified",
   "estimate_design_upload_retried",
   "estimate_design_uploaded",
   "estimate_design_verified",

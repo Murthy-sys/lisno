@@ -250,9 +250,9 @@ function WorkflowSnapshot({
           status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting final approval"}
           detail={project.estimate?.finalEstimateApproved
             ? project.estimate.approvedBaseline
-              ? `${money.format(project.estimate.approvedBaseline.total)} final approved commercial value. Super Admin confirms the initial payment before work-order issuance.`
-              : "Final approved commercial baseline unavailable. Super Admin confirms the initial payment before work-order issuance."
-            : "After design completion, the Client approves the final estimate. Super Admin then confirms the initial payment."} /> : null}
+              ? `${money.format(project.estimate.approvedBaseline.total)} final approved commercial value. Work-order issuance follows design approval and procurement release checks.`
+              : "Final approved commercial baseline unavailable. Review the approved source before work-order issuance."
+            : "After design completion, the Client approves the final estimate. Initial payment confirmation is optional for work-order release."} /> : null}
         <WorkflowStage
           title={quotationWorkflow ? `${hasQuotationRevision ? "7" : "6"}. Execution queues` : collaborative ? "7. Execution queues" : "6. Execution queues"}
           tone={executionComplete && executionEnabled ? "success" : executionEnabled ? "warning" : "neutral"}
@@ -276,10 +276,10 @@ function WorkflowSnapshot({
                 ? "Execution remains locked until the Client approves the pre-design quotation."
                 : !currentQuotationApproved
                 ? "Execution remains locked until the current quotation approval is verified."
-                : "Procurement follows approval of the uploaded design. Work-order issuance also requires Super Admin payment confirmation and procurement checks."
-              : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
+                : "Procurement follows approval of the uploaded design. Work-order issuance also requires procurement release checks. Initial payment confirmation is optional for release."
+              : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final Client approval, design approval and procurement release checks. Initial payment confirmation is optional for release." : "Execution queues open after design approval."}
         >
-          {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start only after Super Admin confirms the initial payment.</p> : null}
+          {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start when execution is activated after current Client and design approvals. Recording a payment does not restart them.</p> : null}
         </WorkflowStage>
       </div>
 

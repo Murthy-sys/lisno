@@ -1,0 +1,49 @@
+.design-layout-requirements {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding-block: var(--space-4);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.design-layout-requirements > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.design-layout-requirements h3,
+.design-layout-requirements p { margin: 0; }
+
+.design-layout-requirements ul {
+  margin: 0;
+  padding-inline-start: 1.2rem;
+}
+
+.design-layout-requirements__uploads { display: grid; gap: var(--space-4); }
+
+.design-layout-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 8rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-border);
+  min-inline-size: 0;
+}
+
+.design-layout-upload label { font-weight: 600; }
+.design-layout-upload input { inline-size: 100%; min-inline-size: 0; font: inherit; }
+.design-layout-upload p,
+.design-layout-upload [role="progressbar"] { grid-column: 1 / -1; }
+.design-layout-upload__file { display: flex; flex-wrap: wrap; gap: var(--space-2); overflow-wrap: anywhere; }
+.design-layout-upload__file small { color: var(--color-text-muted); }
+.design-layout-upload input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.design-layout-label { font-size: var(--text-sm); }
+
+@media (max-width: 640px) {
+  .design-layout-upload { grid-template-columns: minmax(0, 1fr); }
+  .design-layout-upload button { inline-size: 100%; }
+}

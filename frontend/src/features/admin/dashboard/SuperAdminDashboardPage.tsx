@@ -1,3 +1,4 @@
+import { ProcurementAttention } from "../../notifications/ProcurementNotificationInbox";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -272,6 +273,7 @@ export function SuperAdminDashboardPage() {
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5" /></svg>
         Export Report
       </Button>} />
+      {tab === "overview" ? <ProcurementAttention /> : null}
       <div className="dashboard-toolbar">
         <div className="dashboard-freshness"><span>Super Admin · Updated {formatDashboardTimestamp(data.observedAt)} UTC</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>
         <div className="dashboard-toolbar__controls">

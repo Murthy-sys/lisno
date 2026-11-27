@@ -7,15 +7,15 @@ import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { pickDocument, TransferHttpError } from "../../platform/files";
 import { isDesignUncertain } from "./DesignPlanControls";
 import { PreparedPlanDocuments } from "./PreparedPlanDocuments";
-import { designPlanEligibility } from "./DesignPlanTasksWorkspace";
+import { DesignPlanTasksWorkspace, designPlanEligibility, designPlanWorkflowSchema } from "./DesignPlanTasksWorkspace";
 import { workflow } from "./__tests__/fixtures";
 import { EstimateDesignPreparation } from "./EstimateDesignPreparation";
 import { DesignFileUpload } from "./DesignFileUpload";
 import { DesignPlanAssignment } from "./DesignPlanAssignment";
 import { PlanChangeRequests } from "./PlanChangeRequests";
 import { designPlanKeys } from "./designPlanApi";
-import { designTaskOptions, type DesignWorkspace } from "./designPlanModel";
-import { request, requestQueue, session, task, workspace } from "./__tests__/fixtures";
+import { designTaskOptions, taskSchema, type DesignWorkspace } from "./designPlanModel";
+import { layoutWorkspace, request, requestQueue, session, task, workspace } from "./__tests__/fixtures";
 jest.mock("../workflows/WorkflowWorkspace", () => ({ WorkflowWorkspace: () => null }));
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("../../core/query/useInvalidation", () => ({ useInvalidateEvent: () => jest.fn(async () => undefined) }));
@@ -27,7 +27,7 @@ jest.mock("../annotations/NativeAnnotationEditor", () => ({ NativeAnnotationEdit
 let clients: QueryClient[] = [];
 function setup(initial: DesignWorkspace = workspace) {
  let current = initial; const get = jest.fn(async (path: string): Promise<unknown> => { if (path.endsWith("/design-uploads")) return current; if (path.startsWith("/estimate-plan-change-requests?")) return []; if (path === "/estimate-plan-change-requests/request-a") return request; if (path === "/admin/designers") return [{ id: "designer-b", name: "Second Designer", email: "designer-b@example.test" }]; throw new Error(`Unexpected GET ${path}`); });
- const patch = jest.fn(async (_path: string, input: Record<string, unknown>) => { const drawing = { ...current.drawings[0]!, displayTitle: String(input.displayTitle), verified: Boolean(input.verified) }; const revision = { ...current.revisions[0]!, id: "revision-new", revisionNumber: 4 }; current = { ...current, drawings: [drawing], revisions: [revision] }; return { ...drawing, revision }; });
+ const patch = jest.fn(async (_path: string, input: Record<string, unknown>): Promise<unknown> => { const drawing = { ...current.drawings[0]!, displayTitle: String(input.displayTitle), verified: Boolean(input.verified) }; const revision = { ...current.revisions[0]!, id: "revision-new", revisionNumber: 4 }; current = { ...current, drawings: [drawing], revisions: [revision] }; return { ...drawing, revision }; });
  const post = jest.fn(async (_path: string, _input?: unknown): Promise<unknown> => ({ submittedCount: 1, reviewRoundId: "round-a", designPlanVersion: 4, deliveryStatus: "failed" })); const put = jest.fn(async (_path: string, _input?: unknown): Promise<unknown> => ({ ...request, version: 5 })); const upload = jest.fn();
  jest.mocked(useConfiguredRuntime).mockReturnValue({ runtime: { api: { authenticated: { get, post, patch, put } }, transfers: { upload } }, environment: { environment: { id: "env-a" }, generation: 1 }, session: { generation: 1 } } as never);
  return { get, post, patch, put, upload, setCurrent: (next: DesignWorkspace) => { current = next; } };
@@ -83,6 +83,36 @@ it("binds assigned task editing to the current project source, active stage and 
  expect(designPlanEligibility({ ...task, status: "ready_for_client" }, workflow)).toMatchObject({ editable: false, allowDeletion: true });
  expect(designPlanEligibility({ ...task, status: "approved" }, workflow)).toMatchObject({ editable: false, allowDeletion: false });
 });
+it.each([2, 3] as const)("allows v%s design uploads after design start without a recorded receipt", async workflowVersion => {
+ const api = setup(); const original = api.get.getMockImplementation()!;
+ api.get.mockImplementation(path => path === "/designer/design-plan-tasks" ? Promise.resolve([{ ...task, estimationWorkflowVersion: workflowVersion }])
+   : path === "/projects/project-a/design-workflow" ? Promise.resolve({ ...workflow, initialPayment: { ...workflow.initialPayment, workflowVersion, confirmedAt: null } })
+   : path.endsWith("/design-plan-documents") ? Promise.resolve({ manifestHash: "manifest-a", readyForSubmission: true, reviewRoundId: null, documents: [] }) : original(path));
+ await mount(<DesignPlanTasksWorkspace session={session} projectId="project-a" />);
+ const upload = await screen.findByRole("button", { name: "Choose design file" });
+ await waitFor(() => expect(upload).toBeEnabled());
+ expect(screen.getByText(/Initial payment confirmation is optional for work-order release/)).toBeTruthy();
+ expect(screen.queryByText("Await the project design start milestone.")).toBeNull();
+});
+it.each([null, "invalid-design-start"])("keeps v3 uploads read-only when the design start is %s despite a receipt", async designStartedAt => {
+ const api = setup(); const original = api.get.getMockImplementation()!;
+ api.get.mockImplementation(path => path === "/designer/design-plan-tasks" ? Promise.resolve([{ ...task, estimationWorkflowVersion: 3 }])
+   : path === "/projects/project-a/design-workflow" ? Promise.resolve({ ...workflow, initialPayment: { workflowVersion: 3, designStartedAt, confirmedAt: "2026-10-14T00:00:00Z" } })
+   : path.endsWith("/design-plan-documents") ? Promise.resolve({ manifestHash: "manifest-a", readyForSubmission: true, reviewRoundId: null, documents: [] }) : original(path));
+ await mount(<DesignPlanTasksWorkspace session={session} projectId="project-a" />);
+ await screen.findByText("Await the project design start milestone.");
+ expect(screen.queryByRole("button", { name: "Choose design file" })).toBeNull();
+ expect(screen.queryByRole("button", { name: "Submit drawings to Client" })).toBeNull();
+});
+it("rejects unknown workflow versions and preserves legacy start and source checks", () => {
+ expect(taskSchema.safeParse({ ...task, estimationWorkflowVersion: 4 }).success).toBe(false);
+ expect(designPlanWorkflowSchema.safeParse({ ...workflow, initialPayment: { ...workflow.initialPayment, workflowVersion: 4 } }).success).toBe(false);
+ const v3 = { ...workflow, initialPayment: { workflowVersion: 3 as const, designStartedAt: "2026-10-14T00:00:00Z", confirmedAt: null } };
+ expect(designPlanEligibility(task, { ...v3, projectId: "another-project" })).toMatchObject({ editable: false, show: false });
+ expect(designPlanEligibility({ ...task, estimateId: "another-estimate" }, v3)).toMatchObject({ editable: false, show: false });
+ expect(designPlanEligibility(task, { ...workflow, initialPayment: { designStartedAt: "2026-10-14T00:00:00Z", confirmedAt: null } })).toMatchObject({ editable: false });
+ expect(designPlanEligibility(task, { ...workflow, initialPayment: { confirmedAt: "2026-10-14T00:00:00Z" } })).toMatchObject({ editable: true });
+});
 it("prepares the current manifest and opens its derived authenticated PDF path", async () => {
  const api = setup(); const onReady = jest.fn(); let docs = { manifestHash: "manifest-a", reviewRoundId: null, readyForSubmission: false, documents: [{ sourceUploadId: "upload-a", originalFilename: "villa.pdf", documentId: null as string | null, manifestHash: "manifest-a", status: "not_prepared", pageCount: 1, pdfUrl: null as string | null, failureCode: null, failureMessage: null }] };
  api.get.mockImplementation(async () => docs); api.post.mockImplementation(async () => { docs = { ...docs, readyForSubmission: true, documents: [{ ...docs.documents[0]!, documentId: "document-a", status: "ready", pdfUrl: "https://untrusted.example/private.pdf" }] }; return docs; });
@@ -92,4 +122,68 @@ it("prepares the current manifest and opens its derived authenticated PDF path",
 it("does not replace a newer PDF manifest with a late preparation acknowledgement", async () => {
  const api = setup(); let resolve: (value: unknown) => void = () => undefined; const old = { manifestHash: "old", reviewRoundId: null, readyForSubmission: false, documents: [{ sourceUploadId: "upload-a", originalFilename: "old.pdf", documentId: null, manifestHash: "old", status: "not_prepared", pageCount: 1, pdfUrl: null, failureCode: null, failureMessage: null }] }; const next = { manifestHash: "new", reviewRoundId: null, readyForSubmission: false, documents: [] }; api.get.mockResolvedValue(old); api.post.mockImplementation(() => new Promise(value => { resolve = value; })); const onReady = jest.fn();
  const client = await mount(<PreparedPlanDocuments estimateId="estimate-a" session={session} revisionKey="revision-a" enabled canPrepare onReady={onReady} onDenied={jest.fn()} />); await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1)); api.get.mockResolvedValue(next); const key = [...designPlanKeys.documents({ environmentId: "env-a", userId: session.user.id }, "estimate-a"), "revision-a"]; await act(async () => { client.setQueryData(key, next); resolve({ ...old, readyForSubmission: true, documents: [] }); }); await waitFor(() => expect(client.getQueryData(key)).toEqual(next)); expect(onReady).not.toHaveBeenLastCalledWith(true);
+});
+
+function setupLayouts(initial = layoutWorkspace("option_2")) {
+ const api = setup(initial); const original = api.get.getMockImplementation()!;
+ api.get.mockImplementation(path => path.endsWith("/design-plan-documents") ? Promise.resolve({ manifestHash: "manifest-a", readyForSubmission: true, reviewRoundId: null, documents: [{ sourceUploadId: "upload-a", originalFilename: "villa.pdf", layoutType: "layout_3d", documentId: "document-a", manifestHash: "manifest-a", status: "ready", pageCount: 1, pdfUrl: "/private-pdf", failureCode: null, failureMessage: null }] }) : original(path));
+ return api;
+}
+const layoutPreparation = (readOnly = false) => <EstimateDesignPreparation estimateId="estimate-a" session={session} {...designTaskOptions(task)} readOnly={readOnly} designerMode />;
+function unclassifiedWorkspace() {
+ const value = layoutWorkspace("option_2");
+ return { ...value, uploads: value.uploads.map(upload => ({ ...upload, layoutType: null, canClassifyLayoutType: true })), layoutRequirements: { ...value.layoutRequirements, designPlanVersion: 0, unclassifiedUploadIds: ["upload-a"], missingTypes: ["layout_3d" as const], coverageComplete: false, blockingReasons: ["Set the layout type for the existing draft."], coverage: [{ layoutType: "layout_3d" as const, uploadIds: [], qualifyingUploadIds: [], state: "missing" as const }] } };
+}
+it("shows separate required 2D and 3D uploads and blocks incomplete Option 1", async () => {
+ setupLayouts(layoutWorkspace("option_1")); await mount(layoutPreparation());
+ await screen.findByRole("button", { name: "Choose 2D layout file" }); expect(screen.getByRole("button", { name: "Choose 3D layout file" })).toBeTruthy();
+ expect(screen.getByRole("button", { name: "Submit drawings to Client" })).toBeDisabled(); expect(screen.getAllByText("2D layout missing").length).toBeGreaterThan(0);
+});
+it("offers only 3D for Option 2 and allows submission after current PDFs are ready", async () => {
+ setupLayouts(); await mount(layoutPreparation()); await screen.findByRole("button", { name: "Choose 3D layout file" });
+ expect(screen.queryByRole("button", { name: "Choose 2D layout file" })).toBeNull(); await waitFor(() => expect(screen.getByRole("button", { name: "Submit drawings to Client" })).not.toBeDisabled());
+});
+it("sends the fixed layout group with the selected file", async () => {
+ const api = setupLayouts(layoutWorkspace("option_1")); jest.mocked(pickDocument).mockResolvedValue({ status: "selected", asset: { uri: "file:///private/layout.pdf", name: "layout.pdf", mimeType: "application/pdf", size: 123 } } as never);
+ api.upload.mockReturnValue({ result: Promise.resolve({ ...workspace.uploads[0], layoutType: "layout_2d", canClassifyLayoutType: false }) });
+ await mount(layoutPreparation()); await fireEvent.press(await screen.findByRole("button", { name: "Choose 2D layout file" })); await fireEvent.press(await screen.findByRole("button", { name: "Upload 2D layout" }));
+ await waitFor(() => expect(api.upload).toHaveBeenCalledWith(expect.objectContaining({ path: "/estimates/estimate-a/design-uploads", parameters: { layoutType: "layout_2d" } })));
+ await screen.findByText(/File saved/); await waitFor(() => expect(screen.getByRole("button", { name: "Choose 2D layout file" })).not.toBeDisabled());
+});
+it.each(["waiting_for_choice", "unavailable"] as const)("keeps existing files visible and blocks uploading/submitting when choice is %s", async status => {
+ setupLayouts({ ...workspace, layoutRequirements: { ...workspace.layoutRequirements, status, coverageComplete: false } }); await mount(layoutPreparation());
+ await screen.findAllByRole("header", { name: "villa.pdf" }); expect(screen.queryByRole("button", { name: /Choose .*file/ })).toBeNull(); expect(screen.getByRole("button", { name: "Submit drawings to Client" })).toBeDisabled(); expect(screen.getByRole("button", { name: "Replace Kitchen drawing" })).toBeDisabled();
+});
+it("fails closed when the required backend projection is absent", async () => {
+ const missing = { ...workspace } as Partial<DesignWorkspace>; delete missing.layoutRequirements;
+ setupLayouts(missing as DesignWorkspace); await mount(layoutPreparation()); await screen.findByText(/Current drawings could not be loaded/); expect(screen.queryByRole("button", { name: /Choose .*file/ })).toBeNull();
+});
+it("requires explicit confirmation to label a legacy draft once, using version zero and invalidating related views", async () => {
+ const api = setupLayouts(unclassifiedWorkspace()); api.patch.mockImplementation(async () => { const next = layoutWorkspace("option_2"); api.setCurrent(next); return next.uploads[0]!; });
+ const client = await mount(layoutPreparation()); const invalidations = jest.spyOn(client, "invalidateQueries");
+ await waitFor(() => expect(screen.getByRole("button", { name: "Replace Kitchen drawing" })).toBeDisabled());
+ await fireEvent.press(await screen.findByRole("button", { name: "Set layout type: villa.pdf" })); expect(screen.getByRole("button", { name: "Confirm permanent layout type" })).toBeDisabled();
+ await fireEvent.press(screen.getByRole("radio", { name: "3D layout" })); expect(api.patch).not.toHaveBeenCalled(); await fireEvent.press(screen.getByRole("button", { name: "Confirm permanent layout type" }));
+ await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/estimate-design-uploads/upload-a/layout-type", { layoutType: "layout_3d", expectedDesignPlanVersion: 0, idempotencyKey: expect.any(String) }));
+ await waitFor(() => expect(screen.queryByRole("button", { name: "Set layout type: villa.pdf" })).toBeNull()); expect(api.patch).toHaveBeenCalledTimes(1);
+ expect(invalidations).toHaveBeenCalledWith({ queryKey: expect.arrayContaining(["design"]) }); expect(invalidations).toHaveBeenCalledWith({ queryKey: expect.arrayContaining(["plan-review"]) }); expect(invalidations).toHaveBeenCalledWith({ queryKey: expect.arrayContaining(["workflow"]) });
+});
+it("replays the same classification command after an uncertain result", async () => {
+ const api = setupLayouts(unclassifiedWorkspace()); api.patch.mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValueOnce(layoutWorkspace("option_2").uploads[0] as never);
+ await mount(layoutPreparation()); await fireEvent.press(await screen.findByRole("button", { name: "Set layout type: villa.pdf" })); await fireEvent.press(screen.getByRole("radio", { name: "3D layout" })); await fireEvent.press(screen.getByRole("button", { name: "Confirm permanent layout type" }));
+ await fireEvent.press(await screen.findByRole("button", { name: "Retry saved Design request" })); await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2)); expect(api.patch.mock.calls[1]).toEqual(api.patch.mock.calls[0]); await waitFor(() => expect(screen.getByRole("button", { name: "Set layout type: villa.pdf" })).not.toBeDisabled());
+});
+it("blocks an open classification confirmation after current layout evidence changes", async () => {
+ const initial = unclassifiedWorkspace(); const api = setupLayouts(initial); const client = await mount(layoutPreparation()); await fireEvent.press(await screen.findByRole("button", { name: "Set layout type: villa.pdf" })); await fireEvent.press(screen.getByRole("radio", { name: "3D layout" }));
+ const next = { ...initial, layoutRequirements: { ...initial.layoutRequirements, revisionKey: "changed-current-layouts" } }; api.setCurrent(next); await act(async () => client.setQueryData(designPlanKeys.workspace({ environmentId: "env-a", userId: session.user.id }, "estimate-a"), next));
+ await waitFor(() => expect(screen.getByRole("button", { name: "Confirm permanent layout type" })).toBeDisabled()); expect(api.patch).not.toHaveBeenCalled();
+});
+it("keeps protected historical files explicitly unclassified without a labeling control", async () => {
+ const initial = unclassifiedWorkspace(); setupLayouts({ ...initial, uploads: initial.uploads.map(upload => ({ ...upload, canClassifyLayoutType: false, classificationBlockedReason: "Approved content is protected." })) }); await mount(layoutPreparation(true));
+ await screen.findByText("Layout type not set"); expect(screen.queryByRole("button", { name: "Set layout type: villa.pdf" })).toBeNull(); expect(screen.queryByRole("button", { name: "Submit drawings to Client" })).toBeNull();
+});
+it.each(["session", "environment"] as const)("discards a classification draft when the %s generation changes", async source => {
+ setupLayouts(unclassifiedWorkspace()); const client = await mount(layoutPreparation()); await fireEvent.press(await screen.findByRole("button", { name: "Set layout type: villa.pdf" })); await fireEvent.press(screen.getByRole("radio", { name: "3D layout" }));
+ const context = jest.mocked(useConfiguredRuntime).mock.results[0]!.value; jest.mocked(useConfiguredRuntime).mockReturnValue({ ...context, [source]: { ...context[source], generation: 2 } }); await screen.rerender(<QueryClientProvider client={client}>{layoutPreparation()}</QueryClientProvider>);
+ expect(screen.queryByRole("button", { name: "Confirm permanent layout type" })).toBeNull();
 });

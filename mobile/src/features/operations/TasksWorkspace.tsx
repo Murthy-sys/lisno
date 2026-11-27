@@ -20,7 +20,7 @@ export const operationalTaskSchema = z.object({
 type OperationalTask = z.infer<typeof operationalTaskSchema>;
 export function operationalReadOnly(task: OperationalTask, session: AuthenticatedSession): string | null {
   if (task.status === "completed") return "This task is complete.";
-  if (task.preparationOnly) return "Execution starts after final approval and initial payment.";
+  if (task.preparationOnly) return "Execution starts after current Client and design approvals. Initial payment confirmation is optional.";
   if (task.completionAuthority === "vendor_client" && ["site_execution", "trade_execution"].includes(task.kind)) return "Vendor progress and Client acceptance control this work. Open project execution.";
   if (task.assigneeRole !== session.user.role || (session.user.role !== "finance_head" && task.assignedWorker?.id !== session.user.id)) return "Assigned to another team member.";
   return null;

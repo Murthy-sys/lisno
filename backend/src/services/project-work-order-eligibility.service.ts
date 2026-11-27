@@ -4,7 +4,6 @@ import { ProjectModel } from "../models/Project.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
-import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import { resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 export interface FinalWorkOrderSource { estimateId: string; estimateVersion: number; estimateReviewRoundId: string }
@@ -57,13 +56,6 @@ export async function projectWorkOrderIssueReadiness(projectId: string, session?
   if (estimate.designPlanStatus !== "approved" || estimate.designPlanVersion !== designBinding?.designPlanVersion ||
     lifecycle.designScopeRevision !== approvalReference.designScopeRevision || lifecycle.approvedDesignScopeRevision !== approvalReference.designScopeRevision || !await designQuery)
     blockers.push("Design must be complete and approved for the current quotation scope.");
-  const paymentQuery = DesignWorkflowStateModel.findById(projectId);
-  if (session) paymentQuery.session(session);
-  const payment = await paymentQuery.lean();
-  if (!payment?.initialPaymentAt || payment.initialPaymentEstimateId !== String(estimate._id) ||
-    payment.initialPaymentEstimateVersion !== approvalReference.estimateVersion || payment.initialPaymentReviewRoundId !== approvalReference.reviewRoundId ||
-    payment.initialPaymentDesignReviewRoundId !== designBinding?.reviewRoundId)
-    blockers.push("Super Admin must confirm the initial payment against the current quotation.");
   return { required: true, canIssue: blockers.length === 0, blockers, finalSource };
 }
 

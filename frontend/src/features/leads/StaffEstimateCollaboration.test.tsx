@@ -150,7 +150,11 @@ describe("Staff estimate collaboration", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(screen.getByText(/Save your draft first to include unsaved edits/)).toBeVisible(); expect(post).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Release saved version" }));
-    expect(await screen.findByText(/Saved estimate released/)).toBeVisible(); expect(post).toHaveBeenCalledOnce();
+    const notice = await screen.findByText(/Saved estimate released/);
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent("Work orders require final Client approval, current design approval and procurement release checks.");
+    expect(notice).toHaveTextContent("Initial payment confirmation is optional for release.");
+    expect(post).toHaveBeenCalledOnce();
   });
 
   it("keeps legacy transition conflicts reviewable without retrying stale input", async () => {
@@ -200,6 +204,7 @@ describe("Staff estimate collaboration", () => {
   it("hides editing transitions after final approval even if a stale physical status says draft", () => {
     renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, estimation: { ...lifecycle, editClosedAt: "2026-10-13T12:00:00Z" } }} />);
     expect(screen.getByText("Final estimate approved")).toBeVisible(); expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText(/Design and final estimate approval are recorded/)).toHaveTextContent("Work orders can be issued after procurement release checks. Initial payment confirmation is optional for release.");
   });
 });
 

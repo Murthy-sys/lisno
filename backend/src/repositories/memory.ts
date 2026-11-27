@@ -1,4 +1,5 @@
 import { userAuthorizationVersion } from "../domain/user-authorization-version.js";
+import { executionChoicePreservationIssue } from "../domain/project-execution-choice.js";
 import { readUserLanguages, sameUserLanguages } from "../domain/user-languages.js";
 import { normalizeUserLocation } from "../domain/user-location.js";
 import { memoryUserResponsibilityCounts, memoryUserResponsibilities } from "./user-responsibilities.js";
@@ -471,13 +472,17 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
         designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
         finalApproval: lifecycle.finalApproval });
     },
-    async saveDesignWorkflowState(projectId, expectedVersion, next) {
+    async saveDesignWorkflowState(projectId, expectedVersion, next, options) {
       const current = state.designWorkflowStates?.find((row) => row.projectId === projectId);
       if ((current?.version ?? 0) !== expectedVersion) throw new RepositoryConflictError("Design workflow changed.");
+      if (next.projectId !== projectId) throw new RepositoryConflictError("Design workflow project changed.");
+      const choiceIssue = executionChoicePreservationIssue(current ?? null, next);
+      if (choiceIssue) throw new RepositoryConflictError(choiceIssue);
       const saved = clone({ ...next, projectId, version: expectedVersion + 1 });
       state.designWorkflowStates ??= [];
       state.designWorkflowStates = state.designWorkflowStates.filter((row) => row.projectId !== projectId);
       state.designWorkflowStates.push(saved);
+      if (options?.purpose === "execution_choice") return clone(saved);
       const project = state.projects.find(row => row.id === projectId && row.estimationWorkflowVersion === 3);
       const estimates = (state.estimateSummaries ?? []).filter(row => row.projectId === projectId && row.estimation?.workflowVersion === 3);
       if (project && estimates.length !== 1) throw new RepositoryConflictError("The project quotation source is ambiguous.");
@@ -507,15 +512,28 @@ function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): 
     },
     async activateCollaborativeExecution(projectId, actorId, occurredAt) {
       const project = state.projects.find(row => row.id === projectId);
-      const actor = state.users.find(row => row.id === actorId && row.active && row.role === "super_admin");
+      // Internal operation: the approval/issuance caller has already checked authority.
+      const actor = state.users.find(row => row.id === actorId && row.active);
       const context = await implementation.findProjectEstimationContext(projectId, true);
-      const payment = await implementation.findDesignWorkflowState(projectId);
       const approval = context?.workflowVersion === 3 ? context.currentQuotationApproval : context?.finalApproval;
-      if (!project || !actor || !context || !approval || !payment?.initialPaymentAt ||
-        payment.initialPaymentEstimateId !== context.estimateId || payment.initialPaymentEstimateVersion !== approval.estimateVersion ||
-        payment.initialPaymentReviewRoundId !== approval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== (context.workflowVersion === 3 ? context.designApproval?.reviewRoundId : context.finalApproval!.designReviewRoundId) ||
+      const estimate = state.estimateSummaries?.find(row => row.id === context?.estimateId && row.projectId === projectId);
+      const design = context?.workflowVersion === 3 ? context.designApproval : context?.finalApproval;
+      const designRoundId = context?.workflowVersion === 3 ? context.designApproval?.reviewRoundId : context?.finalApproval?.designReviewRoundId;
+      const round = (state.estimateReviewRounds ?? []).find(row => row.id === approval?.reviewRoundId && row.projectId === projectId &&
+        row.estimateId === context?.estimateId && row.estimateVersion === approval?.estimateVersion && row.status === "approved" &&
+        row.decision === "approve" && row.decidedAt && row.decidedById);
+      const designRound = (state.designPlanReviewSources ?? []).filter(row => row.projectId === projectId && row.estimateId === context?.estimateId)
+        .flatMap(row => row.rounds).find(row => row.id === designRoundId && row.projectId === projectId && row.estimateId === context?.estimateId &&
+          row.designPlanVersion === design?.designPlanVersion && row.status === "approved" && row.decision === "approve");
+      if (!project || !actor || !context || !approval || !round || !designRound ||
+        estimate?.designPlanStatus !== "approved" || estimate.designPlanVersion !== design?.designPlanVersion ||
+        approval.requirementsVersion !== project.estimateRequirementsVersion || approval.requirementsVersion !== estimate.estimation?.requirementsVersion ||
+        approval.designScopeRevision !== context.designScopeRevision || context.approvedDesignScopeRevision !== context.designScopeRevision ||
         context.workflowVersion === 3 && (!context.quotationLocked || context.designApproval?.estimateReviewRoundId !== approval.reviewRoundId || context.designApproval.designScopeRevision !== context.designScopeRevision))
-        throw new RepositoryConflictError("Final estimate approval and matching payment are required for execution.");
+        throw new RepositoryConflictError("Current quotation and design approval are required for execution.");
+      if (project.status !== "planning") return;
+      if (!Number.isFinite(Date.parse(occurredAt)) || project.actualStartAt && (!Number.isFinite(Date.parse(project.actualStartAt)) || Date.parse(project.actualStartAt) > Date.parse(occurredAt)))
+        throw new RepositoryConflictError("The execution activation date is invalid.");
       project.status = "active";
       project.actualStartAt ??= occurredAt;
       project.updatedAt = occurredAt;

@@ -51,6 +51,15 @@ const estimateDesignUploadSchema = new Schema({
   uploadedAt: { type: Date, required: true, immutable: true },
   extractionStatus: { type: String, required: true, enum: estimateDesignExtractionStatuses },
   purpose: { type: String, enum: estimateDesignUploadPurposes, default: null, immutable: true },
+  layoutType: { type: String, enum: ["layout_2d", "layout_3d"], default: undefined },
+  layoutClassification: { type: new Schema({
+    classifiedAt: { type: String, required: true }, classifiedById: { type: String, required: true },
+    choiceHistoryEventId: { type: String, required: true }, choiceDefinitionVersion: { type: Number, enum: [1], required: true }
+  }, { _id: false, strict: "throw" }), default: undefined },
+  layoutClassificationCommand: { type: new Schema({
+    idempotencyKey: { type: String, required: true, minlength: 8, maxlength: 128 },
+    expectedDesignPlanVersion: { type: Number, required: true, min: 0 }
+  }, { _id: false, strict: "throw" }), default: undefined },
   replacementDrawingId: { type: String, ref: "EstimateDesignDrawing", default: null, immutable: true },
   replacesRevisionId: { type: String, ref: "EstimateDesignRevision", default: null, immutable: true },
   replacementVersion: { type: Number, default: null, min: 1, immutable: true },

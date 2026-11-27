@@ -4,6 +4,7 @@ import { ESTIMATE_CLIENT_SHA256 } from "../domain/estimate-client-review.js";
 
 const attachmentSchema = new Schema(
   {
+    layoutType: { type: String, enum: ["layout_2d", "layout_3d"], default: undefined, immutable: true },
     uploadId: { type: String, required: true, immutable: true },
     filename: { type: String, required: true, immutable: true },
     mimeType: { type: String, required: true, immutable: true },
@@ -33,6 +34,7 @@ const designPlanReviewRoundSchema = new Schema(
     designPlanVersion: { type: Number, required: true, min: 1, immutable: true },
     designScopeRevision: { type: Number, min: 1, immutable: true },
     estimateReviewRoundId: { type: String, immutable: true, default: undefined },
+    designLayoutSnapshot: { type: Schema.Types.Mixed, immutable: true, default: undefined },
     designRequirementsReadiness: { type: Schema.Types.Mixed, immutable: true, default: undefined },
     planManifestHash: { type: String, default: null, immutable: true },
     planDocuments: { type: [{

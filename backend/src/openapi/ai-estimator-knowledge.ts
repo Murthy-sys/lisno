@@ -1907,7 +1907,7 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
-    overview: ["description", "uomId", "priorityId", "closurePriority", "applicableRoomCategories", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"],
+    overview: ["description", "uomId", "priorityId", "closurePriority", "applicableRoomCategories", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "selectionNeeded", "applicableTiers", "dimensionsMandatory"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
@@ -1927,6 +1927,7 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     properties.applicableRoomCategories = { type: "array", uniqueItems: true, maxItems: ROOM_CATEGORIES.length, items: { type: "string", enum: ROOM_CATEGORIES.map(category => category.id) }, description: "Room and place categories in which this Main Line can be newly assigned. Missing or empty means all rooms." };
     properties.closurePriority = { type: "string", enum: ["P1", "P2", "P3"], description: "Optional closure priority for this Main Line revision. Omit when unselected." };
     properties.showByDefault = { type: "boolean", default: false, description: "Show an eligible Main Line in default estimation browsing. Missing values mean No. Explicit additions, recommendations and existing estimate rows remain available." };
+    properties.selectionNeeded = { type: "boolean", description: "Optional selection-needed setting for this Main Line revision. Missing values display as No without persisting a default. Configuration metadata only; does not filter Client selections or enforce workflow steps." };
     properties.dimensionsMandatory = { type: "boolean", default: false, description: "Require positive Length, Width and Height at estimation. Quantity is Length × Width in the configured supported area UOM; Height is recorded only." };
     properties.applicableTiers = { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] }, description: "Absent means Signature. An empty array hides all Mode tier tabs while retaining their saved configuration." };
     properties.clientVisible = { type: "boolean", default: true,

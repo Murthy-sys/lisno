@@ -16,14 +16,15 @@ export function useDesignWorkflowQuery(projectId: string) {
   const canRead = Boolean(user && projectId) && hasFrontendPermission(authorization, "projects.design_workflow.read");
   const query = useQuery<DesignWorkflowView | null>({
     queryKey,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
         const result = await getDesignWorkflow(projectId);
         if (result.projectId !== projectId) throw new ApiError(502, "WORKFLOW_IDENTITY_MISMATCH", "The workflow response did not match this project.");
         return result;
       } catch (error) {
-        // Removing the payload prevents a later transport error or remount from restoring revoked data.
-        if (projectReadDenied(error)) queryClient.setQueryData<DesignWorkflowView | null>(queryKey, null);
+        // A cancelled older read must not clear a newer authorized response.
+        // Current denials still remove the payload so transport failures cannot restore revoked data.
+        if (!signal.aborted && projectReadDenied(error)) queryClient.setQueryData<DesignWorkflowView | null>(queryKey, null);
         throw error;
       }
     },

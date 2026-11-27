@@ -1124,7 +1124,7 @@ export interface AppRepository {
   createWorkflowUom(input: NewFurnitureUom): Promise<FurnitureUomOption>;
   referenceWorkflowUoms(ids: string[]): Promise<FurnitureUomOption[]>;
   findDesignWorkflowState(projectId: string): Promise<DesignWorkflowState | null>;
-  saveDesignWorkflowState(projectId: string, expectedVersion: number, state: DesignWorkflowState): Promise<DesignWorkflowState>;
+  saveDesignWorkflowState(projectId: string, expectedVersion: number, state: DesignWorkflowState, options?: { purpose: "execution_choice" }): Promise<DesignWorkflowState>;
   listDesignWorkflowPaymentProjects(): Promise<ProjectRecord[]>;
   activateCollaborativeExecution(projectId: string, actorId: string, occurredAt: string): Promise<void>;
   findDesignWorkflowRoomContext(projectId: string, includeEstimateItems?: boolean, includeZeroValueItems?: boolean): Promise<WorkflowEstimateRoomContext | null>;

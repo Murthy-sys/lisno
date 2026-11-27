@@ -215,6 +215,24 @@ it("keeps personal Designer approval restricted to the actual assigned Designer"
  expect(screen.queryByRole("button", { name: "Approve for Client" })).toBeNull(); expect(screen.queryByRole("button", { name: "Request estimate changes" })).toBeNull();
 });
 
+it("describes closed collaborative estimates without requiring initial payment for work orders", async () => {
+ setup();
+ await mount(<StaffEstimateLifecycle estimate={estimateFixture({ estimation: { ...lifecycleFixture, phase: "post", editClosedAt: "2026-10-14T00:00:00Z" } })} session={actor()} disabled={false} execute={jest.fn(async () => true)} />);
+ expect(screen.getByText(/Design and final estimate approval are recorded/)).toHaveTextContent(
+   "Design and final estimate approval are recorded. Estimate editing is closed. Work orders can be issued after procurement release checks. Initial payment confirmation is optional for release."
+ );
+ expect(screen.queryByRole("button", { name: "Release saved estimate for preparation" })).toBeNull();
+});
+
+it("keeps final approval and procurement checks in the preparation-release notice without a payment prerequisite", async () => {
+ setup(); const execute = jest.fn(async () => true);
+ const current = estimateFixture({ estimation: { ...lifecycleFixture, phase: "post", preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-10-10T00:00:00Z" } } });
+ await mount(<StaffEstimateLifecycle estimate={current} session={actor()} disabled={false} execute={execute} />);
+ await fireEvent.press(screen.getByRole("button", { name: "Release saved estimate for preparation" }));
+ await fireEvent.press(screen.getByRole("button", { name: "Confirm release saved version for preparation" }));
+ expect(execute).toHaveBeenCalledWith(expect.any(Function), "Saved version released for procurement preparation. Work orders require final Client approval, current design approval and procurement release checks. Initial payment confirmation is optional for release.");
+});
+
 it("blocks collaborative submission until Client requirements are resolved and the approved Design matches final scope", async () => {
  const current = estimateFixture({ estimation: { ...lifecycleFixture, phase: "post", preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-10-10T00:00:00Z" }, designScopeRevision: 3, approvedDesignScopeRevision: 2 }, designPlanStatus: "approved" });
  const api = setup(current); const original = api.get.getMockImplementation()!; api.get.mockImplementation(async (path: string) => path.includes("/estimate-requirements") ? requirementsFixture : original(path));

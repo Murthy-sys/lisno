@@ -30,6 +30,16 @@ const uploadedPlanWorkspace = {
 };
 
 describe("ClientFullPlanNav", () => {
+  it("shows the saved review label and keeps old unclassified plans explicit", () => {
+    const noPages = { ...uploadedPlanWorkspace, uploads: uploadedPlanWorkspace.uploads.map(upload => ({ ...upload, pages: upload.pages.map(page => ({ ...page, thumbnailUrl: "" })) })) };
+    const { rerender } = render(<ClientFullPlanNav workspace={noPages} onSelectPage={vi.fn()} />);
+    expect(screen.getByText("Layout type not set")).toBeVisible();
+    expect(screen.queryByText("2D layout")).not.toBeInTheDocument();
+    rerender(<ClientFullPlanNav workspace={{ ...noPages, uploads: noPages.uploads.map(upload => ({ ...upload, layoutType: "layout_3d" })) }} onSelectPage={vi.fn()} />);
+    expect(screen.getByText("3D layout")).toBeVisible();
+    expect(screen.queryByText("Layout type not set")).not.toBeInTheDocument();
+  });
+
   it("renders one original uploaded plan instead of one card per PDF page", async () => {
     vi.spyOn(apiClient, "getBlob").mockResolvedValue({ blob: new Blob(["image"], { type: "image/png" }), filename: "page.png" });
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:thumb") });

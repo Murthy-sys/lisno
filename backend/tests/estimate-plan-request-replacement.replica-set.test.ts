@@ -11,9 +11,11 @@ import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRev
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
 import { UserModel } from "../src/models/User.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { layoutChoiceFixture } from "./fixtures/design-layout.js";
 
 const NOW = new Date("2026-09-21T08:00:00.000Z");
 const designer = {
@@ -68,6 +70,7 @@ beforeAll(async () => {
     EstimateModel,
     LeadModel,
     ProjectModel,
+    DesignWorkflowStateModel,
     EstimateDesignUploadModel,
     EstimateDesignSourcePageModel,
     EstimateDesignDrawingModel,
@@ -106,6 +109,12 @@ async function setup(options: {
     maxUploadBytes: 1_000_000,
     now: () => NOW
   });
+  const choice = layoutChoiceFixture("project-request-replacement", "option_2");
+  choice.record.selectedAt = NOW.toISOString();
+  choice.record.selectedById = "client";
+  choice.state.stages.key_collection = { handedOverAt: NOW.toISOString(), receivedAt: NOW.toISOString(), completedAt: NOW.toISOString() };
+  choice.state.history[0] = { ...choice.state.history[0]!, at: NOW.toISOString(), actorId: "client", data: { ...choice.record, acknowledgedIrreversible: true } };
+  await DesignWorkflowStateModel.create({ _id: "project-request-replacement", ...choice.state });
   await UserModel.create({
     _id: designer.id,
     name: designer.name,
@@ -134,6 +143,7 @@ async function setup(options: {
   await ProjectModel.create({
     _id: "project-request-replacement",
     name: "Request replacement residence",
+    clientId: "client",
     clientName: "Client",
     clientEmail: "client-request-replacement@example.test",
     clientEmailNormalized: "client-request-replacement@example.test",
@@ -171,7 +181,9 @@ async function setup(options: {
     uploaderId: designer.id,
     uploadedAt: NOW,
     extractionStatus: "changes_requested",
-    purpose: "ordinary"
+    purpose: "ordinary",
+    layoutType: "layout_3d",
+    layoutClassification: { classifiedAt: NOW.toISOString(), classifiedById: designer.id, choiceHistoryEventId: choice.record.historyEventId, choiceDefinitionVersion: 1 }
   });
   await EstimateDesignExtractionJobModel.create({
     _id: "ordinary-job",
@@ -334,7 +346,7 @@ describe("request-scoped estimate plan replacement", () => {
 
   it("keeps the explicit ordinary upload path append-only while a Client request is open", async () => {
     const { service } = await setup();
-    const queued = await service.upload(designer, "estimate-request-replacement", uploadInput().file);
+    const queued = await service.upload(designer, "estimate-request-replacement", uploadInput().file, "layout_3d");
     expect(queued).toMatchObject({ purpose: "ordinary", requestReplacement: null });
     const job = await EstimateDesignExtractionJobModel.findOne({ uploadId: queued.id }).lean();
     const claimed = await service.claimWorkerJob(

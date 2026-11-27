@@ -2,6 +2,7 @@ import { model, models, Schema } from "./mongoose.js";
 const schema = new Schema({
   _id: { type: String, required: true, immutable: true },
   projectId: { type: String, required: true, immutable: true },
+  procurementFindingId: { type: String, default: null, immutable: true },
   assignmentId: { type: String, default: null, immutable: true },
   sourceLineItemKey: { type: String, default: null, immutable: true },
   sourceSectionId: { type: String, default: null, immutable: true },
@@ -26,5 +27,6 @@ const schema = new Schema({
   evidenceIds: { type: [String], default: [] }
 }, { versionKey: false, strict: "throw" });
 schema.index({ projectId: 1, status: 1, severity: 1, dueAt: 1, _id: 1 });
+schema.index({ projectId: 1, procurementFindingId: 1 }, { unique: true, partialFilterExpression: { procurementFindingId: { $type: "string" } } });
 schema.index({ projectId: 1, roomId: 1, sourceSectionId: 1, vendorId: 1, status: 1 });
 export const ProjectSnagModel = models.ProjectSnag ?? model("ProjectSnag", schema);

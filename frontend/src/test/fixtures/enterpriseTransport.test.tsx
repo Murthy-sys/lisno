@@ -597,7 +597,7 @@ describe("synthetic enterprise route harness", () => {
     expect((await save(input)).status).toBe(422);
   });
   it("opens the designer drawing with the protected image and saved annotation geometry", async () => {
-    mount("/designer/design-plans", "designer");
+    mount("/designer/design-plans?estimate=estimate-aurora-villa", "designer");
     await userEvent.click(await screen.findByRole("button", { name: "Preview" }));
     const panel = await screen.findByRole("dialog", { name: "Living Room Electrical Plan preview" });
     expect(await within(panel).findByText("Review ceiling alignment")).toBeInTheDocument();

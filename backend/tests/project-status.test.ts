@@ -148,7 +148,7 @@ describe("collaborative project status responsibility", () => {
     expect(result.pendingActions.some(action => ["initial_payment", "execution"].includes(action.stageKey))).toBe(false);
   });
 
-  it("requires only Super Admin to attest a legacy receipt to the final approved revision", () => {
+  it("keeps an older receipt non-blocking after final approval while rejecting a foreign design", () => {
     const input = collaborative(); readyDesign(input);
     const lifecycle = input.estimate!.estimation!;
     lifecycle.finalApproval = { reviewRoundId: "final-round", estimateVersion: 8, approvedAt: AT, requirementsVersion: 3, designReviewRoundId: "round-a", designPlanVersion: 2, designScopeRevision: 3 };
@@ -157,7 +157,9 @@ describe("collaborative project status responsibility", () => {
     input.workflow!.initialPaymentAt = BEFORE;
     input.workflow!.initialPaymentEstimateId = "estimate-a";
     input.workflow!.initialPaymentEstimateVersion = 2;
-    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "initial_payment", responsibleRole: "super_admin", people: [{ id: "super-a", name: "Super Admin", role: "super_admin" }] })]);
+    expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+    input.workflow!.initialPaymentAt = "invalid-optional-receipt-date";
+    expect(deriveProjectStatus(input).state).not.toBe("unavailable");
     Object.assign(input.workflow!, { initialPaymentEstimateVersion: 8, initialPaymentReviewRoundId: "final-round", initialPaymentDesignReviewRoundId: "round-a" });
     expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
     input.design!.reviewRoundId = "foreign-design-round";
@@ -631,13 +633,13 @@ describe("quotation project status responsibility", () => {
     expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "estimate_preparation", people: [{ id: "designer-b", name: "Designer B", role: "designer" }] })]);
   });
 
-  it("binds payment to the separate drawing approval after quotation completion", () => {
+  it("advances after quotation and drawing approval without requiring a receipt", () => {
     const input = quotation(true);
     readyDesign(input);
     const lifecycle = input.estimate!.estimation!;
     if (lifecycle.workflowVersion !== 3) throw new Error("Expected quotation lifecycle");
     lifecycle.designApproval = { reviewRoundId: "round-a", designPlanVersion: 2, designScopeRevision: 3, estimateReviewRoundId: "quote-round", approvedAt: BEFORE };
-    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "initial_payment" })]);
+    expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
     Object.assign(input.workflow!, { initialPaymentAt: BEFORE, initialPaymentEstimateId: "estimate-a", initialPaymentEstimateVersion: 7, initialPaymentReviewRoundId: "quote-round", initialPaymentDesignReviewRoundId: "round-a" });
     expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
   });

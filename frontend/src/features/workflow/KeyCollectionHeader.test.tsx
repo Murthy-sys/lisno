@@ -15,7 +15,7 @@ const auth = vi.hoisted(() => ({ user: { id: "client-a", role: "client" as const
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ ...auth, authorization: authorizationFor("client", auth.allowed ? ["projects.design_workflow.read"] : []) }) }));
 vi.mock("./ProjectClientActions", () => ({ ProjectClientActions: () => null }));
 vi.mock("./ProjectDesignRequirementsPanel", () => ({ ProjectDesignRequirementsPanel: () => null }));
-function Location() { const location = useLocation(); return <output>{location.pathname}{location.search}{location.hash}</output>; }
+function Location() { const location = useLocation(); return <output aria-label="Current route">{location.pathname}{location.search}{location.hash}</output>; }
 function Page({ projectId = "project-a" }: { projectId?: string }) {
   const location = useLocation();
   return <><header><KeyCollectionHeader projectId={projectId} projectName="Courtyard Home" /></header>
@@ -46,7 +46,7 @@ describe("KeyCollectionHeader", () => {
     expect(within(dialog).getByText(/Asia\/Kolkata/)).toBeVisible();
     await user.keyboard("{Escape}"); await waitFor(() => expect(button).toHaveFocus());
     await user.click(button); await user.click(screen.getByRole("button", { name: "Open key collection" }));
-    expect(screen.getByRole("status")).toHaveTextContent("/client/projects/project-a#key-collection");
+    expect(screen.getByRole("status", { name: "Current route" })).toHaveTextContent("/client/projects/project-a#key-collection");
     expect(screen.getByRole("button", { name: "Design flow" })).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByRole("button", { name: /Key Collection —/ })).toBeVisible();
     await waitFor(() => expect(document.getElementById("key-collection")).toHaveFocus());

@@ -5,6 +5,12 @@ import { EstimateDesignPlanDocumentModel } from "../models/EstimateDesignPlanDoc
 import { planDocumentNotFound, requirePlanDocumentClientRound } from "./estimate-plan-document-access.js";
 import { loadEstimatePlanDocumentManifest } from "./estimate-plan-document-manifest.js";
 
+/** Legacy rounds predate classification snapshots; never borrow current upload labels. */
+export function legacyReviewManifest(manifest: PlanDocumentManifest): PlanDocumentManifest {
+  const { layoutType: _layoutType, layoutClassification: _classification, ...historical } = manifest;
+  return historical;
+}
+
 export async function loadPublishedPlanDocuments(user: PublicUser, estimateId: string, roundId?: string) {
   const round = await requirePlanDocumentClientRound(user, estimateId, roundId);
   const documents: Array<{ documentId: string | null; manifestHash: string; pageCount: number; manifest: PlanDocumentManifest }> = [];
@@ -16,7 +22,10 @@ export async function loadPublishedPlanDocuments(user: PublicUser, estimateId: s
     }
   } else {
     const snapshot = await loadEstimatePlanDocumentManifest(estimateId, { revisionIds: round.submittedRevisionIds.map(String) });
-    for (const manifest of snapshot.documents) documents.push({ documentId: null, manifestHash: hashPlanDocumentManifest(manifest), pageCount: manifest.pages.length, manifest });
+    for (const current of snapshot.documents) {
+      const manifest = legacyReviewManifest(current);
+      documents.push({ documentId: null, manifestHash: hashPlanDocumentManifest(manifest), pageCount: manifest.pages.length, manifest });
+    }
   }
   return { round, documents };
 }

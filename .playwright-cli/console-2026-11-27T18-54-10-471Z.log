@@ -1,0 +1,40 @@
+[      41ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:4181/harness.tsx:1
+[   25936ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:4181/harness.tsx:1
+[   33004ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4181/@vite/client:964
+[   33005ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   34008ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   35010ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   36012ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   37014ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   38016ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   39018ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   40020ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   41022ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   42026ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   43029ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4181/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4181/@vite/client:1035
+[   44934ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[   46337ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[   74242ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4181/@vite/client:964
+[   74345ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105497ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105614ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105731ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105787ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105838ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105893ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  105991ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  106087ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  106145ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  106202ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  106257ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125436ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125537ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125640ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125694ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125746ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125800ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125897ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  125988ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  126039ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  126091ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6
+[  126142ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4181/.vite/deps/react-dom_client.js?v=fc34374e:6

@@ -1,3 +1,4 @@
+import { readOrderPayments } from "../procurement-payments.service.js";
 import type { ClientSession } from "mongoose";
 import type { PMItem, PMPanel } from "../../contracts/project-manager.js";
 import { certificationReviewerRole, certificationStatus, pmCertificationActionSchema, pmCertificationSchema, pmNoticeActionSchema, pmNoticeSchema, pmVendorListSchema, type PMVendorQuery } from "../../domain/project-manager/vendors.js";
@@ -85,6 +86,14 @@ async function certificationSource(projectId: string, orderId: string, milestone
 function allowedCertificationSlot(actor: PublicUser, row: PMRow, source: CertificationSource): string | undefined {
   return (row.requiredSlots as string[]).find(slot => certificationReviewerRole(slot) === actor.role && row.reviewerIds[slot] === actor.id && source.reviewerIds[slot] === actor.id && !(row.decisions as PMRow[]).some(decision => decision.slot === slot));
 }
+/** Lifecycle payments share the exact issued milestone and reviewer binding. */
+export { certificationSource as readPaymentCertificationSource };
+async function paymentFact(actor: PublicUser, projectId: string, orderId: string, milestoneId: string, session: ClientSession): Promise<string> {
+  if (!["procurement", "finance_head", "super_admin"].includes(actor.role)) return "Managed by Finance";
+  const payment = await readOrderPayments(projectId, orderId, session);
+  const milestone = payment.milestones.find(row => row.id === milestoneId);
+  return milestone?.paidPaise == null ? "Payment history needs reconciliation" : `INR ${(milestone.paidPaise / 100).toFixed(2)} paid${milestone.remainingPaise === null ? "; authorization pending" : `; INR ${(milestone.remainingPaise / 100).toFixed(2)} remaining`}`;
+}
 async function certificationDto(row: PMRow, actor: PublicUser, session: ClientSession): Promise<PMItem> {
   let source: CertificationSource | null = null;
   try { source = await certificationSource(row.projectId, row.orderId, row.milestoneId, session); } catch (error) { if (!(error instanceof ApiError && error.status === 409)) throw error; }
@@ -93,7 +102,7 @@ async function certificationDto(row: PMRow, actor: PublicUser, session: ClientSe
   return { id: String(row._id), kind: "certification", title: row.milestoneName, status: row.status, severity: row.status === "certified" ? "success" : row.status === "rejected" ? "warning" : "neutral", version: row.version,
     sourceId: row.orderId, orderId: row.orderId, milestoneId: row.milestoneId, sourceToken: row.sourceToken, sourceAvailable: current, vendorId: row.vendorId, ownerName: row.vendorName, amountPaise: row.amountPaise, description: row.reason,
     evidenceIds: [...new Set<string>([...(row.evidenceIds ?? []), ...(row.decisions as PMRow[]).flatMap(decision => decision.evidenceIds ?? [])])],
-    facts: [{ label: "Payment", value: "Not available from payment records" }, { label: "Reviewers", value: (row.requiredSlots as string[]).map(slot => certificationReviewerRole(slot)?.replaceAll("_", " ") ?? slot).join(", ") }, { label: "Decisions", value: `${row.decisions.length} / ${row.requiredSlots.length}` }, ...(!current ? [{ label: "Source", value: "Issued source or reviewer assignment changed. Reconciliation required." }] : [])],
+    facts: [{ label: "Payment", value: await paymentFact(actor, row.projectId, row.orderId, row.milestoneId, session) }, { label: "Reviewers", value: (row.requiredSlots as string[]).map(slot => certificationReviewerRole(slot)?.replaceAll("_", " ") ?? slot).join(", ") }, { label: "Decisions", value: `${row.decisions.length} / ${row.requiredSlots.length}` }, ...(!current ? [{ label: "Source", value: "Issued source or reviewer assignment changed. Reconciliation required." }] : [])],
     actions: slot && !["certified", "rejected"].includes(row.status) ? [{ id: "certify", label: "Certify milestone", reasonRequired: true }, { id: "reject", label: "Reject", reasonRequired: true }] : [], history: await pmHistory(row.projectId, String(row._id), session) };
 }
 
@@ -136,7 +145,7 @@ export function createProjectManagerVendorsService(deps: PMDependencies & { exec
                 const existing = certifications.some(row => row.orderRevisionId === order.approvedRevisionId && row.milestoneId === milestone.id);
                 panel.sources.push({ id: `${order._id}:${milestone.id}`, label: `${order.orderNumber} · ${milestone.name}`, sourceToken: source.token, vendorId });
                 if (!existing) records.push({ id: `${order._id}:${milestone.id}`, kind: "payment_milestone", vendorId, item: { id: `${order._id}:${milestone.id}`, sourceId: String(order._id), orderId: String(order._id), milestoneId: milestone.id, kind: "payment_milestone", title: milestone.name, status: "not_requested", severity: "neutral", version: 0, sourceToken: source.token, vendorId, ownerName: item.title, amountPaise: milestone.amountPaise,
-                  facts: [{ label: "Order", value: order.orderNumber }, { label: "Payment", value: "Not available from payment records" }, { label: "Reviewers", value: milestone.reviewerSlots.map((slot: string) => certificationReviewerRole(slot)?.replaceAll("_", " ") ?? slot).join(", ") }], actions: actor.role === "procurement" ? [{ id: "request_certification", label: "Request certification" }] : [] } });
+                  facts: [{ label: "Order", value: order.orderNumber }, { label: "Payment", value: await paymentFact(actor, projectId, String(order._id), milestone.id, session) }, { label: "Reviewers", value: milestone.reviewerSlots.map((slot: string) => certificationReviewerRole(slot)?.replaceAll("_", " ") ?? slot).join(", ") }], actions: actor.role === "procurement" ? [{ id: "request_certification", label: "Request certification" }] : [] } });
               } catch (error) { if (!(error instanceof ApiError && error.status === 409)) throw error; panel.issues.push(`${order.orderNumber}: ${(error as Error).message}`); }
             }
           }

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EstimateDesignUpload } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
+import { layoutRequirementsFixture } from "../../test/fixtures/designLayoutRequirements";
 import * as designApi from "./estimateDesignApi";
 import { EstimateDesignUploads } from "./EstimateDesignUploads";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -64,7 +65,12 @@ const drawings = [
     roomEvidence: [], scopeEvidence: [{ value: "electrical" }]
   }
 ];
-const response = (data: unknown, status = 200) => Response.json({ data }, { status });
+// Generic upload fixtures retain pre-approval behavior. Designer readiness
+// fixtures below explicitly supply the selected execution choice.
+const response = (data: unknown, status = 200) => Response.json({ data:
+  data && typeof data === "object" && "drawings" in data && "uploads" in data
+    ? { layoutRequirements: layoutRequirementsFixture("option_2", { status: "not_applicable", choice: null, allowedTypes: [], requiredTypes: [], coverage: [] }), ...data } : data
+}, { status });
 const deletableUpload: EstimateDesignUpload = {
   id: "upload-own",
   estimateId: "estimate-1",
@@ -106,7 +112,7 @@ function mockReadinessWorkspace(
     const url = String(input);
     const override = request?.(url, init);
     if (override) return override;
-    if (url.endsWith("/estimates/estimate-1/design-uploads")) return response(getWorkspace());
+    if (url.endsWith("/estimates/estimate-1/design-uploads")) return response({ layoutRequirements: layoutRequirementsFixture(), ...getWorkspace() as object });
     if (url.includes("/estimate-design-revisions/") && url.endsWith("/image")) {
       return new Response(new Blob(["image"], { type: "image/png" }));
     }
@@ -572,7 +578,7 @@ describe("EstimateDesignUploads", () => {
   it.each(["estimator", "designer"] as const)("keeps the %s upload button loading until the response settles", async (variant) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
-        return response({ uploads: [], pages: [], drawings: [], revisions: [] });
+        return response({ uploads: [], pages: [], drawings: [], revisions: [], ...(variant === "designer" ? { layoutRequirements: layoutRequirementsFixture() } : {}) });
       }
       throw new Error(`Unexpected request: ${input}`);
     });
@@ -581,15 +587,15 @@ describe("EstimateDesignUploads", () => {
 
     const user = userEvent.setup();
     renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant={variant} />);
-    const buttonLabel = variant === "designer" ? "Upload design" : "Upload design plan";
-    const progressLabel = variant === "designer" ? "Uploading design" : "Uploading design plan";
+    const buttonLabel = variant === "designer" ? "Upload 3D layout" : "Upload design plan";
+    const progressLabel = variant === "designer" ? "Uploading 3D layout" : "Uploading design plan";
     const file = new File(["%PDF-1.7"], "kitchen-plan.pdf", { type: "application/pdf" });
 
-    await user.upload(await screen.findByLabelText("Design plan file"), file);
+    await user.upload(await screen.findByLabelText(variant === "designer" ? "3D layout file" : "Design plan file"), file);
 
     expect(screen.getByText("kitchen-plan.pdf")).toBeVisible();
     expect(screen.getByText("8 B")).toBeVisible();
-    expect(screen.getByText(variant === "designer" ? "Select design file" : "Choose file")).toBeVisible();
+    expect(variant === "designer" ? screen.getByLabelText("3D layout file") : screen.getByText("Choose file")).toBeVisible();
 
     const button = screen.getByRole("button", { name: buttonLabel });
     await user.click(button);
@@ -621,7 +627,7 @@ describe("EstimateDesignUploads", () => {
   it.each(["estimator", "designer"] as const)("clears the %s upload loader after failure and allows retry with the selected file", async (variant) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
-        return response({ uploads: [], pages: [], drawings: [], revisions: [] });
+        return response({ uploads: [], pages: [], drawings: [], revisions: [], ...(variant === "designer" ? { layoutRequirements: layoutRequirementsFixture() } : {}) });
       }
       throw new Error(`Unexpected request: ${input}`);
     });
@@ -630,10 +636,10 @@ describe("EstimateDesignUploads", () => {
 
     const user = userEvent.setup();
     renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant={variant} />);
-    const buttonLabel = variant === "designer" ? "Upload design" : "Upload design plan";
-    const progressLabel = variant === "designer" ? "Uploading design" : "Uploading design plan";
+    const buttonLabel = variant === "designer" ? "Upload 3D layout" : "Upload design plan";
+    const progressLabel = variant === "designer" ? "Uploading 3D layout" : "Uploading design plan";
     const file = new File(["failed upload"], "failed-plan.pdf", { type: "application/pdf" });
-    await user.upload(await screen.findByLabelText("Design plan file"), file);
+    await user.upload(await screen.findByLabelText(variant === "designer" ? "3D layout file" : "Design plan file"), file);
     const button = screen.getByRole("button", { name: buttonLabel });
     await user.click(button);
     expect(button).toHaveAttribute("aria-busy", "true");

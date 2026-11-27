@@ -1,3 +1,5 @@
+import { executionChoiceOption, type ExecutionChoiceOptionId } from "../../../../../shared/projects/executionChoice";
+import { requiredDesignLayoutTypes } from "../../../../../shared/projects/designLayoutRequirements";
 import { AUTHORIZATION_POLICY_VERSION } from "../../../contracts/authorization";
 import { PROTECTED_OPERATIONS } from "../../../contracts/operations";
 import type { AuthenticatedSession } from "../../../contracts/session";
@@ -5,6 +7,7 @@ import type { DesignPlanTask, DesignWorkspace, PlanRequest, PlanRequestQueue } f
 import type { PlanWorkflow } from "../DesignPlanTasksWorkspace";
 export const session = { user: { id: "designer-a", name: "Designer", email: "designer@example.test", role: "designer" }, authorization: { role: "designer", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: [...new Set(PROTECTED_OPERATIONS.filter(row => /design|estimate-plan/.test(row.operation)).map(row => row.permission))] } } as AuthenticatedSession;
 export const workspace: DesignWorkspace = {
+ layoutRequirements: { status: "not_applicable", choice: null, designPlanVersion: 3, allowedTypes: [], requiredTypes: [], coverage: [], unclassifiedUploadIds: [], missingTypes: [], coverageComplete: true, blockingReasons: [], revisionKey: "layout-preapproval" },
  uploads: [{ id: "upload-a", estimateId: "estimate-a", leadId: "lead-a", originalFilename: "villa.pdf", mimeType: "application/pdf", sizeBytes: 500, uploaderId: "designer-a", uploadedAt: "2026-10-14T00:00:00Z", extractionStatus: "estimator_review", failureCode: null, failureMessage: null, canRetry: false, canDelete: true, purpose: "ordinary", requestReplacement: null }],
  pages: [{ id: "page-a", uploadId: "upload-a", pageNumber: 1, width: 800, height: 600 }],
  drawings: [{ id: "drawing-a", uploadId: "upload-a", sourcePageId: "page-a", estimateId: "estimate-a", active: true, verified: false, detectedTitle: "Kitchen", displayTitle: "Kitchen drawing", source: "ocr", roomConfidence: .7, scopeConfidence: .8, ocrConfidence: .6, roomEvidence: [], scopeEvidence: [], roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" }],
@@ -14,3 +17,13 @@ export const task: DesignPlanTask = { id: "task-a", estimateId: "estimate-a", pr
 export const workflow: PlanWorkflow = { projectId: "project-a", initialPayment: { workflowVersion: 2, designStartedAt: "2026-10-14T00:00:00Z", confirmedAt: null }, projectStages: [{ id: "stage-a", type: "space_planning_tentative_look_feel", name: "Space planning", order: 1, status: "in_progress", operational: { status: "in_progress", timing: { state: "active" }, blockingReasons: [], availableActions: [], spacePlanning: { estimateId: "estimate-a", designPlanVersion: 3, reviewRoundId: null } } }] };
 export const requestQueue: PlanRequestQueue = { id: "request-a", estimateId: "estimate-a", uploadId: "upload-a", sourcePageId: "page-a", clientId: "client-a", version: 4, summary: "Move kitchen door", status: "open", unassigned: true, targetCount: 0, targets: [], createdAt: "2026-10-14T00:00:00Z" };
 export const request: PlanRequest = { id: "request-a", sourcePageId: "page-a", version: 4, summary: "Move kitchen door", annotations: { schemaVersion: 1, imageWidth: 800, imageHeight: 600, elements: [{ id: "annotation-a", type: "text", x: .2, y: .2, text: "Door here", color: "#B42318", strokeWidth: 2 }] }, targets: [], unassigned: true, status: "open", currentImageUrl: "/estimate-plan-pages/page-a/current-image", resolutionNote: null, drawingTargets: [], drawingCandidates: [{ drawingId: "drawing-a", title: "Kitchen drawing", latestRevisionId: "revision-a", latestRevisionNumber: 3, status: null }] };
+
+export function layoutWorkspace(optionId: ExecutionChoiceOptionId): DesignWorkspace {
+ const option = executionChoiceOption(optionId);
+ const requiredTypes = requiredDesignLayoutTypes(optionId);
+ return { ...workspace, uploads: workspace.uploads.map(upload => ({ ...upload, layoutType: "layout_3d", canClassifyLayoutType: false, classificationBlockedReason: null })),
+  layoutRequirements: { status: "selected", choice: { optionId, optionLabel: option.label, definitionVersion: 1, phases: option.phases, selectedAt: "2026-11-27T00:00:00Z" }, designPlanVersion: 3,
+   allowedTypes: requiredTypes, requiredTypes, coverage: requiredTypes.map(layoutType => ({ layoutType, uploadIds: layoutType === "layout_3d" ? ["upload-a"] : [], qualifyingUploadIds: layoutType === "layout_3d" ? ["upload-a"] : [], state: layoutType === "layout_3d" ? "review_pending" : "missing" })),
+   unclassifiedUploadIds: [], missingTypes: optionId === "option_1" ? ["layout_2d"] : [], coverageComplete: optionId === "option_2", blockingReasons: optionId === "option_1" ? ["2D layout missing"] : [], revisionKey: `layouts-${optionId}` }
+ };
+}

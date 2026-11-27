@@ -1,0 +1,37 @@
+- main [ref=f3e3]:
+  - generic [ref=f3e4]:
+    - text: Synthetic component QA
+    - heading "Sample project" [level=1] [ref=f3e5]
+  - navigation "QA scenarios" [ref=f3e6]:
+    - link "missing" [ref=f3e7] [cursor=pointer]:
+      - /url: /?scenario=missing
+    - link "stale" [ref=f3e8] [cursor=pointer]:
+      - /url: /?scenario=stale
+    - link "blocked" [ref=f3e9] [cursor=pointer]:
+      - /url: /?scenario=blocked
+    - link "finance" [ref=f3e10] [cursor=pointer]:
+      - /url: /?scenario=finance
+    - link "legacy" [ref=f3e11] [cursor=pointer]:
+      - /url: /?scenario=legacy
+  - generic [ref=f3e12]:
+    - region "Procurement estimate source" [ref=f3e13]:
+      - paragraph [ref=f3e14]: Approved quotation · Version 4
+      - heading "Prepare and release approved work" [level=2] [ref=f3e15]
+      - paragraph [ref=f3e16]: Use the approved quotation for procurement. Work-order issuance also requires approval of the uploaded design and the release checks below. Initial payment confirmation is optional for release. Issued orders retain their original approved records.
+      - generic "Work order release conditions" [ref=f3e17]:
+        - strong [ref=f3e18]: Ready for work order issue
+        - paragraph [ref=f3e19]: Release conditions are satisfied. Issue the approved order explicitly to release vendor work.
+    - region "Initial payment status" [ref=f3e20]:
+      - generic [ref=f3e21]:
+        - generic [ref=f3e22]:
+          - heading "Initial payment record" [level=2] [ref=f3e23]
+          - strong [ref=f3e24]: Initial payment not recorded
+        - generic [ref=f3e25]:
+          - paragraph [ref=f3e26]: Design tasks use the current Client-approved quotation. If the Designer revises it, Client approval is required before work continues. Work-order issuance follows current quotation and uploaded-design approval and procurement release checks.
+          - paragraph [ref=f3e27]: Recording an initial payment is optional for work-order release. Super Admin can record a verified receipt here for payment history.
+      - form "Record initial payment for Sample project" [ref=f3e28]:
+        - generic [ref=f3e29]:
+          - generic [ref=f3e30]: Payment reference / receipt note*
+          - textbox "Payment reference / receipt note" [ref=f3e31]
+          - paragraph [ref=f3e32]: Record the verified receipt reference. The confirmation time is recorded automatically.
+        - button "Mark initial payment received" [disabled] [ref=f3e34]

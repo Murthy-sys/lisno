@@ -71,7 +71,8 @@ describe("saved Design workflow projection", () => {
     const { app, project } = setup();
     const result = await request(app).get(`/projects/${project.id}/design-workflow`).set("Authorization", "Bearer workflow-client").expect(200);
     expect(result.headers["cache-control"]).toBe("private, no-store");
-    expect(Object.keys(result.body.data)).toEqual(["projectId", "projectName", "serverNow", "designerHandoff", "estimateApprovalStatus", "floors"]);
+    expect(Object.keys(result.body.data)).toEqual(["projectId", "projectName", "serverNow", "executionChoice", "designerHandoff", "estimateApprovalStatus", "floors"]);
+    expect(result.body.data.executionChoice).toMatchObject({ status: "unavailable", canSelect: false, selection: null });
     expect(result.body.data.designerHandoff).not.toHaveProperty("pendingRequest");
     expect(["approved", "awaiting_approval", "source_issue"]).toContain(result.body.data.estimateApprovalStatus);
     const tasks = result.body.data.floors.flatMap((floor: any) => floor.stages.flatMap((stage: any) => stage.tasks));

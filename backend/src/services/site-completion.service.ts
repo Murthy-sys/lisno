@@ -77,6 +77,7 @@ async function assignedSiteTask(projectId: string, session: ClientSession): Prom
 
 function eligibility(summary: Awaited<ReturnType<typeof readProjectCompletionSummary>>, returningForCorrection = false): string[] {
   return summary.blockers.filter(item => item.code !== "VENDOR_WORK_PENDING" && item.code !== "SITE_COMPLETION_PENDING" &&
+    item.code !== "PROCUREMENT_READINESS_PENDING" &&
     !(returningForCorrection && item.code === "SNAGS_PENDING")).map(item => item.message);
 }
 

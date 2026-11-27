@@ -9,6 +9,8 @@ import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { chatUser } from "./helpers/project-chat.js";
 import { createProjectChatService } from "../src/services/project-chat.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
+import { createProjectStatusService } from "../src/services/project-status.service.js";
+import { RepositoryConflictError } from "../src/repositories/types.js";
 
 function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Parameters<typeof statusFixture>[0]>>[0], evidence: Parameters<NonNullable<Parameters<typeof statusFixture>[0]>>[1]) => void) {
   return statusFixture((data, evidence) => {
@@ -30,6 +32,32 @@ function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Para
 }
 
 describe("project status participant-safe source projection", () => {
+  it.each([null, "invalid-optional-date"])("loads vendor completion after approvals with optional receipt %s", async initialPaymentAt => {
+    const f = collaborativeStatusFixture((data, evidence) => {
+      const project = data.seed.projects[0]!;
+      project.status = "active"; project.completionAuthority = "vendor_client";
+      const estimate = data.estimates[0]!;
+      const finalApproval = { reviewRoundId: "final-a", estimateVersion: 8, approvedAt: CHAT_NOW,
+        requirementsVersion: 2, designReviewRoundId: "design-a", designPlanVersion: 2, designScopeRevision: 3 };
+      Object.assign(estimate, { designPlanStatus: "approved", designPlanVersion: 2 });
+      Object.assign(estimate.estimation!, { finalApproval, status: "client_approved", editClosedAt: CHAT_NOW, approvedDesignScopeRevision: 3 });
+      Object.assign(data.seed.estimateSummaries![0]!, { estimation: structuredClone(estimate.estimation), designPlanStatus: "approved", designPlanVersion: 2 });
+      Object.assign(evidence.estimates[0]!, { estimation: structuredClone(estimate.estimation), clientDecisionAt: CHAT_NOW });
+      evidence.rounds.push({ ...evidence.rounds[0]!, id: "final-a", estimateVersion: 8, phase: "post", sendGeneration: 2,
+        requirementsVersion: 2, designReviewRoundId: "design-a", designPlanVersion: 2, designScopeRevision: 3 });
+      evidence.financeSource = { estimateId: estimate.id, estimateVersion: 8, reviewRoundId: "final-a" };
+      data.seed.designWorkflowStates = [{ ...emptyDesignWorkflowState("a"), version: 1, initialPaymentAt }];
+      data.seed.designPlanReviewSources = [{ projectId: "a", estimateId: estimate.id, designPlanStatus: "approved", designPlanVersion: 2,
+        approvedAt: CHAT_NOW, approvedById: "client-a", approvalSource: "client_portal", frozenAt: CHAT_NOW, openFeedback: 0,
+        rounds: [{ id: "design-a", projectId: "a", estimateId: estimate.id, designPlanVersion: 2, status: "approved", decision: "approve",
+          decisionSource: "client_portal", decidedById: "client-a", decidedByRole: "client", decidedAt: CHAT_NOW, submittedRevisionIds: ["drawing-a-revision"] }],
+        drawings: [{ id: "drawing-a", revisions: [{ id: "drawing-a-revision", revisionNumber: 1, reviewStatus: "approved", reviewerId: "client-a", reviewedAt: CHAT_NOW }] }] }];
+    });
+    const completionSummary = vi.fn(async () => { throw new RepositoryConflictError("Synthetic completion conflict"); });
+    const service = createProjectStatusService({ repository: f.repository, chatRepository: f.chatRepository, clock: f.clock, completionSummary });
+    await service.get(f.actor("super"), "a");
+    expect(completionSummary).toHaveBeenCalledExactlyOnceWith("a", undefined);
+  });
   it("shows all pending candidates only to Super Admin without granting membership or mixing projects", async () => {
     const f = collaborativeStatusFixture(data => {
       data.seed.users.push(chatUser("candidate-one", "designer"), chatUser("candidate-two", "designer"), chatUser("candidate-foreign", "designer"));

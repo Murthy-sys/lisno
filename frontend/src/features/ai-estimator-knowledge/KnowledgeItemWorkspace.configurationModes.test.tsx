@@ -123,6 +123,88 @@ beforeEach(() => {
 });
 
 describe("independent Configuration modes", () => {
+  it.each(["main_line", "temporary"] as const)("saves and reopens both selection-needed choices for a %s without changing other Main Lines or modes", async itemType => {
+    const row = store.get("line-a")!;
+    row.item = { ...row.item, itemType };
+    const before = structuredClone(store);
+    const user = userEvent.setup();
+    let view = renderWorkspace();
+    const initial = await screen.findByRole("radiogroup", { name: "Selection needed?" });
+    expect(within(initial).getByRole("radio", { name: "No" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save Overview" })).toBeDisabled();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(row.overview).not.toHaveProperty("selectionNeeded");
+
+    for (const [index, selectionNeeded] of [true, false].entries()) {
+      const group = screen.getByRole("radiogroup", { name: "Selection needed?" });
+      await user.click(within(group).getByRole("radio", { name: selectionNeeded ? "Yes" : "No" }));
+      expect(row.overview.selectionNeeded).toBe(index === 0 ? undefined : true);
+      await user.click(screen.getByRole("button", { name: "Save Overview" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Save Overview" })).toBeDisabled());
+      expect(vi.mocked(api.updateKnowledgeSection).mock.calls[index]).toEqual([
+        "line-a", "draft-line-a", "overview", {
+          expectedVersion: 3 + index, expectedAggregateVersion: 10 + index, applicability: "configured",
+          payload: { ...before.get("line-a")!.overview, selectionNeeded }
+        }
+      ]);
+      view.unmount(); view.client.clear(); view = renderWorkspace();
+      const reopened = await screen.findByRole("radiogroup", { name: "Selection needed?" });
+      expect(within(reopened).getByRole("radio", { name: selectionNeeded ? "Yes" : "No" })).toBeChecked();
+      expect(row.overview).toEqual({ ...before.get("line-a")!.overview, selectionNeeded });
+    }
+    expect(row.advanced).toEqual(before.get("line-a")!.advanced);
+    expect(row.pricing).toEqual(before.get("line-a")!.pricing);
+    expect(store.get("line-b")).toEqual(before.get("line-b"));
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(2);
+  });
+
+  it("reviews a selection-needed conflict and retries only the local field against current versions", async () => {
+    const row = store.get("line-a")!;
+    row.overview = { ...row.overview, selectionNeeded: false, clientVisible: true };
+    const user = userEvent.setup(); renderWorkspace();
+    const selection = await screen.findByRole("radiogroup", { name: "Selection needed?" });
+    await user.click(within(selection).getByRole("radio", { name: "Yes" }));
+    row.overview = { ...row.overview, clientVisible: false, showByDefault: true };
+    row.versions.overview = 4; row.item = { ...row.item, version: 11 };
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    const conflict = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
+    expect(row.overview.selectionNeeded).toBe(false);
+    await user.click(within(conflict).getByRole("button", { name: "Review server version" }));
+    const review = await screen.findByRole("region", { name: "Latest Overview server version" });
+    expect(within(review).getByText("Selection needed?").parentElement).toHaveTextContent("Selection needed?No");
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Overview" })).toBeDisabled());
+    expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith("line-a", "draft-line-a", "overview", {
+      expectedVersion: 4, expectedAggregateVersion: 11, applicability: "configured", payload: row.overview
+    });
+    expect(row.overview).toMatchObject({ selectionNeeded: true, clientVisible: false, showByDefault: true });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an unconfirmed selection-needed change on save failure and allows discarding it", async () => {
+    const row = store.get("line-a")!;
+    const user = userEvent.setup(); renderWorkspace();
+    const selection = await screen.findByRole("radiogroup", { name: "Selection needed?" });
+    await user.click(within(selection).getByRole("radio", { name: "Yes" }));
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Save response unavailable"));
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    expect(await screen.findByText("Save response unavailable")).toBeVisible();
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save Overview" })).toBeEnabled();
+    expect(screen.queryByText("Overview saved.")).not.toBeInTheDocument();
+    expect(row.overview).not.toHaveProperty("selectionNeeded");
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
+    expect(within(selection).getByRole("radio", { name: "Yes" })).toBeChecked();
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    const reopened = await screen.findByRole("radiogroup", { name: "Selection needed?" });
+    expect(within(reopened).getByRole("radio", { name: "No" })).toBeChecked();
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
   it("copies an already-saved Signature description on entry without Save clicks, then reopens independent descriptions", async () => {
     const row = store.get("line-a")!;
     row.advanced.signature = { modeDescription: "Previously saved Signature wording", pmcMarginBps: 1200 };

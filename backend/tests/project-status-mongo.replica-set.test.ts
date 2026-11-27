@@ -138,7 +138,7 @@ describe("project status Mongo snapshot reads", () => {
     await expect(f.service.actionTypes(actor, "a")).rejects.toMatchObject({ status: 404 });
     expect(await f.statusService.get({ ...actor, id: "other-pm-status" }, "a")).toMatchObject({ projectId: "a" });
   });
-  it("follows pre-approval through design, final approval and exact payment attestation using immutable sources", async () => {
+  it("advances from final approval to Procurement independently of optional receipt attestation", async () => {
     const f = await fixture();
     const estimation = { ...newEstimationLifecycle(3), phase: "post" as const, designScopeRevision: 2,
       preApproval: { reviewRoundId: "review-a", estimateVersion: 4, approvedAt: CHAT_NOW } };
@@ -175,14 +175,14 @@ describe("project status Mongo snapshot reads", () => {
     await ProjectFinanceBucketModel.collection.updateOne({ _id: "budget-a" }, { $set: { effectiveBaseline: {
       estimateId: "estimate-a", estimateVersion: 8, estimateReviewRoundId: "final-a" } } });
     const payment = await f.statusService.get(f.actor("client-a"), "a");
-    expect(payment).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [
-      { responsibleRole: "super_admin", people: [{ id: "super" }] },
-      { id: "a:keys:schedule", stageKey: "key_collection", action: "Confirm the key collection appointment.", responsibleRole: "client", people: [{ id: "client-a", role: "client" }] }
-    ] });
+    expect(payment).toMatchObject({ state: "active", currentStage: { key: "purchase_order" } });
+    expect(payment.pendingActions).toContainEqual(expect.objectContaining({ stageKey: "purchase_order", responsibleRole: "procurement" }));
+    expect(payment.pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+    expect(await DesignWorkflowStateModel.findById("a").lean()).toBeNull();
     await DesignWorkflowStateModel.collection.insertOne({ _id: "a", projectId: "a", version: 1, estimationWorkflowVersion: 2,
       designStartedAt: CHAT_NOW, initialPaymentAt: CHAT_NOW, initialPaymentEstimateId: "estimate-a", initialPaymentEstimateVersion: 4,
       stages: {}, pauses: [], history: [] });
-    expect((await f.statusService.get(f.actor("client-a"), "a")).currentStage?.key).toBe("initial_payment");
+    expect((await f.statusService.get(f.actor("client-a"), "a")).currentStage?.key).toBe("purchase_order");
     await DesignWorkflowStateModel.collection.updateOne({ _id: "a" }, { $set: { initialPaymentEstimateVersion: 8,
       initialPaymentReviewRoundId: "final-a", initialPaymentDesignReviewRoundId: "design-a" } });
     const paid = await f.statusService.get(f.actor("client-a"), "a");

@@ -9,6 +9,7 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { FinanceProjectWorkflowControl } from "./FinanceProjectWorkflowControl";
 import { ProjectFinancePanel } from "./ProjectFinancePanel";
 import { FinanceWorkOrderAssessments } from "./FinanceWorkOrderAssessments";
+import { ProcurementPaymentControls } from "./ProcurementPaymentControls";
 import { projectBudgetListHref } from "./projectBudgetNavigation";
 
 export function FinanceProjectPage() {
@@ -37,6 +38,7 @@ export function FinanceProjectPage() {
       <ProjectFinancePanel projectId={projectId} presentation={isProjectBudget ? "project-budget" : "standard"} />
       {auth.user?.role === "finance_head" && hasFrontendPermission(auth.authorization, "finance.vendor_invoice.manage")
         ? <FinanceWorkOrderAssessments projectId={projectId} /> : null}
+      <ProcurementPaymentControls projectId={projectId} />
       {canControlWorkflow ? <FinanceProjectWorkflowControl projectId={projectId} /> : null}
     </section>
   );

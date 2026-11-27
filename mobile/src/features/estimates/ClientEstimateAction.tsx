@@ -109,7 +109,7 @@ export function ClientEstimateAction({ estimate, session, onDecision, onRefresh,
           <Text accessibilityRole="header" style={styles.formTitle}>{decision === "approve" ? "Confirm estimate approval" : "Request estimate changes"}</Text>
           <Text style={styles.copy}>{review?.snapshot.projectName} · Version {review?.estimateVersion} · Submission {review?.sendGeneration}</Text>
           <Text style={styles.copy}>Total including GST: {clientEstimateMoney(estimate.total)}</Text>
-          {review?.phase === "post" && decision === "approve" ? <Text style={styles.copy}>Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and procurement checks.</Text> : null}
+          {review?.phase === "post" && decision === "approve" ? <Text style={styles.copy}>Final approval closes estimate changes. Work orders require design approval and procurement release checks. Initial payment confirmation is optional for release.</Text> : null}
           <Text style={styles.copy}>{decision === "approve"
             ? "Your approval records this estimate as accepted. Review the included items and total before confirming."
             : "Tell the team what must change in this estimate."}</Text>

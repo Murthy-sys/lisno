@@ -1,4 +1,5 @@
 import { WORKFLOW_TIMELINES_ID, type WorkflowTimelineConfigurationRecord } from "../contracts/workflow-timelines.js";
+import { executionChoicePreservationIssue } from "../domain/project-execution-choice.js";
 import { WorkflowTimelineConfigurationModel } from "../models/WorkflowTimelineConfiguration.js";
 import { readUserLanguages, sameUserLanguages } from "../domain/user-languages.js";
 import { normalizeUserLocation } from "../domain/user-location.js";
@@ -13,7 +14,6 @@ import { projectManagerProjectIds } from "../services/project-manager-assignment
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
 import { mongoDesignRequirementsSource, mongoDesignRequirementsState, mongoSaveDesignRequirementsState } from "./design-requirements-mongo.js";
 import { activateCollaborativeProjectWorkflow, ensureQuotationDesignTask } from "../services/project-workflow.service.js";
-import { openProjectFinanceBucket } from "../services/project-finance.service.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { resolveCurrentQuotationApproval, resolveQuotationApprovalFromRounds } from "../services/quotation-approval-state.service.js";
 import type { ProjectClientInvitationRecord } from "../domain/project-client-invitations.js";
@@ -765,11 +765,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const designPlanVersion = context?.workflowVersion === 3 ? context.designApproval?.designPlanVersion : context?.finalApproval?.designPlanVersion;
       const approval = context?.workflowVersion === 3 ? context.currentQuotationApproval : context?.finalApproval;
       if (!approval || !designPlanVersion) throw new RepositoryConflictError("Quotation and design approval are required for execution.");
-      await openProjectFinanceBucket({ projectId, designPlanVersion,
-        openedById: actorId, occurredAt: new Date(occurredAt) }, session);
       await activateCollaborativeProjectWorkflow(projectId, actorId, new Date(occurredAt), session);
     },
-    async saveDesignWorkflowState(projectId, expectedVersion, state) {
+    async saveDesignWorkflowState(projectId, expectedVersion, state, options) {
+      const current = await repository.findDesignWorkflowState(projectId);
+      if ((current?.version ?? 0) !== expectedVersion || state.projectId !== projectId) throw new RepositoryConflictError("Design workflow changed.");
+      const choiceIssue = executionChoicePreservationIssue(current, state);
+      if (choiceIssue) throw new RepositoryConflictError(choiceIssue);
       const saved = { ...state, projectId, version: expectedVersion + 1 };
       if (expectedVersion === 0) {
         try { await DesignWorkflowStateModel.create([{ _id: projectId, ...saved }], { session }); }
@@ -778,7 +780,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         const result = await DesignWorkflowStateModel.updateOne({ _id: projectId, version: expectedVersion }, { $set: saved }, { session, runValidators: true });
         if (result.matchedCount !== 1) throw new RepositoryConflictError("Design workflow changed.");
       }
-      if (session) {
+      if (session && options?.purpose !== "execution_choice") {
         const project = await ProjectModel.findOne({ _id: projectId, estimationWorkflowVersion: 3 }).session(session).lean();
         if (project) {
           const estimates = await EstimateModel.find({ projectId, "estimation.workflowVersion": 3 }).limit(2).session(session).lean();

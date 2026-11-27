@@ -26,7 +26,7 @@ import { clientEstimateWorkflowVersion } from "./clientEstimateWorkflow";
 import "./clientPublishedEstimate.css";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
-export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlocked = false, workflowFilter, refetchOnMount }: { selectedEstimateId?: string; projectId?: string; decisionBlocked?: boolean; workflowFilter?: "legacy"; refetchOnMount?: boolean } = {}) {
+export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlocked = false, workflowFilter, refetchOnMount, showDesignReview = true }: { selectedEstimateId?: string; projectId?: string; decisionBlocked?: boolean; workflowFilter?: "legacy"; refetchOnMount?: boolean; showDesignReview?: boolean } = {}) {
   const role = useAuth().user!.role;
   const queryClient = useQueryClient();
   const [designerByEstimate, setDesignerByEstimate] = useState<Record<string, string>>({});
@@ -72,6 +72,7 @@ export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlo
     <div className="estimate-review-grid">{estimates.map((estimate) => <EstimateReviewCard
       actionable={canActOnEstimate(role, estimate.status)}
       decisionBlocked={decisionBlocked}
+      showDesignReview={showDesignReview}
       actionError={action.isError && action.variables?.id === estimate.id
         ? action.error
         : null}
@@ -104,6 +105,7 @@ function EstimateReviewCard({
   role,
   actionable,
   decisionBlocked = false,
+  showDesignReview = true,
   designers,
   selectedDesignerId,
   note,
@@ -118,6 +120,7 @@ function EstimateReviewCard({
   role: Role;
   actionable: boolean;
   decisionBlocked?: boolean;
+  showDesignReview?: boolean;
   designers: Awaited<ReturnType<typeof getEstimateDesigners>>;
   selectedDesignerId: string;
   note: string;
@@ -169,7 +172,7 @@ function EstimateReviewCard({
         {pdfNeedsRefresh ? <div className="client-commercial-state" role="status"><p>Refresh the submitted estimate before trying the PDF or making a decision.</p><Button variant="secondary" onClick={async () => { await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }); setPdfNeedsRefresh(false); }}>Refresh estimate</Button></div> : null}
         {decisionBlocked ? <p role="status">Save or discard your quotation changes before approving a submitted version.</p> : null}
         <ClientPublishedEstimate estimate={estimate} decisionBlocked={pdfNeedsRefresh || decisionBlocked} />
-        <ClientEstimateDesignReview estimate={estimate} />
+        {showDesignReview ? <ClientEstimateDesignReview estimate={estimate} /> : null}
       </div> : null}
     </article>;
   }

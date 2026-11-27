@@ -1,13 +1,30 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import type { ExecutionPage, ExecutionWork } from "../execution/executionApi";
-import { pmDenied, pmPath, pmRecordId, usePMCommand, usePMQuery } from "./projectManagerApi";
+import { downloadProcurementSnagEvidence, pmDenied, pmError, pmPath, pmRecordId, usePMCommand, usePMQuery } from "./projectManagerApi";
 import type { PMItem, PMPanel, PMProgress } from "./projectManagerTypes";
 import { PMActionDialog, PMEvidenceUpload, PMItemCard, PMPanelHeader, PMPanelRecords, PMQueryState, pmDate } from "./PMShared";
 import { PMEvidenceLinks, usePMOperationKey, usePMTabOffset } from "./PMVendorPanel";
 
 type SelectedAction = { action: string; label: string; item?: PMItem };
+function ProcurementOriginEvidence({ projectId, item }: { projectId: string; item: PMItem }) {
+  const auth = useAuth(); const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState<unknown>(null);
+  if (!item.procurementOrigin || auth.user?.role !== "site_manager" || !hasFrontendPermission(auth.authorization, "pm.evidence.read")) return null;
+  return <div className="pm-evidence-links" aria-label="Procurement finding evidence"><span>Reported through Procurement {item.procurementOrigin.kind === "urgent" ? "urgent report" : item.procurementOrigin.kind}</span>
+    {item.procurementOrigin.evidence.map(file => <Button key={file.id} size="compact" variant="quiet" busy={busy === file.id} disabled={busy !== null} onClick={async () => {
+      setBusy(file.id); setError(null);
+      try {
+        const download = await downloadProcurementSnagEvidence(projectId, item.id, file.id); const url = URL.createObjectURL(download.blob);
+        try { const link = document.createElement("a"); link.href = url; link.download = download.filename ?? file.name; link.click(); }
+        finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+      } catch (cause) { setError(cause); } finally { setBusy(null); }
+    }}>Download {file.name}</Button>)}
+    {error ? <p role="alert">{pmError(error)}</p> : null}
+  </div>;
+}
 export function PMClientPanel({ projectId, tab, progress }: { projectId: string; tab: "client" | "snagging"; progress?: PMProgress }) {
   const [params, setParams] = useSearchParams();
   const [offset, setOffset] = usePMTabOffset(); const [kind, setKind] = useState<"snags" | "visits">("snags"); const [selection, setSelection] = useState<SelectedAction | null>(null);
@@ -32,7 +49,7 @@ export function PMClientPanel({ projectId, tab, progress }: { projectId: string;
     </div> : null}
     {tab === "snagging" && kind === "visits" ? <p className="pm-record-meta">Visit filters match the room, trade, vendor and current status of linked snags.</p> : null}
     <PMPanelRecords panel={panel} render={item => <PMItemCard key={item.id} item={item} actions={item.actions.map(action => <Button key={action.id} size="compact" variant="secondary" disabled={disabled} onClick={() => setSelection({ action: action.id, label: action.label, item })}>{action.label}</Button>)}>
-      {item.roomName || item.tradeName || item.vendorName || item.dueAt ? <p className="pm-record-meta">{item.roomName ? <span>{item.roomName}</span> : null}{item.tradeName ? <span>{item.tradeName}</span> : null}{item.vendorName ? <span>{item.vendorName}</span> : null}{item.dueAt ? <span>{tab === "client" ? "Follow-up" : "Due"}: {pmDate(item.dueAt)}</span> : null}</p> : null}<PMEvidenceLinks projectId={projectId} ids={item.evidenceIds} />
+      {item.roomName || item.tradeName || item.vendorName || item.dueAt ? <p className="pm-record-meta">{item.roomName ? <span>{item.roomName}</span> : null}{item.tradeName ? <span>{item.tradeName}</span> : null}{item.vendorName ? <span>{item.vendorName}</span> : null}{item.dueAt ? <span>{tab === "client" ? "Follow-up" : "Due"}: {pmDate(item.dueAt)}</span> : null}</p> : null}<PMEvidenceLinks projectId={projectId} ids={item.evidenceIds} /><ProcurementOriginEvidence projectId={projectId} item={item} />
     </PMItemCard>} />
     <div className="pm-pagination"><span>{panel.total ? `${offset + 1}–${Math.min(offset + panel.items.length, panel.total)} of ${panel.total}` : "0 records"}</span><div className="pm-actions"><Button size="compact" variant="secondary" disabled={!offset || disabled} onClick={() => setOffset(old => Math.max(0, old - 25))}>Previous</Button><Button size="compact" variant="secondary" disabled={offset + panel.items.length >= panel.total || disabled} onClick={() => setOffset(old => old + 25)}>Next</Button></div></div>
     {selection ? <ClientAction key={`${selection.item?.id ?? "new"}:${selection.action}`} projectId={projectId} tab={tab} panel={panel} selection={selection} disabled={disabled} onRefresh={refresh} onClose={() => setSelection(null)} /> : null}</>}</PMQueryState>
